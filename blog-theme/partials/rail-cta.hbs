@@ -1,0 +1,16 @@
+{{!-- Sticky card under the table of contents. The stat block is omitted
+entirely when unset, so no number ships that nobody has signed off on. --}}
+<aside class="railcta ctasky">
+    {{#if @custom.rail_stat}}
+        <div class="railcta__stat">
+            <span class="railcta__stat-value">{{@custom.rail_stat}}</span>
+            <span class="railcta__stat-label">{{@custom.rail_stat_label}}</span>
+        </div>
+    {{/if}}
+
+    <h2 class="railcta__title">{{@custom.rail_heading}}</h2>
+    <p class="railcta__text">{{@custom.rail_text}}</p>
+
+    <a class="btn btn--primary" href="{{@custom.cta_button_url}}" target="_blank" rel="noopener">{{@custom.rail_button_text}}</a>
+    {{#if @custom.cta_secondary_text}}<a class="railcta__link" href="{{@custom.cta_secondary_url}}" target="_blank" rel="noopener">{{@custom.cta_secondary_text}}</a>{{/if}}
+</aside>

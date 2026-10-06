@@ -1,0 +1,103 @@
+{{!< default}}
+
+{{#post}}
+<article class="post">
+    <header class="hero sky hero--post">
+        <div class="hero__inner">
+            <div class="pill-row pill-row--center rise">
+                {{#foreach tags limit="3"}}
+                    {{#match visibility "public"}}<a class="pill pill--dark" href="{{url}}">{{name}}</a>{{/match}}
+                {{/foreach}}
+            </div>
+
+            <h1 class="hero__title hero__title--post skytext rise" style="--rise-delay:120ms">{{title}}</h1>
+
+            {{#if custom_excerpt}}<p class="hero__lede rise" style="--rise-delay:180ms">{{custom_excerpt}}</p>{{/if}}
+
+            <div class="post__meta rise" style="--rise-delay:240ms">
+                {{#primary_author}}
+                    <a class="byline" href="{{url}}">
+                        {{#if profile_image}}<img class="byline__avatar" src="{{img_url profile_image size="xs"}}" alt="" loading="lazy">{{/if}}
+                        <span class="byline__name">{{name}}</span>
+                    </a>
+                {{/primary_author}}
+                <span class="chip">{{> "icons/calendar"}}<time datetime="{{date published_at format="YYYY-MM-DD"}}">{{date published_at format="D MMM YYYY"}}</time></span>
+                <span class="chip">{{> "icons/clock"}}{{reading_time}}</span>
+            </div>
+        </div>
+    </header>
+
+    {{#if feature_image}}
+        <figure class="post__media lift">
+            {{> "feature-image" size="xl"}}
+            {{#if feature_image_caption}}<figcaption>{{{feature_image_caption}}}</figcaption>{{/if}}
+        </figure>
+    {{else}}
+        <div class="post__no-media"></div>
+    {{/if}}
+
+    <div class="post__body">
+        <aside class="post__rail">
+            {{!-- Populated by main.js from the h2s in the post; stays hidden
+            when there are too few to be worth a contents list. --}}
+            <nav class="toc" data-toc hidden aria-labelledby="toc-title">
+                <h2 class="toc__title" id="toc-title">In this post</h2>
+                <ol class="toc__list" data-toc-list></ol>
+            </nav>
+
+            {{> "rail-cta"}}
+        </aside>
+
+        <div class="post__main">
+            <div class="gh-content" data-content>
+                {{content}}
+            </div>
+
+            <div class="share">
+                <span class="share__label">Share this post</span>
+                <div class="share__links">
+                    <a class="round-btn" href="https://x.com/intent/tweet?text={{encode title}}&amp;url={{url absolute="true"}}" target="_blank" rel="noopener" aria-label="Share on X">{{> "icons/x"}}</a>
+                    <a class="round-btn" href="https://www.linkedin.com/sharing/share-offsite/?url={{url absolute="true"}}" target="_blank" rel="noopener" aria-label="Share on LinkedIn">{{> "icons/linkedin"}}</a>
+                    <button class="round-btn" type="button" data-copy-link="{{url absolute="true"}}" aria-label="Copy link">{{> "icons/link"}}</button>
+                </div>
+            </div>
+
+            {{#primary_author}}
+                {{#if bio}}
+                    <aside class="author-card">
+                        {{#if profile_image}}<img class="author-card__avatar" src="{{img_url profile_image size="s"}}" alt="" loading="lazy">{{/if}}
+                        <div>
+                            <p class="author-card__label">Written by</p>
+                            <p class="author-card__name"><a href="{{url}}">{{name}}</a></p>
+                            <p class="author-card__bio">{{bio}}</p>
+                        </div>
+                    </aside>
+                {{/if}}
+            {{/primary_author}}
+        </div>
+    </div>
+</article>
+
+{{#if primary_tag}}
+    {{#get "posts" filter="id:-{{id}}+tag:{{primary_tag.slug}}" limit="3" include="tags,authors" as |related|}}
+        {{#if related}}
+            <section class="related">
+                <div class="related__inner">
+                    <div class="related__head">
+                        <div>
+                            <p class="eyebrow">Keep reading</p>
+                            <h2 class="related__title">Related posts</h2>
+                        </div>
+                        <a class="btn btn--light" href="{{@site.url}}">All posts</a>
+                    </div>
+                    <div class="card-grid card-grid--3">
+                        {{#foreach related}}{{> "post-card"}}{{/foreach}}
+                    </div>
+                </div>
+            </section>
+        {{/if}}
+    {{/get}}
+{{/if}}
+{{/post}}
+
+{{> "cta"}}

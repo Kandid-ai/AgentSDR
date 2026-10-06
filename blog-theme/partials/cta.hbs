@@ -1,0 +1,14 @@
+{{!-- The closing card, like ClosingCta on the site. Copy and links are Ghost
+custom settings (Design -> Site-wide), so they change without a redeploy. --}}
+<section class="closing">
+    <div class="closing__card ctasky">
+        <div class="closing__grid" aria-hidden="true"></div>
+        <p class="eyebrow eyebrow--dark">Open source</p>
+        <h2 class="closing__title skytext">{{@custom.cta_heading}}</h2>
+        <p class="closing__text">{{@custom.cta_subheading}}</p>
+        <div class="closing__actions">
+            <a class="btn btn--primary btn--lg" href="{{@custom.cta_button_url}}" target="_blank" rel="noopener">{{@custom.cta_button_text}}</a>
+            {{#if @custom.cta_secondary_text}}<a class="btn btn--glass btn--lg" href="{{@custom.cta_secondary_url}}" target="_blank" rel="noopener">{{@custom.cta_secondary_text}}</a>{{/if}}
+        </div>
+    </div>
+</section>

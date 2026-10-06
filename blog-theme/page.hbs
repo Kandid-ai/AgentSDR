@@ -1,0 +1,30 @@
+{{!< default}}
+
+{{#post}}
+<article class="post post--page">
+    {{!-- Ghost's editor lets an author hide the title and feature image on a
+    page; respect that rather than always rendering the header. --}}
+    {{#if @page.show_title_and_feature_image}}
+        <header class="hero sky hero--short">
+            <div class="hero__inner">
+                <h1 class="hero__title skytext rise">{{title}}</h1>
+                {{#if custom_excerpt}}<p class="hero__lede rise" style="--rise-delay:120ms">{{custom_excerpt}}</p>{{/if}}
+            </div>
+        </header>
+
+        {{#if feature_image}}
+            <div class="post__media post__media--page">{{> "feature-image" size="xl"}}</div>
+        {{/if}}
+    {{else}}
+        <div class="hero-spacer sky"></div>
+    {{/if}}
+
+    <div class="post__body post__body--solo">
+        <div class="gh-content">
+            {{content}}
+        </div>
+    </div>
+</article>
+{{/post}}
+
+{{> "cta"}}

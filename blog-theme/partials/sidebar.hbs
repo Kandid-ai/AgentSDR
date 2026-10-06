@@ -1,0 +1,24 @@
+{{!-- Sticky category rail. The active state is set in main.js from the current
+path, so it stays correct on /blog/, /blog/tag/x/ and every paginated page
+without duplicating the comparison in three templates. --}}
+<aside class="sidebar">
+    <div class="sidebar__sticky">
+        <button class="sidebar__search" type="button" data-ghost-search>
+            {{> "icons/search"}}<span>Search the blog</span>
+        </button>
+
+        <div class="sidebar__block">
+            <h2 class="sidebar__title">Categories</h2>
+            <ul class="taglist" data-taglist>
+                <li><a class="taglist__item" href="{{@site.url}}" data-tag-slug="">All posts</a></li>
+                {{#get "tags" limit="50" filter="visibility:public" include="count.posts" order="count.posts desc" as |tags|}}
+                    {{#foreach tags}}
+                        {{#if count.posts}}
+                            <li><a class="taglist__item" href="{{url}}" data-tag-slug="{{slug}}">{{name}}<span class="taglist__count">{{count.posts}}</span></a></li>
+                        {{/if}}
+                    {{/foreach}}
+                {{/get}}
+            </ul>
+        </div>
+    </div>
+</aside>

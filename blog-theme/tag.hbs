@@ -1,0 +1,28 @@
+{{!< default}}
+
+{{#tag}}
+    <header class="hero sky hero--short">
+        <div class="hero__inner">
+            <p class="eyebrow eyebrow--dark rise">Category</p>
+            <h1 class="hero__title skytext rise" style="--rise-delay:120ms">{{name}}</h1>
+            {{#if description}}<p class="hero__lede rise" style="--rise-delay:200ms">{{description}}</p>{{/if}}
+            <p class="hero__count rise" style="--rise-delay:260ms">{{plural ../pagination.total empty="No posts" singular="% post" plural="% posts"}}</p>
+        </div>
+    </header>
+{{/tag}}
+
+<section class="archive">
+    <div class="archive__inner">
+        {{> "sidebar"}}
+
+        <div class="archive__main">
+            <div class="card-grid">
+                {{#foreach posts}}{{> "post-card"}}{{/foreach}}
+            </div>
+
+            {{> "pagination"}}
+        </div>
+    </div>
+</section>
+
+{{> "cta"}}

@@ -1,0 +1,31 @@
+{{!-- Page-one lead story: a white slab that rides up over the hero's sky. --}}
+<section class="lead-wrap">
+    <article class="lead lift">
+        <a class="lead__media" href="{{url}}" {{#unless feature_image}}tabindex="-1" aria-hidden="true"{{/unless}}>
+            {{#if feature_image}}
+                <img src="{{img_url feature_image size="l"}}"
+                     srcset="{{img_url feature_image size="m"}} 750w, {{img_url feature_image size="l"}} 960w, {{img_url feature_image size="xl"}} 1140w"
+                     sizes="(max-width: 900px) 92vw, 560px"
+                     alt="{{#if feature_image_alt}}{{feature_image_alt}}{{else}}{{title}}{{/if}}">
+            {{else}}
+                <span class="media-empty" aria-hidden="true"></span>
+            {{/if}}
+        </a>
+
+        <div class="lead__copy">
+            <p class="eyebrow">{{#if featured}}Featured{{else}}Latest{{/if}}</p>
+            <h2 class="lead__title"><a href="{{url}}">{{title}}</a></h2>
+            <p class="lead__excerpt">{{excerpt words="32"}}</p>
+            <div class="lead__foot">
+                {{#primary_author}}
+                    <span class="byline byline--light">
+                        {{#if profile_image}}<img class="byline__avatar" src="{{img_url profile_image size="xs"}}" alt="" loading="lazy">{{/if}}
+                        <span class="byline__name">{{name}}</span>
+                    </span>
+                {{/primary_author}}
+                <span class="lead__meta"><time datetime="{{date published_at format="YYYY-MM-DD"}}">{{date published_at format="D MMM YYYY"}}</time> &middot; {{reading_time}}</span>
+            </div>
+            <a class="btn btn--primary" href="{{url}}">Read the post</a>
+        </div>
+    </article>
+</section>

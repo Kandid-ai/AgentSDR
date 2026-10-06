@@ -1,0 +1,13 @@
+{{!< default}}
+
+<header class="hero sky hero--short error-page">
+    <div class="hero__inner">
+        <p class="eyebrow eyebrow--dark rise">Error {{statusCode}}</p>
+        <h1 class="hero__title skytext rise" style="--rise-delay:120ms">That page is not here</h1>
+        <p class="hero__lede rise" style="--rise-delay:200ms">{{message}}. It may have moved, or the link may be mistyped. The blog and the app are one click away.</p>
+        <div class="hero__actions rise" style="--rise-delay:280ms">
+            <a class="btn btn--primary btn--lg" href="{{@site.url}}">Back to the blog</a>
+            <a class="btn btn--glass btn--lg" href="{{@custom.site_root_url}}">Go to agentsdr.ai</a>
+        </div>
+    </div>
+</header>
