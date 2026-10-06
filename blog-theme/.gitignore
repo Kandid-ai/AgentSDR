@@ -1,5 +1,0 @@
-# Built by `bun run build:blog-theme` from src/main.ts
-assets/built/main.js
-dist/
-node_modules/
-.DS_Store

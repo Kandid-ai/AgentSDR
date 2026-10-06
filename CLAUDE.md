@@ -159,7 +159,7 @@ the registry, so a new limit is a registry entry plus the engine reading it —
 never a new constant or env var.
 
 The `WHATSAPP_*` constants in `src/lib/whatsapp/contract.ts` remain only as
-the defaults the extension and the landing page show (that file must stay
+the defaults the extension shows (and agentsdr.ai, which copies this file) (that file must stay
 import-free); `rules.test.ts` keeps them equal to the registry.
 
 ## Drizzle is the only ORM

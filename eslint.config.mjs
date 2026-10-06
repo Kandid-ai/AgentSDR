@@ -12,9 +12,6 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // The launch video is its own Remotion project (own package.json and
-    // tsconfig), excluded from the app's tsconfig too.
-    "video/**",
   ]),
   {
     // scripts/*.js are the historical CommonJS migrations, run with plain

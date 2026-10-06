@@ -9,7 +9,6 @@ import { RiMenuLine } from "@remixicon/react";
 import { Logo } from "@/components/brand/Logo";
 import Sidebar from "@/components/Sidebar";
 import { SessionGate } from "@/components/auth/SessionGate";
-import { isMarketingPath } from "@/lib/marketing/site";
 
 const CHROMELESS_ROUTES = [
   "/login",
@@ -22,9 +21,9 @@ const CHROMELESS_ROUTES = [
   "/accept-invitation",
 ];
 
-/** The marketing site and the sign-in screens: no sidebar, no app chrome. */
+/** The sign-in screens: no sidebar, no app chrome. */
 export function isChromeless(pathname: string) {
-  return isMarketingPath(pathname) || CHROMELESS_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+  return CHROMELESS_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 }
 
 /**

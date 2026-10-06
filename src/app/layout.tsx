@@ -4,7 +4,6 @@ import AppShell from "@/components/AppShell";
 import DialogProvider from "@/components/DialogProvider";
 import { brandDisplay } from "@/components/brand/font";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/components/theme/ThemeProvider";
-import { SITE_URL } from "@/lib/marketing/site";
 import "./globals.css";
 
 const fontSans = FontSans({
@@ -19,9 +18,9 @@ const fontSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  // Resolves relative Open Graph and canonical URLs on the marketing pages.
-  metadataBase: new URL(SITE_URL),
   title: "AgentSDR",
+  // A private workspace behind sign-in: keep every page out of search.
+  robots: { index: false, follow: false },
   description: "Outreach, qualification and CRM for GTM teams",
   // The favicon is src/app/icon.svg and apple-icon.png (Next's file convention):
   // the brand tile, which reads on light and dark tabs alike.

@@ -1,7 +1,4 @@
 @import "tailwindcss";
-/* The launch video (video/) is a separate Remotion project with its own
-   classes; scanning it put CSS the app cannot parse into this build. */
-@source not "../../video";
 @import "tw-animate-css";
 
 @keyframes fade-slide-in {

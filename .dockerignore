@@ -15,7 +15,6 @@ feedback
 .playwright-cli
 .claude
 .conductor
-video
 docs
 tests
 extensions/*/dist

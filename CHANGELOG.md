@@ -9,6 +9,15 @@ Each release lists the database migrations it needs; see
 
 ## [Unreleased]
 
+### Changed
+
+- **The app is only the app.** The marketing website, blog theme and launch
+  film moved to their own repository (agentsdr.ai). `/` now opens the
+  workspace (sign-in first), and the app asks search engines not to index it.
+- **Call recorder 0.15.0**: the built-in hosted address is now
+  `https://app.agentsdr.ai`. Self-hosted addresses are still added on the
+  extension's Options page.
+
 ## [0.1.0] - 2026-10-06
 
 The first public release.
