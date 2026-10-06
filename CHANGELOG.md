@@ -9,6 +9,8 @@ Each release lists the database migrations it needs; see
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-06
+
 The first public release.
 
 ### Added
@@ -47,6 +49,10 @@ The first public release.
   extension; a self-hosted deployment no longer needs its own build.
 - Docker Compose self-hosting, CI, and the project's community documents,
   including [responsible use](docs/responsible-use.md).
+- **Public website** at [agentsdr.ai](https://agentsdr.ai): product pages for
+  each channel, the AI CRM and the data tools, solutions for founders,
+  agencies and sales teams, comparisons, guides and this changelog, with a
+  sitemap and structured data for search.
 
 ### Migrations
 
@@ -58,4 +64,5 @@ The first public release.
   before deploying). The `WHATSAPP_*` sending variables are no longer read —
   set those limits in Settings → WhatsApp → Sending rules.
 
-[Unreleased]: https://github.com/Kandid-ai/AgentSDR/commits/main
+[Unreleased]: https://github.com/Kandid-ai/AgentSDR/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Kandid-ai/AgentSDR/releases/tag/v0.1.0

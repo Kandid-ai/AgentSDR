@@ -80,5 +80,6 @@ export function parseChangelog(md: string): Release[] {
     para.push(line.trim());
   }
   flush();
-  return releases;
+  // An empty section (the fresh "Unreleased" right after a release) has nothing to show.
+  return releases.filter((r) => r.intro.length > 0 || r.groups.length > 0);
 }
