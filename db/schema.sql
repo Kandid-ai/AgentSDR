@@ -2447,6 +2447,76 @@ CREATE TABLE public.whatsapp_accounts (
 );
 
 --
+-- Name: whatsapp_campaign_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.whatsapp_campaign_accounts (
+    campaign_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: whatsapp_campaign_leads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.whatsapp_campaign_leads (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    campaign_id uuid NOT NULL,
+    person_id uuid NOT NULL,
+    phone text NOT NULL,
+    custom_fields jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    current_step integer DEFAULT 0 NOT NULL,
+    next_send_at timestamp with time zone,
+    account_id uuid,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    last_sent_at timestamp with time zone,
+    replied_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT whatsapp_campaign_leads_status_chk CHECK ((status = ANY (ARRAY['queued'::text, 'in_sequence'::text, 'completed'::text, 'replied'::text, 'stopped'::text, 'failed'::text]))),
+    CONSTRAINT whatsapp_campaign_leads_step_chk CHECK ((current_step >= 0))
+);
+
+--
+-- Name: whatsapp_campaign_sends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.whatsapp_campaign_sends (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    lead_id uuid NOT NULL,
+    step integer NOT NULL,
+    step_id text,
+    status text DEFAULT 'sending'::text NOT NULL,
+    account_id uuid,
+    whatsapp_message_id uuid,
+    body text,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    sent_at timestamp with time zone,
+    CONSTRAINT whatsapp_campaign_sends_status_chk CHECK ((status = ANY (ARRAY['sending'::text, 'sent'::text, 'failed'::text])))
+);
+
+--
+-- Name: whatsapp_campaigns; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.whatsapp_campaigns (
+    organization_id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    description text,
+    status text DEFAULT 'paused'::text NOT NULL,
+    steps jsonb DEFAULT '[]'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT whatsapp_campaigns_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text])))
+);
+
+--
 -- Name: whatsapp_chats; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3317,6 +3387,48 @@ ALTER TABLE ONLY public.whatsapp_accounts
 
 ALTER TABLE ONLY public.whatsapp_accounts
     ADD CONSTRAINT whatsapp_accounts_unipile_account_uq UNIQUE (unipile_account_id);
+
+--
+-- Name: whatsapp_campaign_accounts whatsapp_campaign_accounts_pk; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_accounts
+    ADD CONSTRAINT whatsapp_campaign_accounts_pk PRIMARY KEY (campaign_id, account_id);
+
+--
+-- Name: whatsapp_campaign_leads whatsapp_campaign_leads_campaign_person_uq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_leads
+    ADD CONSTRAINT whatsapp_campaign_leads_campaign_person_uq UNIQUE (campaign_id, person_id);
+
+--
+-- Name: whatsapp_campaign_leads whatsapp_campaign_leads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_leads
+    ADD CONSTRAINT whatsapp_campaign_leads_pkey PRIMARY KEY (id);
+
+--
+-- Name: whatsapp_campaign_sends whatsapp_campaign_sends_lead_step_uq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_sends
+    ADD CONSTRAINT whatsapp_campaign_sends_lead_step_uq UNIQUE (lead_id, step);
+
+--
+-- Name: whatsapp_campaign_sends whatsapp_campaign_sends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_sends
+    ADD CONSTRAINT whatsapp_campaign_sends_pkey PRIMARY KEY (id);
+
+--
+-- Name: whatsapp_campaigns whatsapp_campaigns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaigns
+    ADD CONSTRAINT whatsapp_campaigns_pkey PRIMARY KEY (id);
 
 --
 -- Name: whatsapp_chats whatsapp_chats_account_chat_uq; Type: CONSTRAINT; Schema: public; Owner: -
@@ -4336,6 +4448,30 @@ CREATE INDEX verifications_identifier_idx ON public.verifications USING btree (i
 --
 
 CREATE INDEX whatsapp_accounts_organization_idx ON public.whatsapp_accounts USING btree (organization_id);
+
+--
+-- Name: whatsapp_campaign_accounts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX whatsapp_campaign_accounts_account_idx ON public.whatsapp_campaign_accounts USING btree (account_id);
+
+--
+-- Name: whatsapp_campaign_leads_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX whatsapp_campaign_leads_due_idx ON public.whatsapp_campaign_leads USING btree (status, next_send_at);
+
+--
+-- Name: whatsapp_campaign_leads_person_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX whatsapp_campaign_leads_person_idx ON public.whatsapp_campaign_leads USING btree (person_id);
+
+--
+-- Name: whatsapp_campaigns_organization_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX whatsapp_campaigns_organization_idx ON public.whatsapp_campaigns USING btree (organization_id);
 
 --
 -- Name: whatsapp_chats_account_last_message_idx; Type: INDEX; Schema: public; Owner: -
@@ -5514,6 +5650,69 @@ ALTER TABLE ONLY public.teams
 
 ALTER TABLE ONLY public.whatsapp_accounts
     ADD CONSTRAINT whatsapp_accounts_organization_fk FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+
+--
+-- Name: whatsapp_campaign_accounts whatsapp_campaign_accounts_account_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_accounts
+    ADD CONSTRAINT whatsapp_campaign_accounts_account_fk FOREIGN KEY (account_id) REFERENCES public.whatsapp_accounts(id) ON DELETE CASCADE;
+
+--
+-- Name: whatsapp_campaign_accounts whatsapp_campaign_accounts_campaign_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_accounts
+    ADD CONSTRAINT whatsapp_campaign_accounts_campaign_fk FOREIGN KEY (campaign_id) REFERENCES public.whatsapp_campaigns(id) ON DELETE CASCADE;
+
+--
+-- Name: whatsapp_campaign_leads whatsapp_campaign_leads_account_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_leads
+    ADD CONSTRAINT whatsapp_campaign_leads_account_fk FOREIGN KEY (account_id) REFERENCES public.whatsapp_accounts(id) ON DELETE SET NULL;
+
+--
+-- Name: whatsapp_campaign_leads whatsapp_campaign_leads_campaign_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_leads
+    ADD CONSTRAINT whatsapp_campaign_leads_campaign_fk FOREIGN KEY (campaign_id) REFERENCES public.whatsapp_campaigns(id) ON DELETE CASCADE;
+
+--
+-- Name: whatsapp_campaign_leads whatsapp_campaign_leads_person_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_leads
+    ADD CONSTRAINT whatsapp_campaign_leads_person_fk FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE CASCADE;
+
+--
+-- Name: whatsapp_campaign_sends whatsapp_campaign_sends_account_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_sends
+    ADD CONSTRAINT whatsapp_campaign_sends_account_fk FOREIGN KEY (account_id) REFERENCES public.whatsapp_accounts(id) ON DELETE SET NULL;
+
+--
+-- Name: whatsapp_campaign_sends whatsapp_campaign_sends_lead_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_sends
+    ADD CONSTRAINT whatsapp_campaign_sends_lead_fk FOREIGN KEY (lead_id) REFERENCES public.whatsapp_campaign_leads(id) ON DELETE CASCADE;
+
+--
+-- Name: whatsapp_campaign_sends whatsapp_campaign_sends_message_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaign_sends
+    ADD CONSTRAINT whatsapp_campaign_sends_message_fk FOREIGN KEY (whatsapp_message_id) REFERENCES public.whatsapp_messages(id) ON DELETE SET NULL;
+
+--
+-- Name: whatsapp_campaigns whatsapp_campaigns_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.whatsapp_campaigns
+    ADD CONSTRAINT whatsapp_campaigns_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
 
 --
 -- Name: whatsapp_chats whatsapp_chats_account_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
