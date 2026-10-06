@@ -7,11 +7,14 @@ import { Film, FILM_FRAMES } from "./film/Film";
 import { FPS } from "./kit/time";
 import { Preview } from "./screens/Preview";
 import { GALLERY, PH, PW, Thumbnail, ThumbnailAnimated, THUMB_LOOP } from "./ph/slides";
+import { GoogleWorkspaceGuide, GW_FRAMES } from "./guides/GoogleWorkspace";
 
 export function Root() {
   return (
     <>
       <Composition id="Launch" component={Film} durationInFrames={FILM_FRAMES} fps={FPS} width={1920} height={1080} />
+      {/* Setup walkthroughs for the docs (docs/integrations/*). */}
+      <Composition id="guide-google-workspace" component={GoogleWorkspaceGuide} durationInFrames={GW_FRAMES} fps={FPS} width={1920} height={1080} />
       <Composition id="Screen" component={Preview} durationInFrames={60} fps={FPS} width={1920} height={1080} defaultProps={{ name: "" }} />
       {/* Product Hunt: the gallery (tools/ph.ts renders them at 1270 × 760 and 2×) and the thumbnail. */}
       {GALLERY.map(({ id, component }) => (
