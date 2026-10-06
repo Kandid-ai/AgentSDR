@@ -109,6 +109,11 @@
   }
 }
 
+/* A hero with no product visual: the same sky, compressed, so it reaches white just under the buttons. */
+.skyCompact {
+  background: linear-gradient(180deg, #0b0a1a 0%, #120c3a 28%, #0f1669 48%, #1f3bad 64%, #335cff 76%, #739eff 86%, #dbe6ff 95%, #ffffff 100%);
+}
+
 /* Blueprint grid behind the hero copy, fading out towards the edges. */
 .grid {
   background-image:

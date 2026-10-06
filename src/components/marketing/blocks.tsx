@@ -62,11 +62,11 @@ export function PageHero({
   const parentLabel = parent === "/product" ? "Product" : parent === "/solutions" ? "Solutions" : parent === "/compare" ? "Compare" : parent === "/guides" ? "Guides" : null;
   const parentHref = parent === "/compare" || parent === "/guides" ? parent : null;
   return (
-    <div className={cn(landing.sky, "relative isolate overflow-hidden")}>
+    <div className={cn(children ? landing.sky : styles.skyCompact, "relative isolate overflow-hidden")}>
       <JsonLd data={breadcrumbLd(path, crumb)} />
       <div aria-hidden="true" className={cn(styles.aurora, "pointer-events-none absolute -inset-x-1/4 top-0 -z-10 h-[720px]")} />
       <div aria-hidden="true" className={cn(styles.grid, "pointer-events-none absolute inset-x-0 top-0 -z-10 h-[760px]")} />
-      <section aria-labelledby="page-title" className={cn("relative", children ? "pb-10 sm:pb-16" : "pb-24 sm:pb-32")}>
+      <section aria-labelledby="page-title" className={cn("relative", children ? "pb-10 sm:pb-16" : "pb-16 sm:pb-20")}>
         <div className="mx-auto max-w-[1128px] px-4 pb-12 pt-32 text-center sm:px-6 sm:pt-40">
           <nav aria-label="Breadcrumb" className={cn(styles.rise, monoFont, "mb-6 flex items-center justify-center gap-1.5 text-[12px] uppercase tracking-[0.06em] text-white/50")}>
             <Link href="/" className="rounded hover:text-white/80">

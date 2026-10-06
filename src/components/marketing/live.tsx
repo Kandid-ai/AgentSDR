@@ -115,7 +115,7 @@ export function StatBand({ items, className }: { items: ReadonlyArray<{ value: n
   return (
     <dl ref={ref} className={cn("grid overflow-hidden rounded-3xl bg-black/[0.06] [gap:1px] ring-1 ring-black/[0.06] sm:grid-cols-2 lg:grid-cols-4", className)}>
       {items.map((item) => (
-        <div key={item.label} className="flex flex-col-reverse bg-white px-6 py-7 sm:px-8">
+        <div key={item.label} className="flex flex-col-reverse justify-end bg-white px-6 py-7 sm:px-8">
           <dt className="mt-2 text-[14px] leading-[22px] text-[#656565]">{item.label}</dt>
           <dd className="font-[family-name:var(--font-brand-display)] text-[44px] font-medium leading-none tracking-[-0.04em] text-[#141414] tabular-nums">
             {item.prefix}

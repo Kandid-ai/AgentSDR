@@ -112,7 +112,7 @@ export default function EmailPage() {
         <StatBand
           items={[
             { value: 30, label: "emails a day per mailbox, by default" },
-            { value: 18, suffix: "–24 min", label: "random gap between sends from one mailbox" },
+            { value: 18, suffix: "–24m", label: "random gap in minutes between sends from one mailbox" },
             { value: 1, label: "send per step per lead — a step never goes twice" },
             { value: 0, prefix: "$", label: "per seat, per contact or per mailbox" },
           ]}

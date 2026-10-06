@@ -51,14 +51,14 @@ export function StackCollapse({ tools, result, resultNote }: { tools: ReadonlyAr
             className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f7f8] px-4 py-3 ring-1 ring-black/[0.05]"
             style={
               {
-                opacity: done ? 0.38 : 1,
+                opacity: done ? 0.6 : 1,
                 transform: done ? "translateX(18px) scale(0.97)" : "none",
                 transition: reduced ? "none" : `opacity 700ms ${ease} ${i * 90}ms, transform 800ms ${ease} ${i * 90}ms`,
               } as CSSProperties
             }
           >
             <span className="text-[14px] font-medium text-[#141414]">{t.label}</span>
-            <span className="text-right text-[12px] text-[#6b6b6b]">{t.note}</span>
+            <span className="text-right text-[12px] text-[#525866]">{t.note}</span>
           </li>
         ))}
       </ul>

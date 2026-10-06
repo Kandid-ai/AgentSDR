@@ -23,7 +23,7 @@ function Mark({ v }: { v: Verdict }) {
   const tone =
     v === "yes" ? "bg-[#1fc16b]/15 text-[#178c4e]" : v === "partial" ? "bg-[#fa7319]/15 text-[#c2570c]" : v === "no" ? "bg-[#fb3748]/10 text-[#c4222f]" : "bg-black/[0.05] text-[#6b6b6b]";
   return (
-    <span className={cn("inline-flex h-6 items-center gap-1 rounded-full pl-1 pr-2 text-[12px] font-medium leading-none", tone)}>
+    <span className={cn("inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-full pl-1 pr-2 text-[12px] font-medium leading-none", tone)}>
       <span aria-hidden="true" className="flex size-4 items-center justify-center rounded-full bg-current/15">
         {v === "yes" ? <RiCheckLine className="size-3" /> : v === "no" ? <RiCloseLine className="size-3" /> : <RiSubtractLine className="size-3" />}
       </span>
@@ -65,7 +65,7 @@ export function ComparisonTable({ caption, columns, rows, compact = false }: { c
   const visible = shown || reduced;
   return (
     <div ref={ref} className="overflow-x-auto rounded-3xl bg-white ring-1 ring-black/[0.07]" tabIndex={0} role="region" aria-label={caption}>
-      <table className={cn("w-full border-collapse text-left", compact ? "min-w-[920px]" : "min-w-[560px]")}>
+      <table className={cn("w-full border-collapse text-left", compact ? "min-w-[1040px]" : "min-w-[560px]")}>
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr>
