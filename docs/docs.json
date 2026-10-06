@@ -20,6 +20,10 @@
   "navbar": {
     "links": [
       {
+        "label": "Get help",
+        "href": "/help"
+      },
+      {
         "label": "Website",
         "href": "https://agentsdr.ai"
       }
@@ -36,27 +40,52 @@
         "groups": [
           {
             "group": "Get started",
-            "pages": ["index", "quickstart", "concepts"]
+            "pages": [
+              "index",
+              "quickstart",
+              "concepts",
+              "how-it-works"
+            ]
           },
           {
             "group": "Leads",
-            "pages": ["leads/overview", "leads/import", "leads/custom-fields"]
+            "pages": [
+              "leads/overview",
+              "leads/import",
+              "leads/custom-fields"
+            ]
           },
           {
             "group": "Tables",
-            "pages": ["tables/overview", "tables/enrichment", "tables/ai-columns"]
+            "pages": [
+              "tables/overview",
+              "tables/enrichment",
+              "tables/ai-columns"
+            ]
           },
           {
             "group": "Email",
-            "pages": ["email/connect", "email/campaigns", "email/inbox"]
+            "pages": [
+              "email/connect",
+              "email/campaigns",
+              "email/inbox"
+            ]
           },
           {
             "group": "LinkedIn",
-            "pages": ["linkedin/accounts", "linkedin/campaigns", "linkedin/messages"]
+            "pages": [
+              "linkedin/accounts",
+              "linkedin/campaigns",
+              "linkedin/messages"
+            ]
           },
           {
             "group": "WhatsApp",
-            "pages": ["whatsapp/accounts", "whatsapp/campaigns", "whatsapp/calling"]
+            "pages": [
+              "whatsapp/accounts",
+              "whatsapp/campaigns",
+              "whatsapp/calling"
+            ]
           },
           {
             "group": "AI CRM",
@@ -70,7 +99,9 @@
           },
           {
             "group": "Analytics",
-            "pages": ["analytics"]
+            "pages": [
+              "analytics"
+            ]
           },
           {
             "group": "Workspace",
@@ -79,6 +110,12 @@
               "workspace/ai-provider",
               "workspace/sending-rules"
             ]
+          },
+          {
+            "group": "Help",
+            "pages": [
+              "help"
+            ]
           }
         ]
       },
@@ -86,12 +123,41 @@
         "tab": "Self-hosting",
         "groups": [
           {
-            "group": "Run AgentSDR",
-            "pages": ["self-hosting", "configuration", "integrations"]
+            "group": "Self-hosting",
+            "pages": [
+              "self-hosting",
+              "self-hosting/docker-compose",
+              "self-hosting/from-source",
+              "self-hosting/dokploy",
+              "self-hosting/production",
+              "self-hosting/troubleshooting"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations",
+              "integrations/google-workspace",
+              "integrations/gmail-reply-sync",
+              "integrations/unipile",
+              "integrations/cloudflare-r2",
+              "integrations/openrouter",
+              "integrations/enrichment-providers",
+              "integrations/resend",
+              "integrations/google-sign-in"
+            ]
           },
           {
             "group": "Policies",
-            "pages": ["responsible-use"]
+            "pages": [
+              "responsible-use"
+            ]
           }
         ]
       },
@@ -100,11 +166,17 @@
         "groups": [
           {
             "group": "Contributing",
-            "pages": ["development", "architecture"]
+            "pages": [
+              "development",
+              "architecture"
+            ]
           },
           {
             "group": "Reference",
-            "pages": ["database", "multi-tenancy/conventions"]
+            "pages": [
+              "database",
+              "multi-tenancy/conventions"
+            ]
           }
         ]
       }
@@ -114,6 +186,58 @@
     "socials": {
       "github": "https://github.com/Kandid-ai/AgentSDR",
       "website": "https://agentsdr.ai"
-    }
+    },
+    "links": [
+      {
+        "header": "Community",
+        "items": [
+          {
+            "label": "Ask a question",
+            "href": "https://github.com/Kandid-ai/AgentSDR/discussions"
+          },
+          {
+            "label": "Report a bug",
+            "href": "https://github.com/Kandid-ai/AgentSDR/issues/new?template=bug_report.yml"
+          },
+          {
+            "label": "Request a feature",
+            "href": "https://github.com/Kandid-ai/AgentSDR/issues/new?template=feature_request.yml"
+          },
+          {
+            "label": "Report a security issue",
+            "href": "https://github.com/Kandid-ai/AgentSDR/security/advisories/new"
+          }
+        ]
+      },
+      {
+        "header": "Project",
+        "items": [
+          {
+            "label": "GitHub",
+            "href": "https://github.com/Kandid-ai/AgentSDR"
+          },
+          {
+            "label": "Changelog",
+            "href": "https://github.com/Kandid-ai/AgentSDR/blob/main/CHANGELOG.md"
+          },
+          {
+            "label": "Contributing",
+            "href": "https://github.com/Kandid-ai/AgentSDR/blob/main/CONTRIBUTING.md"
+          },
+          {
+            "label": "License (AGPL-3.0)",
+            "href": "https://github.com/Kandid-ai/AgentSDR/blob/main/LICENSE"
+          }
+        ]
+      }
+    ]
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
   }
 }

@@ -13,6 +13,10 @@ Instructions are standing guidance added to the AI's prompt. Open **Settings →
 - **Reply drafting**: added to every draft the AI writes. Use it for tone, length, sign-off and what to offer or avoid. For example: "Sign off as Priya from Youse. Keep emails under 120 words. Never offer discounts; suggest a 20-minute call instead."
 - **Reply classification**: added to every classification of a reply or call. Use it to settle edge cases. For example: "A referral to a colleague counts as Interested, not Other. Replies from agencies are Not interested."
 
+<Frame caption="Instructions are split into Reply drafting and Reply classification.">
+  <img src="/assets/screenshots/app/instructions.png" alt="Settings, Instructions page with Reply drafting and Reply classification tabs and an empty list with an Add instruction button" />
+</Frame>
+
 <Steps>
   <Step title="Add an instruction">
     Click **Add instruction**. Give it a short title and write the guidance. The AI receives each instruction as its own titled section.
@@ -32,6 +36,10 @@ Instructions steer the AI but do not unlock anything. It still never sends a mes
 ## Knowledge
 
 Knowledge is the product, pricing and policy material the AI grounds its drafts in. Open **Settings → AI → Knowledge**, then click **Add document**.
+
+<Frame caption="Documents marked Always included go into every draft.">
+  <img src="/assets/screenshots/app/knowledge.png" alt="Settings, Knowledge page listing one document, About Northwind Demo, marked Always included, with an Add document button" />
+</Frame>
 
 Each document has:
 
@@ -56,6 +64,10 @@ Open **Settings → CRM & leads → Lead categories**. Replies are sorted into f
 - **Subcategory**, with how many active records it holds and its funnel stage, or "Not a funnel stage".
 - **Classification description**: tells the AI when a reply belongs here. A subcategory with no description shows a prompt to add one. Be concrete: "The person explicitly asks for a product demo".
 - **Sequence**: the [sequence](/crm/sequences) that starts for it, or **No sequence**.
+
+<Frame caption="Each subcategory has a description for the AI and a sequence to start.">
+  <img src="/assets/screenshots/app/lead-categories.png" alt="Settings, Lead categories page listing the Interested subcategories with their classification descriptions and a sequence selector for each" />
+</Frame>
 
 Use **Add subcategory** in a category to create one. Its dialog asks for a **Name**, a **Classification description** and a **Funnel stage**. Use **Edit** on a row to change them. **Delete** removes a subcategory, but not one that still holds CRM records or classification history.
 

@@ -1,20 +1,29 @@
 # AgentSDR documentation
 
-This folder is also published as a docs site (Mintlify, configured in
-[docs.json](docs.json)); see [Development](development.md#documentation).
+Read these as a site at **[docs.agentsdr.ai](https://docs.agentsdr.ai)**. This folder
+is its source (Mintlify, configured in [docs.json](docs.json)); see
+[Development](development.md#documentation).
 
 ## Product guides
 
-- [Introduction](index.mdx), [Quickstart](quickstart.mdx) and [Concepts](concepts.mdx).
+- [Introduction](index.mdx), [Quickstart](quickstart.mdx), [Concepts](concepts.mdx) and [How it works](how-it-works.mdx).
 - [Leads](leads/overview.mdx), [Tables](tables/overview.mdx), [Email](email/campaigns.mdx), [LinkedIn](linkedin/campaigns.mdx), [WhatsApp](whatsapp/campaigns.mdx) and [calling](whatsapp/calling.mdx).
 - [AI CRM](crm/overview.mdx), [Analytics](analytics.mdx), and workspace settings: [organizations](workspace/organizations.mdx), [AI provider](workspace/ai-provider.mdx), [sending rules](workspace/sending-rules.mdx).
+- [Get help](help.mdx): where to ask questions, report bugs, suggest features and report security problems.
 
 ## Using and self-hosting
 
-- [Self-hosting](self-hosting.md): requirements, Docker Compose or from source, first sign-up, scheduled jobs, webhooks, upgrading, backups.
-- [Configuration](configuration.md): every environment variable, with defaults and where it is read.
+- [Self-hosting](self-hosting.md): what you run, requirements, the accounts you need, and the order of setup. Then:
+  [Docker Compose](self-hosting/docker-compose.mdx) · [From source](self-hosting/from-source.mdx) ·
+  [Dokploy on a VPS](self-hosting/dokploy.mdx) · [Going to production](self-hosting/production.mdx) ·
+  [Troubleshooting](self-hosting/troubleshooting.mdx).
+- [Configuration](configuration.md): every environment variable: required or not, default, how to generate it, where it is read.
+- [Integrations](integrations.md): how connections work and which feature each powers. Step-by-step guides:
+  [Google Workspace](integrations/google-workspace.mdx) · [Gmail reply sync](integrations/gmail-reply-sync.mdx) ·
+  [Unipile](integrations/unipile.mdx) · [Cloudflare R2](integrations/cloudflare-r2.mdx) ·
+  [OpenRouter](integrations/openrouter.mdx) · [Enrichment providers](integrations/enrichment-providers.mdx) ·
+  [Resend](integrations/resend.mdx) · [Google sign-in](integrations/google-sign-in.mdx).
 - [Responsible use](responsible-use.md): platform terms, email and privacy law, call recording consent, your data responsibilities.
-- [Integrations](integrations.md): connecting Unipile, Google Workspace, Cloudflare R2, OpenRouter, enrichment providers, Resend and Google sign-in.
 
 ## Developing
 

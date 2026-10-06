@@ -13,7 +13,7 @@ reports responsibly.
 | Older releases | ❌ Upgrade to the latest release |
 
 Self-hosted deployments are operated by their owners; a fix reaches you when
-you upgrade (see [docs/self-hosting.md](docs/self-hosting.md#upgrading)).
+you upgrade (see [docs/self-hosting.md](docs/self-hosting/production.mdx#upgrading)).
 
 ## Reporting a vulnerability
 

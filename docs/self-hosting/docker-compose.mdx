@@ -1,0 +1,300 @@
+---
+title: "Docker Compose"
+description: "Install AgentSDR with Docker Compose: clone, set secrets, start, sign up. Database, schema setup and scheduler included."
+icon: "container"
+---
+
+This is the recommended install. One command starts PostgreSQL, creates the schema, runs the app and runs the scheduler for periodic jobs.
+
+<Info>
+**What you need**
+
+- A Linux, macOS or Windows machine with Docker and Docker Compose (Compose 2.24 or newer only if you use your own database).
+- A terminal and `git` and `openssl`.
+- About 15 minutes. The first start builds the image, which takes a few minutes.
+- For a public server: a domain pointing at it (see [Going to production](/self-hosting/production)).
+</Info>
+
+## Overview
+
+```mermaid
+flowchart LR
+  db[(db: PostgreSQL 18)] --> setup[setup: create schema once]
+  setup --> app[app: port 3000]
+  app --> cron[cron: calls job endpoints]
+```
+
+`docker compose up -d` starts four services:
+
+| Service | What it does |
+|---|---|
+| `db` | PostgreSQL 18 with a persistent volume. |
+| `setup` | One-shot job: runs `bun scripts/db/setup.ts --if-empty`, which creates the schema and reference rows if the database is empty and does nothing otherwise. The `app` waits for it. |
+| `app` | The image built from the repository `Dockerfile`, listening on port 3000. |
+| `cron` | A small Alpine sidecar (busybox `crond` plus `curl`) that calls the scheduled-job endpoints listed in [Going to production](/self-hosting/production#scheduled-jobs). Its schedules are in `docker/cron/crontab` (container time zone is UTC). |
+
+<Steps>
+  <Step title="Clone the repository">
+    ```sh
+    git clone https://github.com/Kandid-ai/AgentSDR.git
+    cd AgentSDR
+    ```
+  </Step>
+  <Step title="Copy the example environment file">
+    ```sh
+    cp .env.example .env
+    ```
+    Compose reads `.env` from this folder. It is ignored by git and excluded from the Docker build, so secrets never enter the image.
+  </Step>
+  <Step title="Generate the secrets">
+    Each secret is a random 64-character hex string. Run this once per secret and paste each result into `.env`:
+
+    ```sh
+    openssl rand -hex 32   # BETTER_AUTH_SECRET
+    openssl rand -hex 32   # INTEGRATION_CREDENTIALS_KEY
+    openssl rand -hex 32   # UNSUBSCRIBE_SECRET
+    openssl rand -hex 32   # CRON_SECRET
+    openssl rand -hex 32   # OUTREACH_TICK_SECRET
+    openssl rand -hex 32   # POSTGRES_PASSWORD
+    ```
+
+    Or print all six at once:
+
+    ```sh
+    for v in BETTER_AUTH_SECRET INTEGRATION_CREDENTIALS_KEY UNSUBSCRIBE_SECRET CRON_SECRET OUTREACH_TICK_SECRET POSTGRES_PASSWORD; do echo "$v=$(openssl rand -hex 32)"; done
+    ```
+
+    <Warning>
+    Keep a copy of `INTEGRATION_CREDENTIALS_KEY` somewhere outside the server (a password manager). It encrypts every saved integration credential; if you lose it or change it, every integration has to be reconnected. `BETTER_AUTH_SECRET` signs sessions; changing it signs everyone out. Changing `UNSUBSCRIBE_SECRET` breaks unsubscribe links in email already sent.
+    </Warning>
+  </Step>
+  <Step title="Edit .env">
+    Open `.env` and set at least the values below. Replace everything in the block that says `PASTE`. Leave the other lines as they are.
+
+    ```sh
+    # Password for the bundled PostgreSQL (Compose also builds DATABASE_URL from it).
+    POSTGRES_PASSWORD=PASTE
+
+    # The address people and webhooks use to reach AgentSDR. No trailing slash.
+    # Local try-out: http://localhost:3000. A server: https://sdr.example.com
+    BETTER_AUTH_URL=http://localhost:3000
+
+    # Signs sessions. Keep it stable.
+    BETTER_AUTH_SECRET=PASTE
+
+    # Encrypts every saved integration credential. Never change it casually.
+    INTEGRATION_CREDENTIALS_KEY=PASTE
+
+    # Signs one-click unsubscribe links in sent email (sending fails without it).
+    UNSUBSCRIBE_SECRET=PASTE
+
+    # Authenticate the scheduled jobs; the cron service refuses to start without them.
+    CRON_SECRET=PASTE
+    OUTREACH_TICK_SECRET=PASTE
+
+    # Sign-up, password-reset and invitation email. Can wait until you invite
+    # people; until then the emails are written to the app log.
+    # RESEND_API_KEY=
+    # AUTH_EMAIL_FROM="AgentSDR <auth@yourdomain.com>"
+    ```
+
+    `DATABASE_URL` and `DATABASE_SSL` in `.env` are ignored in this mode: `docker-compose.yml` sets them for the `app` and `setup` services. The bundled `db` service does not use TLS, so Compose sets `DATABASE_SSL=disable` for you. Every variable is described in the [configuration reference](/configuration).
+
+    Optional: `PORT` (the host port the app is published on, default 3000) if port 3000 is taken on the host. `BETTER_AUTH_URL` is read at runtime, so one image works for any domain.
+  </Step>
+  <Step title="Start everything">
+    ```sh
+    docker compose up -d
+    ```
+    The first run builds the image (Bun install and a Next.js build), starts the database, creates the schema, then starts the app and the scheduler.
+  </Step>
+  <Step title="Sign up">
+    Open `http://localhost:3000` (or your `BETTER_AUTH_URL`) and go to `/sign-up`. Create the first account, verify it, and create your organization at `/onboarding` (a name and a URL slug). You become its owner. The first account on a fresh install can always be created; after that sign-up is invite-only by default. See [First sign-up and invite-only](/self-hosting/production#who-may-sign-up).
+
+    Without a Resend account yet, the verification email is written to the app log. Read the link with:
+
+    ```sh
+    docker compose logs app
+    ```
+
+    Set up Resend before inviting anyone: [Resend](/integrations/resend).
+  </Step>
+  <Step title="Connect your services">
+    In Settings, open the Connection page of each channel you want and connect the services you need: see [Integrations](/integrations).
+  </Step>
+</Steps>
+
+## The full docker-compose.yml
+
+This is the file in the repository root. You normally do not edit it; configuration goes in `.env`.
+
+```yaml
+# Self-host AgentSDR with Docker Compose.
+#
+#   cp .env.example .env      # set the REQUIRED values (see docs/self-hosting.md)
+#   docker compose up -d      # builds the image, creates the schema, starts the app
+#
+# Then open http://localhost:3000 (or your BETTER_AUTH_URL), sign up and
+# create your organization. Full guide: docs/self-hosting.md.
+
+name: agentsdr
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agentsdr
+      POSTGRES_USER: agentsdr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentsdr -d agentsdr"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: creates the schema in an empty database; a no-op afterwards.
+  setup:
+    build: .
+    image: agentsdr:local
+    command: ["bun", "scripts/db/setup.ts", "--if-empty"]
+    environment: &db-env
+      DATABASE_URL: postgres://agentsdr:${POSTGRES_PASSWORD}@db:5432/agentsdr
+      DATABASE_SSL: disable
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    image: agentsdr:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *db-env
+    ports:
+      - "${PORT:-3000}:3000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  # Calls the scheduled job endpoints (docker/cron/crontab). The send loop
+  # itself runs inside the app; these are the daily and periodic jobs.
+  cron:
+    image: alpine:3.22
+    restart: unless-stopped
+    environment:
+      APP_URL: http://app:3000
+      CRON_SECRET: ${CRON_SECRET:?Set CRON_SECRET in .env}
+      OUTREACH_TICK_SECRET: ${OUTREACH_TICK_SECRET:?Set OUTREACH_TICK_SECRET in .env}
+    volumes:
+      - ./docker/cron/crontab:/etc/agentsdr/crontab:ro
+      - ./docker/cron/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    depends_on:
+      - app
+
+volumes:
+  db-data:
+```
+
+<AccordionGroup>
+  <Accordion title="Line by line">
+    - `name: agentsdr` names the Compose project, so containers and the `db-data` volume are prefixed `agentsdr`.
+    - **`db`** uses `postgres:18-alpine` with database and user `agentsdr`. `POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}` makes Compose stop with that message if the value is missing. The data lives in the named volume `db-data` (mounted at `/var/lib/postgresql`), so it survives `docker compose down`. The healthcheck runs `pg_isready` every 5 seconds, up to 20 tries; other services wait for it.
+    - **`setup`** builds the image from the `Dockerfile` (`build: .`) and tags it `agentsdr:local`. Its command is `bun scripts/db/setup.ts --if-empty`. `environment: &db-env` defines `DATABASE_URL` (built from `POSTGRES_PASSWORD`, host `db`) and `DATABASE_SSL: disable`, and the `app` reuses them with `<<: *db-env`. It starts only after `db` is healthy. `restart: "no"` means it runs once per `docker compose up` and exits.
+    - **`app`** uses the same image, restarts unless you stop it, and reads all your settings from `.env` (`env_file`). `environment` is applied after `env_file`, so the compose `DATABASE_URL` wins over any in `.env`. It publishes `${PORT:-3000}` on the host to port 3000 in the container. It starts only after `setup` finished successfully.
+    - **`cron`** is `alpine:3.22`. `APP_URL` is the internal address `http://app:3000`, so jobs never leave the Docker network. `CRON_SECRET` and `OUTREACH_TICK_SECRET` are required (`:?`). It mounts `docker/cron/crontab` (the schedules) and `docker/cron/entrypoint.sh` read-only. The entrypoint installs `curl`, writes the three variables to a file each job sources (busybox `crond` does not pass the environment to jobs), loads the crontab and runs `crond` in the foreground.
+    - `volumes: db-data:` declares the named volume.
+  </Accordion>
+  <Accordion title="What the cron sidecar runs">
+    From `docker/cron/crontab` (UTC): `build-queue` at 00:05 daily, `mailboxes/watch` at 03:30 daily, LinkedIn `run-outreach` every 15 minutes, `run-search-queue` and `replay-webhooks` every 10 minutes, `reset-daily-limits` at 00:00. Adjust the schedules to your sending windows by editing that file and running `docker compose up -d --force-recreate cron`. See the [jobs table](/self-hosting/production#scheduled-jobs).
+  </Accordion>
+</AccordionGroup>
+
+## Using your own PostgreSQL
+
+The bundled `db` service is the default. To use a PostgreSQL 16+ you already run (a hosted one, for example) instead, add to `.env`:
+
+```sh
+COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml
+DATABASE_URL=postgres://user:password@your-host:5432/agentsdr
+DATABASE_SSL=            # empty = TLS on, which hosted Postgres expects
+```
+
+and run `docker compose up -d` as usual. The `db` service is not started, and the `setup` service creates the schema in your database on first start, so the database must be empty then. `POSTGRES_PASSWORD` is unused in this mode; leave the example value. This needs Docker Compose 2.24 or newer (the override file uses `!reset`).
+
+If your database has no TLS, set `DATABASE_SSL=disable`. If it is a managed database, leave `DATABASE_SSL` unset or empty.
+
+<Accordion title="What docker-compose.external-db.yml does">
+It puts `db` behind a profile (`bundled-db`) that nobody passes, so it never starts; clears `setup`'s dependency on `db`; and replaces `DATABASE_URL` and `DATABASE_SSL` on `setup` and `app` with the values from your `.env` (failing with "Set DATABASE_URL in .env to your PostgreSQL" if missing).
+</Accordion>
+
+## Check that it works
+
+```sh
+docker compose ps              # db: healthy, app and cron: running, setup: exited (0)
+docker compose logs setup      # "Database ready: N tables." the first time, "Database already initialised" after
+docker compose logs -f app     # the Next.js server log
+docker compose logs cron       # "agentsdr cron: schedules loaded"
+```
+
+<Check>
+`/sign-in` loads in the browser and `docker compose ps` shows `app` as running. The app has no dedicated health endpoint; a page loading is the check.
+</Check>
+
+{/* SCREENSHOT: the sign-up form on a fresh install | /sign-up | the email, password fields and the create account button */}
+
+## Stop, restart and update
+
+```sh
+docker compose stop            # stop, keep data
+docker compose up -d           # start again
+docker compose down            # remove containers, keep the db-data volume
+docker compose down -v         # also DELETE the database volume (all data)
+```
+
+To update to a newer version, back up first, pull the code, run any migration the release notes name, then rebuild:
+
+```sh
+git pull
+docker compose up -d --build
+```
+
+Updating an existing install is not done with `db:setup`. The migration steps are in [Upgrading](/self-hosting/production#upgrading) and backups in [Backups and restore](/self-hosting/production#backups-and-restore).
+
+<Note>
+Do not scale `app` to more than one replica: the outreach sender loop has no distributed lock, and two instances would each send.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Set POSTGRES_PASSWORD in .env">
+    Compose stops with this when the variable is empty or missing. Set it in `.env` (not in `.env.local`). The same applies to `CRON_SECRET` and `OUTREACH_TICK_SECRET`.
+  </Accordion>
+  <Accordion title="Port 3000 is already in use">
+    Set `PORT=3001` (any free port) in `.env` and run `docker compose up -d` again.
+  </Accordion>
+</AccordionGroup>
+
+More: [Troubleshooting](/self-hosting/troubleshooting).
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Going to production" icon="rocket" href="/self-hosting/production">
+    Domain, HTTPS, email, backups, upgrades.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/integrations">
+    Connect Gmail, Unipile, R2, OpenRouter.
+  </Card>
+  <Card title="Configuration reference" icon="sliders-horizontal" href="/configuration">
+    Every environment variable.
+  </Card>
+  <Card title="Troubleshooting" icon="life-buoy" href="/self-hosting/troubleshooting">
+    Real error messages and fixes.
+  </Card>
+</CardGroup>

@@ -1,218 +1,141 @@
 ---
 title: "Integrations"
-description: "Connecting Unipile, Google Workspace, Cloudflare R2, OpenRouter, enrichment providers, Resend and Google sign-in."
+description: "How AgentSDR connects to outside services, where to connect each one, and the technical webhook reference."
 icon: "plug"
 ---
 
 AgentSDR talks to outside services in two ways:
 
-- **Per organization**, connected inside the app by an owner or admin and
-  stored encrypted in the database (AES-256-GCM, key `INTEGRATION_CREDENTIALS_KEY`).
-  This covers Unipile, Google Workspace, Cloudflare R2, OpenRouter and the
-  enrichment providers. Each organization connects its own accounts; there is no
-  environment fallback. A feature works only while its integration is connected:
-  background jobs skip an organization that has not connected it, user-facing
-  routes answer 409, and pages show a Connect prompt.
+- **Per organization**, connected inside the app and stored encrypted in the
+  database. This covers Unipile, Google Workspace, Cloudflare R2, OpenRouter and
+  the enrichment providers. Each organization connects its own accounts.
 - **Per instance**, configured in the environment: Resend (auth email) and the
   Google OAuth client for "Continue with Google" sign-in. See
   [configuration.md](configuration.md).
 
-Connecting and changing integrations needs the owner or admin role. Members use
-the features but cannot change credentials. Each credential is verified with one
-live call to the provider before it is saved, and secret values are never sent
-back to the browser (leave a secret field blank when editing to keep it).
+## How per-organization integrations work
 
-Open Settings, Integrations for Unipile, Google Workspace and Cloudflare R2.
-OpenRouter is connected under Settings, AI provider.
+- **Encrypted at rest.** Credentials are encrypted (AES-256-GCM) with the key in
+  `INTEGRATION_CREDENTIALS_KEY` before they are written to the database. Secret
+  values are never sent back to the browser. Leave a secret field blank when
+  editing to keep the saved value.
+- **Verified on save.** Each credential is checked with one live call to the
+  provider before it is saved. If the check fails, nothing is stored and the
+  form shows the reason.
+- **Cached for 30 seconds.** Connected credentials are cached per process, keyed
+  by organization and integration, so a change reaches other server instances
+  within 30 seconds.
+- **No environment fallback.** The keys are never read from environment
+  variables. An organization that has not connected a service does not have it.
+- **Features switch off when it is missing.** Background jobs skip an
+  organization that has not connected the integration, user-facing routes answer
+  HTTP 409 (`PlatformNotConnectedError`: "X is not connected, connect it in
+  Settings, ..."), and pages show a **Connect** prompt instead of their content.
 
-## Unipile
+## Who can manage integrations
 
-Connects LinkedIn and WhatsApp accounts for sending, inbox sync and calling
-support. Without it, LinkedIn accounts and campaigns and WhatsApp messaging are
-off.
+Connecting, editing and disconnecting an integration needs the **owner** or
+**admin** role. Members use the features but cannot change credentials.
 
-Fields (Settings, Integrations, Unipile):
+## Where to connect each one
 
-| Field | What it is |
-|---|---|
-| DSN (API address) | Shown at the top of the Unipile dashboard, for example `api8.unipile.com:13851`. `https://` is added if missing. |
-| Access token | Dashboard, Access tokens, Generate. Shown once. |
-| Webhook secret | Leave it empty: AgentSDR generates one on the first save. Fill it in only to keep a secret you already use. |
-
-Linking accounts: reps link their LinkedIn or WhatsApp account through
-Unipile's hosted wizard from Settings, LinkedIn accounts / WhatsApp accounts, or
-in the Unipile dashboard followed by "Sync from Unipile". LinkedIn and WhatsApp
-accounts are read separately.
-
-### Webhooks (registered automatically)
-
-When the integration is saved, AgentSDR registers the webhooks it needs in
-your Unipile workspace through Unipile's API, so there is nothing to set up in
-the Unipile dashboard:
-
-| Unipile source and events | URL |
-|---|---|
-| `users`: `new_relation` (a LinkedIn connection request was accepted) | `/api/webhooks/connection-accepted?org=<organization id>` |
-| `messaging`: `message_received` (LinkedIn) | `/api/webhooks/message-received?org=<organization id>` |
-| `messaging`: `message_received`, `message_read`, `message_delivered` (WhatsApp) | `/api/webhooks/whatsapp-message?org=<organization id>` |
-
-Each is registered with the header `x-unipile-secret: <webhook secret>`, which
-Unipile sends on every delivery. Settings, Integrations, Unipile shows whether
-registration worked, a **Register again** button, and **Show URLs and secret**
-(owners and admins only) for registering them by hand.
-
-How a delivery is checked:
-
-- A URL with `org=` must carry that organization's secret, or it is refused
-  with 401 (as is an unknown organization). An event for an account that is not
-  that organization's (not synced yet, or another organization's sharing the
-  same Unipile workspace) is acknowledged with 200 and dropped, so Unipile does
-  not retry it.
-- Registering replaces, never duplicates: it removes this organization's
-  earlier registrations and any hand-made registration of the same three
-  endpoints that names no organization. Other organizations' registrations are
-  left alone. Disconnecting Unipile removes this organization's own.
-- Registration is skipped while `BETTER_AUTH_URL` is a `localhost` address,
-  which Unipile's servers cannot reach.
-- Hand-made URLs without `org=` still work as before: the organization is
-  found from the account in the payload. The two LinkedIn endpoints accept such
-  a request with no secret (and log a warning); the WhatsApp endpoint requires
-  `?secret=` or the header. Clicking **Register again** replaces them.
-- The `message-received` endpoint also receives WhatsApp events and ignores
-  anything that is not LinkedIn, and the reverse for `whatsapp-message`.
-- Every delivery is stored in a ledger first. Failed ones are retried by the
-  `replay-webhooks` job ([self-hosting.md](self-hosting.md#scheduled-jobs)).
-
-### Hosted auth notify URL (`?org=`)
-
-When a user connects an account through the hosted wizard, AgentSDR gives
-Unipile a `notify_url`:
-
-```
-<BETTER_AUTH_URL>/api/webhooks/unipile-account?secret=<webhook secret>&org=<organization id>
-```
-
-Unipile calls it when the wizard finishes (`CREATION_SUCCESS` or
-`RECONNECTED`), and AgentSDR then syncs the LinkedIn and WhatsApp accounts. The
-`org` parameter tells the public endpoint whose secret to check before it reads
-anything. URLs created before `org` existed carry only `secret`; the
-organization is then the one whose stored secret matches. The notify URL is
-**omitted** when `BETTER_AUTH_URL` (the public origin) is a `localhost` address or when no
-webhook secret is stored, because Unipile's servers cannot reach it. Locally the
-redirect back to the accounts page syncs anyway.
-
-Send limits for WhatsApp (no new chats for 24 hours after a number is linked,
-25 new chats a day per number, 10 seconds between sends) are enforced server-side and can be tuned with the
-`WHATSAPP_*` variables ([configuration.md](configuration.md#workers-and-tuning)).
-
-## Google Workspace
-
-Sends and reads Gmail through a service account with domain-wide delegation.
-Without it, email accounts, email campaigns and reply sync are off.
-
-1. In Google Cloud, enable the Gmail API (APIs & Services, Library).
-2. Create a service account (IAM & Admin, Service accounts). It needs no roles.
-3. Create a JSON key for it (Keys, Add key, Create new key, JSON).
-4. In the Google Admin console: Security, Access and data control, API
-   controls, Manage domain-wide delegation, Add new. Enter the service
-   account's Client ID and these scopes:
-
-   ```
-   https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/gmail.readonly
-   ```
-
-5. In Settings, Integrations, Google Workspace, upload the key file (it fills
-   the service account email and private key) and save.
-
-Mailboxes are then added under Settings, Email accounts; the service account
-impersonates each address on your Workspace domain.
-
-### Reply sync through Pub/Sub (optional, recommended)
-
-Sending works without this, but replies are not picked up.
-
-1. In Google Cloud, create a Pub/Sub topic.
-2. Give `gmail-api-push@system.gserviceaccount.com` the Pub/Sub Publisher role
-   on that topic.
-3. Put the topic's full name (`projects/<project>/topics/<topic>`) in the
-   "Gmail Pub/Sub topic" field of the integration.
-4. Create a **push** subscription on the topic with the endpoint
-   `https://<your-origin>/api/outreach/webhooks/gmail-watch`. Pub/Sub cannot add
-   a shared secret, so the endpoint only acts on addresses of mailboxes that are
-   connected in AgentSDR and acknowledges everything else.
-5. Schedule `POST /api/outreach/mailboxes/watch` daily
-   ([self-hosting.md](self-hosting.md#scheduled-jobs)). Gmail watches expire
-   after about seven days; this call renews them for every connected mailbox.
-
-## Cloudflare R2
-
-Stores WhatsApp call recordings and contact photos. Without it those features
-are off. Recordings are reached only through short-lived presigned URLs.
-
-1. In the Cloudflare dashboard, open R2 Object Storage and create a bucket.
-2. Copy your Account ID from the R2 overview page.
-3. Manage API tokens, Create API token, with Object Read and Write on that
-   bucket. Copy the Access Key ID and Secret Access Key (shown once).
-4. In Settings, Integrations, Cloudflare R2 enter Account ID, Bucket name,
-   Access key ID and Secret access key.
-
-## OpenRouter (AI provider)
-
-All model calls (AI columns in Tables, CRM classification and drafting, call
-transcription) go through OpenRouter, and only with **your own provider keys**
-("bring your own key"). Configure it at Settings, AI provider:
-
-1. **OpenRouter account.** Enter an inference API key and a management key.
-   The management key reads your BYOK configuration (`/api/v1/byok`) and cannot
-   run completions. Create them at openrouter.ai (keys and management keys
-   pages).
-2. **Providers and models.** Add your provider keys (OpenAI, Anthropic, Google
-   and so on) as BYOK keys in the OpenRouter dashboard, then press "Refresh
-   providers" and select the providers and models AgentSDR may use. Fallback
-   credentials are shown but not selectable.
-3. **Default model.** Every internal AI task uses this text model. It must
-   support structured output.
-4. **Call transcription model.** Used to transcribe WhatsApp call recordings.
-   Pick a model that accepts audio input (for example a Gemini model). Leaving
-   it empty turns transcription off. Gemini merges the audio channels, so
-   speaker labels are inferred.
-5. **Shared capacity.** OpenRouter does not expose its "shared capacity
-   fallback" setting through its API. In the OpenRouter BYOK dashboard, set
-   "Never use shared capacity on this provider" for every enabled provider, then
-   confirm it in AgentSDR. Model calls are blocked until you do.
-
-Requests are pinned to one provider with fallbacks disabled.
-`OPENROUTER_SITE_URL` sets the attribution URL sent to OpenRouter.
-
-## Enrichment providers (Tables)
-
-Tables can call enrichment services per row. Each provider has its own
-connection (an API key, verified before saving) and you can hold several
-accounts per provider. Connections are per organization. Supported providers:
-Apollo, Cleanlist, ContactOut, Findymail, FullEnrich, Hunter, Icypeas,
-LeadMagic, Lusha, MillionVerifier, RocketReach, Semrush, Similarweb, Snov and
-ZeroBounce. The definitions live in `src/lib/integrations/` (see its README for
-adding one).
+| Integration | What it powers | Where to connect it in the app | Guide |
+|---|---|---|---|
+| Google Workspace | Email accounts, email campaigns, sending and reading Gmail | Settings, Email, Connection | [Google Workspace](integrations/google-workspace.mdx) |
+| Gmail reply sync (Pub/Sub, optional) | Picking up email replies | Same card: the "Gmail Pub/Sub topic" field | [Gmail reply sync](integrations/gmail-reply-sync.mdx) |
+| Unipile | LinkedIn accounts, invitations, messages and search; WhatsApp messaging and calling | Settings, LinkedIn, Connection (the same connection also shows under Settings, WhatsApp, Integrations) | [Unipile](integrations/unipile.mdx) |
+| Cloudflare R2 | WhatsApp call recordings and contact photos | Settings, WhatsApp, Integrations | [Cloudflare R2](integrations/cloudflare-r2.mdx) |
+| OpenRouter | Every AI feature: reply classification and drafts, AI columns, call transcription | Settings, AI provider | [OpenRouter](integrations/openrouter.mdx) |
+| Enrichment providers (15) | Enrichment columns in Tables | Inside Tables: Actions, Add enrichment, Add account | [Enrichment providers](integrations/enrichment-providers.mdx) |
+| Resend (per instance) | Verification, password-reset and invitation email | Environment: `RESEND_API_KEY`, `AUTH_EMAIL_FROM` | [Resend](integrations/resend.mdx) |
+| Google sign-in (per instance) | The "Continue with Google" button | Environment: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | [Google sign-in](integrations/google-sign-in.mdx) |
 
 Two things are deliberately **not** stored in the database: the HTTP column's
 bearer token (read from an environment variable whose name the user chooses; see
 [configuration.md](configuration.md#user-named-variables-tables-http-column)),
 and the prospecting master `APOLLO_API_KEY`.
 
-## Platform-level services
+Google sign-in is unrelated to the Google Workspace integration, which is the
+Gmail service account.
 
-### Resend
+## Webhooks reference
 
-Auth email (sign-up verification, password reset, invitations) for the whole
-instance. Create an API key at resend.com, verify a sending domain, then set
-`RESEND_API_KEY` and `AUTH_EMAIL_FROM`. Without a key the emails are written to the server log, which is enough to verify the first account but not to invite anyone, so set it up before inviting people in production.
+This section is the technical detail behind the Unipile guide. In normal use you
+never touch it: saving the Unipile integration registers everything.
 
-### Google sign-in
+### Registered automatically
 
-Optional "Continue with Google" button. In Google Cloud, create an OAuth client
-(Web application) with the authorized redirect URI
-`<BETTER_AUTH_URL>/api/auth/callback/google`, then set `GOOGLE_CLIENT_ID` and
-`GOOGLE_CLIENT_SECRET`. With either empty the button is hidden. Signing in with
-Google as an address that already has a password account links the two. This is
-unrelated to the Google Workspace integration above, which is the Gmail service
-account.
+When the Unipile integration is saved, AgentSDR registers the webhooks it needs
+in your Unipile workspace through Unipile's API (`POST /api/v1/webhooks`):
+
+| Unipile source and events | URL |
+|---|---|
+| `users`: `new_relation` (a LinkedIn connection request was accepted) | `/api/webhooks/connection-accepted?org=<organization id>` |
+| `messaging`: `message_received`, `message_read`, `message_delivered` (LinkedIn and WhatsApp) | `/api/webhooks/unipile-message?org=<organization id>` |
+
+Each is registered with the header `x-unipile-secret: <webhook secret>`, which
+Unipile sends on every delivery, and with a JSON content type (webhooks created
+through the API carry none unless asked). Settings shows whether registration
+worked, a **Register again** button, and **Show URLs and secret** (owners and
+admins only) for registering them by hand.
+
+`/api/webhooks/unipile-message` is one endpoint for both channels. It routes by
+`account_type`: WhatsApp events go to the WhatsApp handler
+(`/api/webhooks/whatsapp-message`), a LinkedIn `message_received` goes to the
+LinkedIn handler (`/api/webhooks/message-received`), and anything else (a
+LinkedIn read or delivery receipt, another provider) is acknowledged and
+dropped. The two handler paths stay live and public for hand-made
+registrations and the LinkedIn replay job. Earlier versions registered those two
+paths separately; a new registration deletes them so no message arrives twice.
+
+### How a delivery is checked
+
+- A URL with `org=` must carry that organization's secret, in the
+  `x-unipile-secret` header or as `?secret=`, or it is refused with 401 (as is an
+  unknown organization or a malformed `org`). An event for an account that is not
+  that organization's (not synced yet, or another organization's sharing the same
+  Unipile workspace) is acknowledged with 200 and dropped, so Unipile does not
+  retry it.
+- Registering replaces, never duplicates: it removes this organization's earlier
+  registrations and any hand-made registration of the same endpoints that names
+  no organization. Other organizations' registrations are left alone.
+  Disconnecting Unipile removes this organization's own (best effort).
+- Registration is skipped while `BETTER_AUTH_URL` is a `localhost` address
+  (`localhost`, `127.0.0.1`, `0.0.0.0`, `[::1]`), which Unipile's servers cannot
+  reach. It is also skipped when no public URL or no webhook secret is stored.
+  The Settings card says why.
+- Hand-made URLs without `org=` still work as before: the organization is found
+  from the account in the payload. The two LinkedIn endpoints accept such a
+  request with no secret (and log a warning); the WhatsApp endpoint requires
+  `?secret=` or the header. Clicking **Register again** replaces them.
+- Every delivery is stored in a ledger first. Failed ones are retried by the
+  `replay-webhooks` job ([self-hosting.md](self-hosting.md#scheduled-jobs)).
+- Unipile itself retries a delivery up to five times if your server does not
+  answer 200 within 30 seconds.
+
+### Hosted auth notify URL (`?org=`)
+
+When a user connects a LinkedIn account through the hosted wizard, AgentSDR gives
+Unipile a `notify_url`:
+
+```
+<BETTER_AUTH_URL>/api/webhooks/unipile-account?secret=<webhook secret>&org=<organization id>
+```
+
+Unipile calls it when the wizard finishes (`CREATION_SUCCESS` or `RECONNECTED`),
+and AgentSDR then syncs the LinkedIn and WhatsApp accounts, each in its own
+try/catch. The `org` parameter tells the public endpoint whose secret to check
+before it reads anything. URLs created before `org` existed carry only `secret`;
+the organization is then the one whose stored secret matches. The payload is
+treated as a nudge only: every field is re-read from the Unipile API. The notify
+URL is **omitted** when `BETTER_AUTH_URL` (the public origin) is a `localhost`
+address or when no webhook secret is stored, because Unipile's servers cannot
+reach it. Locally, the redirect back to the accounts page syncs anyway.
+
+### WhatsApp send limits
+
+No new chats for 24 hours after a number is linked, 25 new chats a day per
+number, and 10 seconds between sends are the defaults, enforced server-side. They
+are per-organization sending rules (Workspace, Sending rules; see
+[Sending rules](workspace/sending-rules.mdx)), not
+environment variables.

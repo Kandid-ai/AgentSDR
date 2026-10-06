@@ -14,9 +14,13 @@ Only Google Workspace mailboxes are supported today. Microsoft Outlook is listed
 
 Open **Settings → Email → Connection**. The **Google Workspace** card shows **Connected** or **Not connected**, and what it powers: email accounts, campaigns and reply sync.
 
+<Frame caption="The Connection tab. Connect on the Google Workspace card opens the setup dialog.">
+  <img src="/assets/screenshots/app/email-connection.png" alt="Settings, Email, Connection tab showing a Google Workspace card marked Not connected with a Connect button, and a Microsoft Outlook card marked Coming soon" />
+</Frame>
+
 <Steps>
   <Step title="Click Connect">
-    The card opens a form with a **How to connect** guide. It lists the Google Cloud and Google Admin steps: enable the Gmail API, create a service account and a JSON key, then authorise the service account for the Gmail scopes in the Admin console (domain-wide delegation). The full walkthrough is in [Integrations](/integrations).
+    The card opens a form with a **How to connect** guide. It lists the Google Cloud and Google Admin steps: enable the Gmail API, create a service account and a JSON key, then authorise the service account for the Gmail scopes in the Admin console (domain-wide delegation). The full walkthrough is in [Google Workspace setup](/integrations/google-workspace).
   </Step>
   <Step title="Fill in the credentials">
     Use **Upload key file** to fill the fields from the JSON key, or paste them by hand.
@@ -107,7 +111,7 @@ Between sends, each mailbox also waits a random gap, 18 to 24 minutes by default
   <Card title="Sending rules" icon="settings" href="/workspace/sending-rules">
     Default limits, gaps and hours.
   </Card>
-  <Card title="Integrations" icon="plug" href="/integrations">
-    The Google Cloud and Admin console steps.
+  <Card title="Google Workspace setup" icon="plug" href="/integrations/google-workspace">
+    Step by step: Cloud project, service account, domain-wide delegation, and reply sync.
   </Card>
 </CardGroup>

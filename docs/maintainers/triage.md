@@ -35,6 +35,34 @@ For each `needs-triage` issue:
    short reason.
 5. Remove `needs-triage`.
 
+## Discussions
+
+Questions, ideas and show-and-tell live in
+[Discussions](https://github.com/Kandid-ai/AgentSDR/discussions), not issues.
+
+- **Q&A:** answer, or point to the docs page that answers it, and mark the
+  answer. A question that reveals a gap in the docs gets a `documentation`
+  issue, so the next person finds it on docs.agentsdr.ai.
+- **A question filed as an issue:** use "Convert to discussion" (Q&A) rather
+  than closing it.
+- **Ideas:** when one is accepted, open an `enhancement` issue that links the
+  discussion; when it is declined, say why in the thread.
+- **A bug reported in Discussions:** ask for the bug form, or open the issue
+  yourself and link it.
+
+## Where reports come from
+
+People reach the forms from the app's **Help** menu (Report a bug fills in
+the version), the "Get help" page and footer of docs.agentsdr.ai, the README
+and `SUPPORT.md`. Keep `.github/ISSUE_TEMPLATE/` and those links in step when
+a form changes.
+
+## Closing the loop
+
+Reference the issue in the fix's commit (`Fixes #123`) so it closes when the
+fix lands, and list it in `CHANGELOG.md` under the release. Reply on the
+issue with the version that contains the fix.
+
 ## Response expectations
 
 These are goals for a volunteer-run project, not guarantees:

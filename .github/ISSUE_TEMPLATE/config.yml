@@ -7,5 +7,5 @@ contact_links:
     url: https://github.com/Kandid-ai/AgentSDR/discussions
     about: Questions, ideas and show-and-tell go to Discussions.
   - name: Read the docs
-    url: https://github.com/Kandid-ai/AgentSDR/tree/main/docs
-    about: Self-hosting, configuration, integrations and development guides.
+    url: https://docs.agentsdr.ai
+    about: Guides for every feature, self-hosting, configuration and step-by-step integration setup.

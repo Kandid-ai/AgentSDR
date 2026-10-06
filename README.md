@@ -276,7 +276,7 @@ docker compose up -d
 That starts PostgreSQL, creates the schema on first run, then runs the app on
 port 3000 and a small scheduler for the periodic jobs. Already have a hosted
 PostgreSQL? Point AgentSDR at it instead of the bundled one:
-[Using your own PostgreSQL](docs/self-hosting.md#using-your-own-postgresql). Open the app and sign
+[Using your own PostgreSQL](docs/self-hosting/docker-compose.mdx#using-your-own-postgresql). Open the app and sign
 up: the first account and organization become the instance's operator.
 
 Without an email service configured, the verification email is written to the
@@ -310,12 +310,12 @@ connected.
 
 | Service | Powers | Guide |
 |---|---|---|
-| [Unipile](https://www.unipile.com) | LinkedIn and WhatsApp accounts, messaging and calling | [Unipile](docs/integrations.md#unipile) |
-| Google Workspace | Sending and reading Gmail through a service account | [Google Workspace](docs/integrations.md#google-workspace) |
-| [Cloudflare R2](https://www.cloudflare.com/developer-platform/r2/) | Call recordings and contact photos | [Cloudflare R2](docs/integrations.md#cloudflare-r2) |
-| [OpenRouter](https://openrouter.ai) | Every AI feature, on your own key | [OpenRouter](docs/integrations.md#openrouter-ai-provider) |
-| Enrichment providers | Tables columns (15 providers) | [Enrichment](docs/integrations.md#enrichment-providers-tables) |
-| [Resend](https://resend.com) | Verification, password-reset and invitation email (per instance) | [Resend](docs/integrations.md#resend) |
+| [Unipile](https://www.unipile.com) | LinkedIn and WhatsApp accounts, messaging and calling | [Unipile](docs/integrations/unipile.mdx) |
+| Google Workspace | Sending and reading Gmail through a service account | [Google Workspace](docs/integrations/google-workspace.mdx) |
+| [Cloudflare R2](https://www.cloudflare.com/developer-platform/r2/) | Call recordings and contact photos | [Cloudflare R2](docs/integrations/cloudflare-r2.mdx) |
+| [OpenRouter](https://openrouter.ai) | Every AI feature, on your own key | [OpenRouter](docs/integrations/openrouter.mdx) |
+| Enrichment providers | Tables columns (15 providers) | [Enrichment](docs/integrations/enrichment-providers.mdx) |
+| [Resend](https://resend.com) | Verification, password-reset and invitation email (per instance) | [Resend](docs/integrations/resend.mdx) |
 
 ## Configuration
 

@@ -1,162 +1,519 @@
 ---
 title: "Configuration reference"
-description: "Every environment variable AgentSDR reads, with defaults and where it is read."
+description: "Every environment variable AgentSDR reads: what it does, whether you need it, how to generate it, its default and where it is read."
 icon: "sliders-horizontal"
 ---
 
-Every environment variable the code reads. Copy `.env.example` to `.env.local`
-(source installs) or put the values in the environment of the container.
+This page lists every environment variable the running app reads, plus the few
+that Docker Compose and the setup scripts read. Each one says whether you need
+it, what happens without it, and how to get a value.
 
-**Third-party service credentials are not environment variables.** Unipile,
-Google Workspace (Gmail), Cloudflare R2, OpenRouter and the enrichment
-providers are connected per organization from Settings in the running app and
-stored encrypted in the database. There is no environment fallback. See
-[integrations.md](integrations.md). The environment only holds what is needed
-before the database can be read, public URLs, cron secrets and tuning knobs.
+## How configuration works
 
-"Read in" lists the file that reads the variable.
+AgentSDR keeps almost nothing in environment variables. The environment holds
+only four kinds of thing:
+
+1. **What the app needs before it can read the database**: the database
+   connection, the sign-in secret and the encryption key.
+2. **Shared platform services**: the email service that sends sign-in mail
+   (Resend) and the optional Google sign-in button.
+3. **Public URLs and cron secrets**: where people reach the app, and the
+   passwords your scheduler uses to call the job endpoints.
+4. **Tuning knobs and pause switches**: optional, with working defaults.
+
+Everything else is set **per organization, inside the app**, and stored
+encrypted in the database. There is no environment fallback for any of it:
+
+| Set in the app | Where |
+|---|---|
+| Unipile (LinkedIn and WhatsApp), Google Workspace (Gmail), Cloudflare R2 | **Integrations** (`/integrations`), or the Connection page of each channel. See [integrations.md](integrations.md). |
+| OpenRouter (AI) | **Settings → AI provider**. See [OpenRouter](integrations/openrouter.mdx). |
+| Enrichment providers | **Integrations**. See [Enrichment providers](integrations/enrichment-providers.mdx). |
+| Emails a day, send gaps, sending hours, LinkedIn invitations, WhatsApp warm-up and new chats a day | **Sending rules** (`/workspace/sending-rules`). See [Sending rules](workspace/sending-rules.mdx). |
+
+If you are looking for `UNIPILE_API_KEY`, `OPENROUTER_API_KEY`, `R2_*` or a
+Google service-account key: they are not read. See
+[Removed variables](#removed-variables).
+
+### Which file holds the values
+
+| How you run AgentSDR | File | Notes |
+|---|---|---|
+| Docker Compose | `.env` next to `docker-compose.yml` | Compose reads it and passes it to the `app` container. See [Docker Compose](self-hosting/docker-compose.mdx). |
+| From source (`bun run dev`, `next start`) | `.env.local` | Next.js and Bun load it. See [From source](self-hosting/from-source.mdx). |
+| A platform such as Dokploy | The platform's environment settings | See [Dokploy](self-hosting/dokploy.mdx). |
+
+Start from `.env.example`: `cp .env.example .env` (Compose) or
+`cp .env.example .env.local` (source). Restart the app after any change. The
+pause switches are re-read on every call, but most other values are read once
+when the server starts.
+
+Generate every secret on this page with:
+
+```bash
+openssl rand -hex 32
+```
+
+That prints 64 random hex characters. Use a different value for each secret.
 
 ## Minimum production configuration
 
-| Variable | Why |
+Copy this block into `.env` and fill it in. A line starting with `#` is a
+comment.
+
+```bash
+# Where PostgreSQL 16+ is. With Docker Compose this is built for you from
+# POSTGRES_PASSWORD, so you can leave it out.
+DATABASE_URL=postgres://agentsdr:CHANGE-ME@db.example.com:5432/agentsdr
+
+# Docker Compose only: the password of the bundled PostgreSQL.
+POSTGRES_PASSWORD=CHANGE-ME
+
+# Set to "disable" only if your database has no TLS (the Compose database).
+# Leave it out to require TLS, which hosted databases expect.
+DATABASE_SSL=disable
+
+# The address people and webhooks use to reach AgentSDR. No trailing slash.
+BETTER_AUTH_URL=https://agentsdr.example.com
+
+# Signs login sessions. Changing it later signs everyone out.
+BETTER_AUTH_SECRET=<openssl rand -hex 32>
+
+# Encrypts every saved integration credential. Never change it casually.
+INTEGRATION_CREDENTIALS_KEY=<openssl rand -hex 32>
+
+# Signs the one-click unsubscribe link in every email you send.
+UNSUBSCRIBE_SECRET=<openssl rand -hex 32>
+
+# Password for the email cron endpoints (daily queue build, Gmail renewal).
+OUTREACH_TICK_SECRET=<openssl rand -hex 32>
+
+# Password for the LinkedIn cron endpoints. Needed only if you use LinkedIn.
+# (Docker Compose requires it to be set either way.)
+CRON_SECRET=<openssl rand -hex 32>
+
+# Sends sign-up verification, password reset and invitation email.
+# Needed before you invite anyone. Without it these emails go to the log.
+RESEND_API_KEY=re_xxxxxxxxxxxx
+# The sender. Its domain must be verified in Resend.
+AUTH_EMAIL_FROM="AgentSDR <auth@yourdomain.com>"
+```
+
+Optional additions: `AUTH_SIGNUP=open` if anyone may sign up, and
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` for "Continue with Google".
+
+## Database
+
+PostgreSQL 16 or newer. Create the tables in an empty database with
+`bun run db:setup` (Docker Compose does this for you on first start).
+
+### `DATABASE_URL`
+
+| | |
 |---|---|
-| `DATABASE_URL` | The database. |
-| `BETTER_AUTH_SECRET` | Signs sessions. |
-| `BETTER_AUTH_URL` | The public origin, read at runtime. |
-| `RESEND_API_KEY` and `AUTH_EMAIL_FROM` | Sign-up verification, password reset, invitations. Needed before inviting anyone in production; without them these emails go to the server log. |
-| `INTEGRATION_CREDENTIALS_KEY` | Encrypts saved integration credentials. |
-| `UNSUBSCRIBE_SECRET` | Signs unsubscribe links in sent email; sending fails without it. |
-| `OUTREACH_TICK_SECRET` | Authenticates the email cron endpoints. |
-| `CRON_SECRET` | Authenticates the LinkedIn cron endpoints (only if you use LinkedIn). |
+| **Required?** | Yes. The app throws at start if it is missing: `DATABASE_URL is not set`. |
+| **Default** | None. |
+| **What it does** | The PostgreSQL connection string. Also used by drizzle-kit and every script. |
+| **How to get it** | Your database host shows it. Format: `postgres://USER:PASSWORD@HOST:5432/DATABASE`. With Docker Compose you do not set it: Compose builds it from `POSTGRES_PASSWORD`. If you use your own database with Compose, set it here (see [Docker Compose](self-hosting/docker-compose.mdx)). Percent-encode special characters in the password (`@` becomes `%40`). |
+| **Example** | `postgres://agentsdr:s3cret@db.example.com:5432/agentsdr` |
+| **Read in** | `src/lib/db.ts`, `drizzle.config.ts`, `scripts/db/*.ts`, `scripts/lib/organization.ts` |
 
-Generate each secret with `openssl rand -hex 32`.
+### `DATABASE_SSL`
 
-## Core
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | Unset: TLS is required. |
+| **What it does** | `disable` connects without TLS. Any other value, or unset, requires TLS. If your database does not support TLS and you leave this unset, every query fails to connect. |
+| **How to get it** | Use `disable` for a local or Compose database. Leave it unset or empty for hosted databases (Supabase, Neon, RDS and similar). |
+| **Example** | `DATABASE_SSL=disable` |
+| **Read in** | `src/lib/db.ts`, `scripts/db/setup.ts`, `scripts/db/dump-schema.ts`, `scripts/lib/organization.ts`, `scripts/check-organization-scope.ts` |
 
-| Variable | Required | Default | Purpose | Read in |
-|---|---|---|---|---|
-| `DATABASE_URL` | yes | none | PostgreSQL connection string. The app throws at start if it is missing. Also used by drizzle-kit and every script. | `src/lib/db.ts`, `drizzle.config.ts`, `scripts/db/*.ts`, `scripts/lib/organization.ts` |
-| `DATABASE_SSL` | no | TLS required | Set to `disable` to connect without TLS (a local or Compose database). Any other value, or unset, requires TLS. | `src/lib/db.ts`, `scripts/db/setup.ts`, `scripts/db/dump-schema.ts`, `scripts/lib/organization.ts`, `scripts/check-organization-scope.ts` |
-| `DB_POOL_MAX` | no | `8` | Maximum connections in the app's single pool. Keep it well under the server's `max_connections` across all running instances (a rolling deploy runs two). | `src/lib/db.ts` |
+### `DB_POOL_MAX`
 
-## Auth
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | `8` |
+| **What it does** | The most connections this app holds open. A PostgreSQL server has a fixed `max_connections` shared by every client, and managed databases often set it low (50 is common). When the server is full, every query fails with `remaining connection slots are reserved for roles with the SUPERUSER attribute`. That error means capacity, not a bug. |
+| **How to get it** | Keep it well under the server's `max_connections`, across all running copies of the app. A rolling deploy briefly runs two containers, so count double. Before raising it, check `select count(*) from pg_stat_activity;`. |
+| **Example** | `DB_POOL_MAX=8` |
+| **Read in** | `src/lib/db.ts` |
 
-| Variable | Required | Default | Purpose | Read in |
-|---|---|---|---|---|
-| `BETTER_AUTH_SECRET` | yes | none | Signs sessions. 32+ random characters. Keep it stable: changing it signs everyone out. | `src/lib/auth/server.ts` |
-| `BETTER_AUTH_URL` | yes | `NEXT_PUBLIC_APP_URL` | The app's public origin, no trailing slash. Read at **runtime** (`src/lib/http/publicAppUrl.ts`) for Better Auth's links and trusted origin, unsubscribe links in sent email, and Unipile hosted-auth redirect and notify URLs. | `src/lib/auth/server.ts`, `src/lib/http/publicAppUrl.ts`, `src/lib/outreach/render.ts`, `src/lib/linkedin/hostedAuthUrls.ts` |
-| `AUTH_SIGNUP` | no | `invite-only` | `invite-only`: the first account can always be created; after that only an email with a pending, unexpired invitation gets an account (others get the normal "check your email" response and nothing is created), and only owners and admins of the first organization (or the first user, before any organization exists) can create organizations. Covers Google sign-in; the sign-in page stops offering "Create one". `open`: anyone can sign up and create organizations. | `src/lib/auth/signup.ts` |
-| `RESEND_API_KEY` | needed before inviting anyone in production | none | Resend API key for auth email. If unset, verification, reset and invitation emails are written to the server log (with a one-time warning in production) instead of sent, so the first account can be verified from `docker compose logs app`. | `src/lib/auth/email.ts` |
-| `AUTH_EMAIL_FROM` | when `RESEND_API_KEY` is set | none | Sender, for example `AgentSDR <auth@yourdomain.com>`, on a domain verified in Resend. | `src/lib/auth/email.ts` |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | no | none | Enables "Continue with Google" sign-in. Both must be set. Redirect URI: `<BETTER_AUTH_URL>/api/auth/callback/google`. | `src/lib/auth/server.ts` |
+### `POSTGRES_PASSWORD` (Docker Compose only)
+
+| | |
+|---|---|
+| **Required?** | Yes, with Docker Compose. Compose refuses to start with `Set POSTGRES_PASSWORD in .env`. |
+| **Default** | None. |
+| **What it does** | The password of the bundled PostgreSQL container. Compose also builds the app's `DATABASE_URL` from it. |
+| **How to get it** | Make one up: `openssl rand -hex 24`. Choose it before the first `docker compose up`: the database stores it on first start, and changing the variable later does not change the stored password. |
+| **Read in** | `docker-compose.yml` |
+
+### `COMPOSE_FILE` (Docker Compose with your own PostgreSQL)
+
+Set `COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml` in `.env`
+to skip the bundled database and use the `DATABASE_URL` you provide. This is
+read by Docker Compose itself, not by the app. Needs Docker Compose 2.24 or
+newer. With it, set `DATABASE_SSL` empty unless your database has no TLS. See
+[Docker Compose](self-hosting/docker-compose.mdx).
+
+## Auth and sign-up
+
+AgentSDR uses Better Auth: email and password with verified email, plus Google
+when configured.
+
+### `BETTER_AUTH_SECRET`
+
+| | |
+|---|---|
+| **Required?** | Yes. |
+| **Default** | None. |
+| **What it does** | Signs login sessions. Use 32 or more random characters. Changing it signs everyone out (nothing else breaks). |
+| **How to get it** | `openssl rand -hex 32` |
+| **Example** | `BETTER_AUTH_SECRET=3f9a...` (64 hex characters) |
+| **Read in** | `src/lib/auth/server.ts` |
+
+### `AUTH_SIGNUP`
+
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | `invite-only` |
+| **What it does** | Controls who can create an account. `invite-only`: the first account can always be created. After that, only an email address with a pending, unexpired invitation gets an account (anyone else sees the normal "check your email" response and nothing is created), and only owners and admins of the first organization (or the first user, before any organization exists) can create organizations. This also covers Google sign-in, and the sign-in page stops offering "Create one". `open`: anyone who can reach the instance can sign up and create organizations. Any value other than `open` means `invite-only`. |
+| **How to get it** | Choose. Keep `invite-only` unless this is a public service. |
+| **Example** | `AUTH_SIGNUP=open` |
+| **Read in** | `src/lib/auth/signup.ts` |
 
 ## Secrets
 
-| Variable | Required | Default | Purpose | Read in |
-|---|---|---|---|---|
-| `INTEGRATION_CREDENTIALS_KEY` | yes | none | Key for AES-256-GCM encryption of every saved integration credential. Use the same value on every instance sharing the database. Changing it makes stored credentials unreadable: re-encrypt with `bun run rotate:integration-credentials` (new key in `INTEGRATION_CREDENTIALS_KEY`, old one in `LEGACY_INTEGRATION_CREDENTIALS_KEYS`) or reconnect the integrations. Store a copy outside the database. | `src/lib/integrations/credential-crypto.ts` |
-| `UNSUBSCRIBE_SECRET` | yes, to send email | none | HMAC key for unsubscribe tokens in outreach email. Changing it breaks links already sent. | `src/lib/outreach/unsubscribeToken.ts` |
-| `OUTREACH_TICK_SECRET` | yes, to use the email cron endpoints | none | Shared secret for `/api/outreach/build-queue`, `/api/outreach/mailboxes/watch` and `/api/outreach/tick`, sent as `?secret=` or the `x-tick-secret` header. The endpoints answer 401 while it is unset. | `src/app/api/outreach/{tick,build-queue,mailboxes/watch}/route.ts` |
-| `CRON_SECRET` | yes, to use the LinkedIn cron endpoints | none | Bearer secret for `/api/linkedin/jobs/*`. | `src/proxy.ts`, `src/lib/linkedin/organizations.server.ts` |
+### `INTEGRATION_CREDENTIALS_KEY`
+
+| | |
+|---|---|
+| **Required?** | Yes. Without it the app throws `INTEGRATION_CREDENTIALS_KEY must be configured before saving or reading integration credentials` the first time an integration is saved or read. |
+| **Default** | None. |
+| **What it does** | The key for AES-256-GCM encryption of every saved integration credential (Unipile, Google Workspace, R2, OpenRouter, enrichment providers) for every organization. |
+| **How to get it** | `openssl rand -hex 32`. Use the **same value on every instance** that shares the database. |
+| **Example** | `INTEGRATION_CREDENTIALS_KEY=9c1e...` (64 hex characters) |
+| **Read in** | `src/lib/integrations/credential-crypto.ts` |
+
+<a id="rotating-the-encryption-key"></a>
+
+**Treat this key as permanent.** Set it once, before anyone connects an
+integration, and keep a copy outside the database (a password manager). The
+credentials are encrypted with it and the database stores only the encrypted
+text. If you change it or lose it, every saved credential becomes unreadable,
+and you must reconnect each integration by hand.
+
+**Rotating on purpose.** `scripts/rotate-integration-credentials.ts` re-encrypts
+the stored credentials from an old key to a new one in one transaction:
+
+1. Back up the database.
+2. Put the **new** key in `INTEGRATION_CREDENTIALS_KEY` (at least 32
+   characters) and the **old** key in `LEGACY_INTEGRATION_CREDENTIALS_KEYS`
+   (comma-separated if there is more than one), in the shell where you run the
+   script.
+3. Dry run. It decrypts and re-encrypts in memory, rolls back, and prints a
+   summary with key fingerprints (never the secrets):
+   ```bash
+   bun run rotate:integration-credentials
+   ```
+4. Check `unresolved` is `0` in the summary. A row is `unresolved` when none of
+   the keys you gave can decrypt it.
+5. Apply:
+   ```bash
+   bun run rotate:integration-credentials -- --apply
+   ```
+6. Set the new key as `INTEGRATION_CREDENTIALS_KEY` on every running instance
+   and restart them. Rows already on the new key are reported `already_current`,
+   so re-running is safe. The script connects over TLS, so point `DATABASE_URL`
+   at a database that offers it.
+
+The old `AUTH_SECRET` value is also tried automatically as a legacy key.
+
+### `UNSUBSCRIBE_SECRET`
+
+| | |
+|---|---|
+| **Required?** | Yes, to send email. Sending fails with `UNSUBSCRIBE_SECRET is not configured`. |
+| **Default** | None. |
+| **What it does** | The HMAC key that signs the unsubscribe link in every outreach email. A link is stateless: it carries the organization and address, signed, and can unsubscribe only that one address. |
+| **How to get it** | `openssl rand -hex 32` |
+| **Example** | `UNSUBSCRIBE_SECRET=b7d2...` |
+| **Read in** | `src/lib/outreach/unsubscribeToken.ts` |
+
+**Do not change it after you have sent email.** Links already sitting in
+people's inboxes stop verifying, so those people can no longer unsubscribe by
+clicking. That is a compliance problem. See
+[Responsible use](responsible-use.md).
 
 ## URLs
 
-| Variable | Required | Default | Purpose | Read in |
-|---|---|---|---|---|
-| `NEXT_PUBLIC_APP_URL` | no | none | Legacy fallback for `BETTER_AUTH_URL`, used only when that is unset. Inlined at build time by Next.js, so prefer `BETTER_AUTH_URL`. | `src/lib/http/publicAppUrl.ts` |
-| `OPENROUTER_SITE_URL` | no | `http://localhost:3000` | Sent to OpenRouter as the `HTTP-Referer` for request attribution. | `src/lib/ai/server/openrouter.ts` |
-| `DEFAULT_PHONE_COUNTRY` | no | none | Two-letter country code used to parse phone numbers typed without a leading `+`, for organizations that have not set one in Settings → Organization → Defaults. Without either, such numbers are treated as invalid. Read at runtime; `NEXT_PUBLIC_DEFAULT_PHONE_COUNTRY` is the older, build-time name and still works as a fallback when set at build. | `src/lib/calls/phone.ts` |
+### `BETTER_AUTH_URL`
 
-## Docker Compose and demo
+| | |
+|---|---|
+| **Required?** | Yes. |
+| **Default** | `NEXT_PUBLIC_APP_URL` if that is set, otherwise none. |
+| **What it does** | The app's public origin, no trailing slash. It is read at **runtime** and used for Better Auth's links and trusted origin (sign-in from any other origin is refused), the unsubscribe links in sent email, and the Unipile hosted-auth redirect and webhook URLs. If it is wrong, links in email point to the wrong place and webhooks never arrive. |
+| **How to get it** | The address you open AgentSDR at, including `https://`. It must be reachable from the internet if you use Gmail push, Unipile or the call recorder. |
+| **Example** | `BETTER_AUTH_URL=https://agentsdr.example.com` |
+| **Read in** | `src/lib/auth/server.ts`, `src/lib/http/publicAppUrl.ts`, `src/lib/outreach/render.ts`, `src/lib/linkedin/hostedAuthUrls.ts` |
 
-| Variable | Required | Default | Purpose | Read in |
-|---|---|---|---|---|
-| `POSTGRES_PASSWORD` | yes, with Compose | none | Password of the bundled PostgreSQL; Compose also builds the app's `DATABASE_URL` from it. | `docker-compose.yml` |
-| `PORT` | no | `3000` | Host port Compose publishes the app on (`${PORT:-3000}:3000`). | `docker-compose.yml` |
-| `DEMO_PASSWORD` | no | `demo-password-123` | Password of the demo user created by `bun run db:seed:demo`. | `scripts/db/seed-demo.ts` |
-| `PG_DUMP` | no | `pg_dump` on `PATH` | Path to a `pg_dump` at least as new as the server, for `bun run db:schema:dump`. | `scripts/db/dump-schema.ts` |
+### `NEXT_PUBLIC_APP_URL`
+
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | None. |
+| **What it does** | Legacy fallback for `BETTER_AUTH_URL`, used only when that is unset. Next.js inlines `NEXT_PUBLIC_*` values into the build, so an image built once carries the build-time value. Prefer `BETTER_AUTH_URL`. |
+| **Read in** | `src/lib/http/publicAppUrl.ts`, `src/lib/auth/server.ts` |
+
+### `NEXT_PUBLIC_SITE_URL`
+
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | `https://agentsdr.ai` |
+| **What it does** | The canonical address used in the marketing pages' metadata, sitemap and social cards, so that a self-hosted copy (which serves the same pages) does not compete with the public site in search. Inlined at build time. You normally leave it alone. |
+| **Read in** | `src/lib/marketing/site.ts` |
+
+### `OPENROUTER_SITE_URL`
+
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | `http://localhost:3000` |
+| **What it does** | Sent to OpenRouter as the `HTTP-Referer` header so requests are attributed to your site. It does not affect whether AI works: the OpenRouter key itself is per organization (**Settings → AI provider**). |
+| **Example** | `OPENROUTER_SITE_URL=https://agentsdr.example.com` |
+| **Read in** | `src/lib/ai/server/openrouter.ts` |
+
+### `DEFAULT_PHONE_COUNTRY`
+
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | None. |
+| **What it does** | A two-letter country code (ISO 3166-1 alpha-2) used to read phone numbers typed without a leading `+`, for organizations that have not set one in **Settings → Organization → Defaults**. If neither is set, such numbers are treated as invalid. Read at runtime. `NEXT_PUBLIC_DEFAULT_PHONE_COUNTRY` is the older, build-time name and still works as a fallback. |
+| **Example** | `DEFAULT_PHONE_COUNTRY=US` |
+| **Read in** | `src/lib/calls/phone.ts`, `src/lib/calls/phone.server.ts` |
+
+### `PORT` (Docker Compose)
+
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | `3000` |
+| **What it does** | The host port Compose publishes the app on (`${PORT:-3000}:3000`). It is not the port the app listens on inside the container, which is always `3000`. If you change it, change `BETTER_AUTH_URL` to match. |
+| **Read in** | `docker-compose.yml` |
+
+## Email for sign-in (Resend)
+
+AgentSDR sends sign-up verification, password reset and invitation emails
+through [Resend](https://resend.com). This is separate from your outreach
+mailboxes, which send through Gmail. Setup steps:
+[Resend](integrations/resend.mdx).
+
+### `RESEND_API_KEY`
+
+| | |
+|---|---|
+| **Required?** | Needed before you invite anyone in production. |
+| **Default** | None. |
+| **What it does** | Without it, no auth email is sent: each one is written to the server log instead (with a one-time warning in production), and the first account can be verified by copying the link from the log (`docker compose logs app`). Real users would wait for email that never arrives. |
+| **How to get it** | Resend dashboard, [API Keys](https://resend.com/api-keys), create a key. Resend shows the value once and cannot show it again, so copy it then. See Resend's [API keys](https://resend.com/docs/dashboard/api-keys/introduction) page. |
+| **Example** | `RESEND_API_KEY=re_123abc...` |
+| **Read in** | `src/lib/auth/email.ts` |
+
+### `AUTH_EMAIL_FROM`
+
+| | |
+|---|---|
+| **Required?** | Yes when `RESEND_API_KEY` is set. Without it, sending throws `AUTH_EMAIL_FROM is not set`. |
+| **Default** | None. |
+| **What it does** | The sender of auth email. Its domain must be verified in Resend, or Resend refuses the message (`Resend refused the email`). |
+| **How to get it** | Verify your domain in Resend under **Domains**, then use any address on it. |
+| **Example** | `AUTH_EMAIL_FROM="AgentSDR <auth@yourdomain.com>"` |
+| **Read in** | `src/lib/auth/email.ts` |
+
+## Google sign-in
+
+Adds a "Continue with Google" button. Setup steps:
+[Google sign-in](integrations/google-sign-in.mdx). This is only about people
+logging in; connecting a Gmail mailbox for sending is a per-organization
+integration, [Google Workspace](integrations/google-workspace.mdx).
+
+### `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+
+| | |
+|---|---|
+| **Required?** | No. Both must be set, or the button does not appear. |
+| **Default** | None. |
+| **What it does** | Enables Google sign-in. With `AUTH_SIGNUP=invite-only`, Google sign-in follows the same invitation rule as email sign-up. |
+| **How to get it** | In the Google Cloud console, open Google Auth Platform → **Clients**, click **Create client**, choose **Web application**, and add the authorized redirect URI below. Google shows the client secret when you create the client, so copy it then. See Google's [OAuth client setup](https://support.google.com/cloud/answer/6158849). |
+| **Redirect URI** | `<BETTER_AUTH_URL>/api/auth/callback/google`, for example `https://agentsdr.example.com/api/auth/callback/google`. Google requires HTTPS except for `localhost`. |
+| **Example** | `GOOGLE_CLIENT_ID=1234-abc.apps.googleusercontent.com` |
+| **Read in** | `src/lib/auth/server.ts` |
+
+## Scheduled jobs
+
+Some work runs from a scheduler that calls the app over HTTP. Docker Compose
+includes a `cron` container that does this (`docker/cron/crontab`); on other
+setups use any cron, with `curl`. Each endpoint is protected by one of two
+secrets, and both must be set for Compose to start.
+
+| Endpoint | Secret | How the caller sends it | What it does |
+|---|---|---|---|
+| `POST /api/outreach/build-queue` | `OUTREACH_TICK_SECRET` | header `x-tick-secret: <secret>` | Once a day: builds each mailbox's send queue and resets daily counters. |
+| `POST /api/outreach/mailboxes/watch` | `OUTREACH_TICK_SECRET` | header `x-tick-secret: <secret>` | Daily: renews Gmail push notifications, which expire after about 7 days. |
+| `POST /api/outreach/tick` | `OUTREACH_TICK_SECRET` | header `x-tick-secret` (or `?secret=`) | One send tick. The app already ticks itself every minute in production: call it only to force one while debugging, and do not schedule it. |
+| `POST /api/linkedin/jobs/run-outreach` | `CRON_SECRET` | header `Authorization: Bearer <secret>` | Every 15 minutes: LinkedIn invitations and follow-ups. |
+| `POST /api/linkedin/jobs/run-search-queue` | `CRON_SECRET` | same | Every 10 minutes: the LinkedIn search queue. |
+| `POST /api/linkedin/jobs/replay-webhooks` | `CRON_SECRET` | same | Every 10 minutes: retries failed webhook deliveries. |
+| `POST /api/linkedin/jobs/reset-daily-limits` | `CRON_SECRET` | same | Daily: resets LinkedIn daily limits. |
+
+The times above are the Compose defaults, in UTC. Edit `docker/cron/crontab`
+to match your sending windows.
+
+### `OUTREACH_TICK_SECRET`
+
+| | |
+|---|---|
+| **Required?** | Yes for email outreach. Without it the endpoints answer `401 unauthorized`, so queues are never built and Gmail notifications lapse after about a week. Compose refuses to start without it. |
+| **Default** | None. |
+| **What it does** | Authenticates the email cron endpoints. |
+| **How to get it** | `openssl rand -hex 32` |
+| **Read in** | `src/app/api/outreach/build-queue/route.ts`, `src/app/api/outreach/mailboxes/watch/route.ts`, `src/app/api/outreach/tick/route.ts` |
+
+### `CRON_SECRET`
+
+| | |
+|---|---|
+| **Required?** | Yes to run the LinkedIn jobs from a scheduler. Compose refuses to start without it (`Set CRON_SECRET in .env`), so set it even if you do not use LinkedIn. |
+| **Default** | None. |
+| **What it does** | The bearer secret for `/api/linkedin/jobs/*`. A caller with it works across every organization. A signed-in member calling the same routes only affects their own organization. |
+| **How to get it** | `openssl rand -hex 32` |
+| **Read in** | `src/proxy.ts`, `src/lib/linkedin/organizations.server.ts` |
 
 ## Workers and tuning
 
-| Variable | Required | Default | Purpose | Read in |
-|---|---|---|---|---|
-| `OUTREACH_TICK_INTERVAL_MS` | no | `60000` | How often the in-process outreach scheduler runs a send tick. | `src/lib/outreach/internalScheduler.ts` |
-| `GRID_WORKER_POLL_MS` | no | `1000` | Enrichment worker poll interval. | `src/lib/grid/worker.ts` |
-| `GRID_WORKER_CONCURRENCY` | no | `8` | Enrichment cells processed at once. | `src/lib/grid/worker.ts` |
-| `GRID_CELL_TIMEOUT_MS` | no | `30000` | Per-cell timeout. | `src/lib/grid/worker.ts` |
-| `CRM_WORKER_POLL_MS` | no | `1000` (minimum 100) | CRM job poll interval. | `src/lib/crm/worker.ts` |
-| `CRM_WORKER_CONCURRENCY` | no | `4` (minimum 1) | CRM jobs processed at once. | `src/lib/crm/worker.ts` |
-| `CRM_WORKER_STALE_LOCK_MS` | no | `300000` (minimum 1000) | Age after which a claimed CRM job is considered abandoned and re-queued. | `src/lib/crm/worker.ts` |
-Sending limits are not environment variables. Emails a day per mailbox, the
-gap between emails, LinkedIn invitations a day and per run, WhatsApp warm-up,
-new chats a day and the gap between sends are set per organization in
-**Settings → Email / LinkedIn / WhatsApp → Sending rules**, with hard ceilings
+Four workers start with the server. They need no scheduler:
+
+| Worker | Runs | Does |
+|---|---|---|
+| Email send loop | Production only (`NODE_ENV=production`), every minute | Sends queued email. |
+| WhatsApp campaign loop | Production only, every 30 seconds | Sends the next step of WhatsApp campaigns. |
+| Enrichment worker | Always | Fills Tables cells. |
+| CRM worker | Always | Classifies replies, writes drafts, schedules follow-ups. |
+
+The email and WhatsApp loops have no distributed lock, so run **one** instance
+of the app. The enrichment and CRM workers claim work safely, so two instances
+overlapping during a deploy are fine.
+
+All of the following are optional. Values must be numbers in milliseconds
+unless noted.
+
+| Variable | Default | What it does | Read in |
+|---|---|---|---|
+| `OUTREACH_TICK_INTERVAL_MS` | `60000` | How often the in-process email send loop ticks. | `src/lib/outreach/internalScheduler.ts` |
+| `WHATSAPP_CAMPAIGN_TICK_INTERVAL_MS` | `30000` (values under `1000` fall back to `30000`) | How often the WhatsApp campaign sender ticks. | `src/lib/whatsapp/campaigns/internalScheduler.ts` |
+| `GRID_WORKER_POLL_MS` | `1000` | How often the enrichment worker looks for cells to run. | `src/lib/grid/worker.ts` |
+| `GRID_WORKER_CONCURRENCY` | `8` | Enrichment cells processed at once. Lower it if a provider rate-limits you. | `src/lib/grid/worker.ts` |
+| `GRID_CELL_TIMEOUT_MS` | `30000` | Per-cell timeout. | `src/lib/grid/worker.ts` |
+| `CRM_WORKER_POLL_MS` | `1000` (minimum `100`) | CRM job poll interval. | `src/lib/crm/worker.ts` |
+| `CRM_WORKER_CONCURRENCY` | `4` (minimum `1`) | CRM jobs processed at once. | `src/lib/crm/worker.ts` |
+| `CRM_WORKER_STALE_LOCK_MS` | `300000` (minimum `1000`) | Age after which a claimed CRM job is treated as abandoned and re-queued. | `src/lib/crm/worker.ts` |
+
+**Sending limits are not environment variables.** Emails a day per mailbox,
+the gap between emails, LinkedIn invitations a day and per run, WhatsApp
+warm-up, new chats a day and the gap between sends are set per organization in
+**Workspace → Sending rules** (`/workspace/sending-rules`), with hard ceilings
 and a warning past the safe edge. A LinkedIn account, WhatsApp number or
 mailbox can override its daily limit. The rules, their defaults and bounds are
-listed in `src/lib/channels/rules.ts`. The `WHATSAPP_NEW_CHAT_WARMUP_HOURS`,
-`WHATSAPP_NEW_CHATS_PER_DAY` and `WHATSAPP_MIN_SECONDS_BETWEEN_SENDS` variables
-of earlier versions are no longer read.
+in `src/lib/channels/rules.ts`; see [Sending rules](workspace/sending-rules.mdx).
+The `WHATSAPP_NEW_CHAT_WARMUP_HOURS`, `WHATSAPP_NEW_CHATS_PER_DAY` and
+`WHATSAPP_MIN_SECONDS_BETWEEN_SENDS` variables of earlier versions are no
+longer read.
 
-## Kill switches
+### Pause switches
 
-Operational switches written for the unified-People data migration. They are
-off by default and normally stay off. A value of `1`, `true`, `yes` or `on`
-(case-insensitive) turns a switch on. They are re-read on every call, so they
-take effect without a restart on platforms that refresh the environment. All
-are read in `src/lib/migration/controls.ts`.
+Switches that stop outbound work without a deploy. They were written for the
+unified-People data migration, are off by default, and normally stay off. A
+value of `1`, `true`, `yes` or `on` (case-insensitive) turns one on; anything
+else is off. They are re-read on every call, so on platforms that refresh the
+environment they take effect without a restart. All are read in
+`src/lib/migration/controls.ts`.
 
 | Variable | Effect when on |
 |---|---|
-| `PEOPLE_MIGRATION_MODE` | Master switch. Pauses every background writer below, and answers 503 to campaign, import and manual-send mutations (`POST/PUT/PATCH/DELETE` under `/api/grid/tables/`, `/api/linkedin/{campaigns,jobs,leads,messages/send,search}`, `/api/outreach/{campaigns,inbox/,mailboxes/}`). Inbound webhooks and reads keep working. |
-| `PAUSE_CAMPAIGN_MUTATIONS` | Only the 503 on those mutation routes. |
-| `PAUSE_EMAIL_OUTBOUND` | Stops outgoing email sends. |
+| `PEOPLE_MIGRATION_MODE` | Master switch. Turns on every pause below, and answers `503` to campaign, import and manual-send changes (`POST`, `PUT`, `PATCH`, `DELETE` under `/api/grid/tables/`, `/api/linkedin/{campaigns,jobs,leads,messages/send,search}`, `/api/outreach/{campaigns,inbox/,mailboxes/}`). Inbound webhooks, unsubscribe links and reads keep working. |
+| `PAUSE_CAMPAIGN_MUTATIONS` | Only the `503` on those routes. |
+| `PAUSE_EMAIL_OUTBOUND` | Stops outgoing email. |
 | `PAUSE_LINKEDIN_OUTBOUND` | Stops LinkedIn invitations and messages. |
+| `PAUSE_WHATSAPP_OUTBOUND` | Stops WhatsApp messages. |
 | `PAUSE_LINKEDIN_RESOLUTION` | Stops LinkedIn profile resolution. |
 | `PAUSE_LINKEDIN_SEARCH` | Stops the LinkedIn search queue. |
 | `PAUSE_GRID_WORKER` | Stops the enrichment worker. |
 
-These are also a handy emergency brake: setting `PAUSE_EMAIL_OUTBOUND=true` and
-restarting stops sending without touching data.
+They are also an emergency brake: set `PAUSE_EMAIL_OUTBOUND=true` and restart,
+and sending stops without touching any data. Remove it and restart to resume.
+`.env.example` lists them as `false`; `PAUSE_WHATSAPP_OUTBOUND` is read by the
+code but is not in `.env.example`, so add it yourself.
 
 ## Prospecting (domain qualification)
 
 Used only by the Domains / qualification feature, which is slated for removal.
-Apollo for Tables is a separate per-organization connection.
+Apollo for Tables is a separate per-organization connection, see
+[Enrichment providers](integrations/enrichment-providers.mdx). Read in
+`src/lib/qualification/config.ts`.
 
-| Variable | Required | Default | Purpose | Read in |
-|---|---|---|---|---|
-| `APOLLO_API_KEY` | for qualification | empty | A **master** Apollo API key (needed for `mixed_people/api_search`; others get 403). | `src/lib/qualification/config.ts` |
-| `APOLLO_BASE_URL` | no | `https://api.apollo.io/api/v1` | Apollo API base. | `src/lib/qualification/config.ts` |
-| `APOLLO_THROTTLE_MS` | no | `0` | Minimum milliseconds between Apollo search calls. The endpoint allows roughly 600 an hour; use about `6000` in production. | `src/lib/qualification/config.ts` |
-| `ADS_PROVIDER` | no | `mock` | Ads-check provider. The stage is deferred; leave unset. | `src/lib/qualification/config.ts` |
-| `ADS_API_KEY`, `ADS_BASE_URL` | no | empty | Credentials for the deferred ads stage. | `src/lib/qualification/config.ts` |
+| Variable | Required | Default | What it does |
+|---|---|---|---|
+| `APOLLO_API_KEY` | For qualification | empty | A **master** Apollo API key. The `mixed_people/api_search` endpoint needs one; other keys get `403`. Get it in Apollo under your API settings. Without it, qualification cannot call Apollo. |
+| `APOLLO_BASE_URL` | No | `https://api.apollo.io/api/v1` | Apollo API base. |
+| `APOLLO_THROTTLE_MS` | No | `0` | Minimum milliseconds between Apollo search calls. The endpoint allows roughly 600 an hour; use about `6000` in production. |
+| `ADS_PROVIDER` | No | `mock` | Ads-check provider. The stage is deferred; leave unset. |
+| `ADS_API_KEY`, `ADS_BASE_URL` | No | empty | Credentials for the deferred ads stage. |
 
 ## User-named variables (Tables HTTP column)
 
 The HTTP column in Tables can authenticate with a bearer token read from an
 environment variable whose **name the user types** in the column settings
-(`authEnvVar`). The secret therefore comes from the server's environment, never
-from the database. Set whatever variable names your users reference. Read in
-`src/lib/grid/runners/http.ts`.
+(`authEnvVar`). The secret therefore comes from the server's environment and
+never from the database, so it does not end up in database dumps.
 
-## Runtime variables set by the platform
+- You choose the names. Set whatever variable names your users reference, for
+  example `ACME_API_TOKEN`, in the same place as the rest of your environment,
+  then restart.
+- The value is sent as `Authorization: Bearer <value>`. If it already starts
+  with `Bearer `, it is sent as is.
+- If the variable is not set, the cell fails with `Environment variable <NAME> is not set on this server`.
+
+Read in `src/lib/grid/runners/http.ts`.
+
+## Set by the platform
+
+You normally do not set these.
 
 | Variable | Notes |
 |---|---|
-| `NODE_ENV` | `production` under `next start` / the Docker image. Turns on the outreach scheduler, and makes a missing `RESEND_API_KEY` log a one-time warning. |
-| `NEXT_RUNTIME` | Set by Next.js. `instrumentation.ts` only starts workers when it is `nodejs`. |
-| `PORT`, `HOSTNAME` | The Docker image sets `PORT=3000`, `HOSTNAME=0.0.0.0` for the standalone server inside the container. Not the same as the Compose `PORT` below. |
+| `NODE_ENV` | `production` under `next start` and in the Docker image. Turns on the email and WhatsApp send loops, and makes a missing `RESEND_API_KEY` log a one-time warning. |
+| `NEXT_RUNTIME` | Set by Next.js. `src/instrumentation.ts` starts the workers only when it is `nodejs`. |
+| `PORT`, `HOSTNAME` | The Docker image sets `PORT=3000` and `HOSTNAME=0.0.0.0` for the server inside the container. Not the same as the Compose `PORT` above. |
 
 ## Script-only variables
 
 Read by tooling in `scripts/`, never by the running app.
 
-| Variable | Script | Purpose |
+| Variable | Script | What it does |
 |---|---|---|
-| `ORGANIZATION_ID` | `scripts/lib/organization.ts` (used by one-shot scripts) | Organization the script runs as; defaults to the initial organization. |
+| `DEMO_PASSWORD` | `scripts/db/seed-demo.ts` | Password of the demo user created by `bun run db:seed:demo`. Default `demo-password-123`. |
+| `PG_DUMP` | `scripts/db/dump-schema.ts` | Path to a `pg_dump` at least as new as the server, for `bun run db:schema:dump`. Default: `pg_dump` on `PATH`. |
+| `ORGANIZATION_ID` | `scripts/lib/organization.ts` | Organization a one-shot script runs as; defaults to the initial organization. |
+| `LEGACY_INTEGRATION_CREDENTIALS_KEYS`, `AUTH_SECRET` | `scripts/rotate-integration-credentials.ts` | Old keys to re-encrypt credentials from. See [rotating the key](#rotating-the-encryption-key). |
 | `BASE_URL`, `INITIAL_OWNER_EMAIL`, `INITIAL_OWNER_PASSWORD`, `ISOLATION_SKIP_WRITES` | `scripts/e2e/tenancy-isolation.ts` | See [development.md](development.md#tenancy-isolation-test). |
-| `INITIAL_ORG_NAME`, `INITIAL_ORG_SLUG`, `INITIAL_OWNER_NAME`, `INITIAL_OWNER_EMAIL`, `INITIAL_OWNER_PASSWORD` | `scripts/add-organization-scope.ts` | One-time migration that introduced organizations. |
-| `AUTH_SECRET`, `LEGACY_INTEGRATION_CREDENTIALS_KEYS` | `scripts/rotate-integration-credentials.ts` | Old keys to re-encrypt credentials from. |
+| `INITIAL_ORG_NAME`, `INITIAL_ORG_SLUG`, `INITIAL_OWNER_NAME`, `INITIAL_OWNER_EMAIL`, `INITIAL_OWNER_PASSWORD` | `scripts/add-organization-scope.ts` | The one-time migration that introduced organizations. |
 | `LIVE_TEST_PERSON` | `scripts/test-integrations-live.ts` | Path to a JSON file describing a test person. |
 | `PEOPLE_BACKFILL_CONCURRENCY` | `scripts/backfill-campaign-people.ts` | Backfill concurrency (default 8). |
 | `LINKEDIN_PARITY_DATABASE_URL`, `LINKEDIN_PARITY_EXPECTED_DATABASE` | `scripts/audit-linkedin-migration-parity.ts` | Explicit target for a parity audit. |
@@ -165,7 +522,14 @@ Read by tooling in `scripts/`, never by the running app.
 ## Removed variables
 
 `AUTH_PASSWORD` and `AUTH_SECRET` belonged to the old single shared password
-and are no longer read by the app (`AUTH_SECRET` survives only as a legacy
-key in the rotation script). `OPENROUTER_API_KEY`, `UNIPILE_*`, `GOOGLE_*`
+and are no longer read by the app (`AUTH_SECRET` survives only as a legacy key
+in the rotation script). `OPENROUTER_API_KEY`, `UNIPILE_*`, the `GOOGLE_*`
 service-account keys and `R2_*` are not read either: those services are
-connected in Settings.
+connected in the app. See [integrations.md](integrations.md).
+
+## Next
+
+- [Self-hosting overview](self-hosting.md)
+- [Integrations overview](integrations.md)
+- [Production checklist](self-hosting/production.mdx)
+- [Troubleshooting](self-hosting/troubleshooting.mdx)
