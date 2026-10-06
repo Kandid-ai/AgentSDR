@@ -20,7 +20,7 @@ export function ComparePage({ slug }: { slug: Competitor["slug"] }) {
   return (
     <>
       <JsonLd data={softwareLd(c.description, path)} />
-      <PageHero path={path} crumb={`${c.name} alternative`} eyebrow={c.eyebrow} eyebrowIcon={RiScalesLine} title={c.h1} lede={c.lede}>
+      <PageHero eyebrow={c.eyebrow} eyebrowIcon={RiScalesLine} title={c.h1} lede={c.lede}>
         <HeroFrame>
           <ProductShot screen={c.heroScreen} />
         </HeroFrame>

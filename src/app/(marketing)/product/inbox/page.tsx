@@ -75,8 +75,6 @@ export default function InboxPage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="Unified inbox"
         eyebrow="Unified inbox"
         eyebrowIcon={RiInbox2Fill}
         title="A unified sales inbox for email, LinkedIn and WhatsApp"

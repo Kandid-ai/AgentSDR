@@ -57,8 +57,6 @@ export default function FoundersPage() {
   return (
     <>
       <PageHero
-        path={PATH}
-        crumb="Founders"
         eyebrow="For founders"
         eyebrowIcon={RiRocket2Line}
         title="An AI SDR for founder-led outbound"

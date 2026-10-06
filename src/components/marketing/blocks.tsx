@@ -1,13 +1,14 @@
 import Link from "next/link";
 import type { ComponentType, CSSProperties, ReactNode } from "react";
-import { RiArrowRightLine, RiArrowRightSLine, RiCheckLine, RiGithubFill } from "@remixicon/react";
-import { breadcrumbLd, faqLd } from "@/lib/marketing/seo";
+import { RiArrowRightLine, RiCheckLine, RiGithubFill } from "@remixicon/react";
+import { faqLd } from "@/lib/marketing/seo";
 import { cn } from "@/utils/cn";
 import landing from "../landing/landing.module.css";
 import { Reveal } from "../landing/Reveal";
 import { AppIcon, Cta, displayFont, Eyebrow, LINKS, monoFont, SectionHead } from "../landing/ui";
 import { linkFor } from "./catalog";
 import { JsonLd } from "./JsonLd";
+import { NavIcon } from "./NavIcon";
 import styles from "./marketing.module.css";
 
 /**
@@ -29,14 +30,11 @@ const DEFAULT_SECONDARY: Action = { href: LINKS.selfHost, label: "Self-host it",
 // ---------------------------------------------------------------- hero
 
 /**
- * The page opener on the landing page's sky: breadcrumb, eyebrow, the h1,
- * a lede and two calls to action, rising in one after another. `children`
- * is the visual under it (usually a HeroFrame). Also emits the page's
- * BreadcrumbList structured data.
+ * The page opener on the landing page's sky: eyebrow, the h1, a lede and
+ * two calls to action, rising in one after another. `children` is the
+ * visual under it (usually a HeroFrame).
  */
 export function PageHero({
-  path,
-  crumb,
   eyebrow,
   eyebrowIcon,
   title,
@@ -45,10 +43,6 @@ export function PageHero({
   secondary = DEFAULT_SECONDARY,
   children,
 }: {
-  /** This page's path, for the breadcrumb trail. */
-  path: string;
-  /** This page's name in the breadcrumb. */
-  crumb: string;
   eyebrow: string;
   eyebrowIcon?: Icon;
   /** The h1. Keep the page's main search phrase in it. */
@@ -58,38 +52,13 @@ export function PageHero({
   secondary?: Action | null;
   children?: ReactNode;
 }) {
-  const parent = path.split("/").filter(Boolean).length > 1 ? `/${path.split("/").filter(Boolean)[0]}` : null;
-  const parentLabel = parent === "/product" ? "Product" : parent === "/solutions" ? "Solutions" : parent === "/compare" ? "Compare" : parent === "/guides" ? "Guides" : null;
-  const parentHref = parent === "/compare" || parent === "/guides" ? parent : null;
   return (
     <div className={cn(children ? landing.sky : styles.skyCompact, "relative isolate overflow-hidden")}>
-      <JsonLd data={breadcrumbLd(path, crumb)} />
       <div aria-hidden="true" className={cn(styles.aurora, "pointer-events-none absolute -inset-x-1/4 top-0 -z-10 h-[720px]")} />
       <div aria-hidden="true" className={cn(styles.grid, "pointer-events-none absolute inset-x-0 top-0 -z-10 h-[760px]")} />
       <section aria-labelledby="page-title" className={cn("relative", children ? "pb-10 sm:pb-16" : "pb-16 sm:pb-20")}>
         <div className="mx-auto max-w-[1128px] px-4 pb-12 pt-32 text-center sm:px-6 sm:pt-40">
-          <nav aria-label="Breadcrumb" className={cn(styles.rise, monoFont, "mb-6 flex items-center justify-center gap-1.5 text-[12px] uppercase tracking-[0.06em] text-white/50")}>
-            <Link href="/" className="rounded hover:text-white/80">
-              Home
-            </Link>
-            {parentLabel && (
-              <>
-                <RiArrowRightSLine className="size-3.5" aria-hidden="true" />
-                {parentHref ? (
-                  <Link href={parentHref} className="rounded hover:text-white/80">
-                    {parentLabel}
-                  </Link>
-                ) : (
-                  <span>{parentLabel}</span>
-                )}
-              </>
-            )}
-            <RiArrowRightSLine className="size-3.5" aria-hidden="true" />
-            <span aria-current="page" className="text-white/75">
-              {crumb}
-            </span>
-          </nav>
-          <div className={styles.rise} style={{ "--rise-delay": "60ms" } as CSSProperties}>
+          <div className={styles.rise}>
             <Eyebrow tone="dark" icon={eyebrowIcon}>
               {eyebrow}
             </Eyebrow>
@@ -268,13 +237,10 @@ export function RelatedPages({ paths, title = "Keep exploring" }: { paths: strin
         <ul className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {paths.map((path) => {
             const link = linkFor(path);
-            const Icon = link.icon;
             return (
               <li key={path}>
                 <Link href={link.href} className={cn(styles.liftCard, "flex h-full items-start gap-4 rounded-2xl bg-[#f7f7f8] p-5 outline-none ring-1 ring-black/[0.04] focus-visible:ring-2 focus-visible:ring-[#335cff]")}>
-                  <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl" style={{ background: `color-mix(in srgb, ${link.accent} 12%, white)`, color: link.accent }}>
-                    <Icon className="size-5" />
-                  </span>
+                  <NavIcon link={link} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5 text-[15px] font-medium text-[#141414]">
                       {link.label}

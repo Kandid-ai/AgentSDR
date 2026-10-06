@@ -1,23 +1,22 @@
 import type { ComponentType, CSSProperties } from "react";
 import {
-  RiBarChartBoxLine,
+  RiBarChart2Line,
   RiBookOpenLine,
+  RiBookletLine,
   RiBuilding2Line,
   RiCodeSSlashLine,
   RiContactsBook3Line,
-  RiFileList3Line,
+  RiFlowChart,
   RiGitBranchLine,
   RiGithubFill,
   RiHistoryLine,
   RiInbox2Line,
-  RiLayoutGridLine,
   RiLinkedinBoxFill,
-  RiMailFill,
-  RiRocket2Line,
   RiScales3Line,
   RiServerLine,
-  RiSparkling2Line,
+  RiTableLine,
   RiTeamLine,
+  RiUserStarLine,
   RiWhatsappFill,
 } from "@remixicon/react";
 import { EXTERNAL, PAGES, type MarketingPage } from "@/lib/marketing/site";
@@ -41,40 +40,68 @@ export const ACCENT = {
   neutral: "#525866",
 } as const;
 
-export type NavLink = { href: string; label: string; blurb?: string; icon: Icon; accent: string; external?: boolean };
+/**
+ * `logo` (an image) wins over `icon`; `color` tints the icon (brand marks
+ * only — everything else stays a dark glyph). A link with neither is a plain
+ * text row in the menu. `accent` colours the page's own visuals, not its icon.
+ */
+export type NavLink = {
+  href: string;
+  label: string;
+  blurb?: string;
+  icon?: Icon;
+  logo?: string;
+  /** How a logo sits in its tile: "bleed" fills it (marks with their own square), a number is its share of the tile. */
+  logoFit?: "bleed" | number;
+  color?: string;
+  accent: string;
+  external?: boolean;
+};
 export type NavGroup = { title: string; links: NavLink[] };
 export type NavFeature = { href: string; eyebrow: string; title: string; external?: boolean };
 export type NavSection = { key: string; label: string; groups: NavGroup[]; feature: NavFeature };
 
-const ICONS: Record<string, { icon: Icon; accent: string }> = {
-  "/product/email": { icon: RiMailFill, accent: ACCENT.email },
-  "/product/linkedin": { icon: RiLinkedinBoxFill, accent: ACCENT.linkedin },
-  "/product/whatsapp": { icon: RiWhatsappFill, accent: ACCENT.whatsapp },
-  "/product/ai-crm": { icon: RiSparkling2Line, accent: ACCENT.ai },
+/** Real brand marks for the channels; brand colours exactly, so they read as the services themselves. */
+const BRAND = {
+  google: "/Integrations - Icon/google.svg",
+  linkedin: "#0a66c2",
+  whatsapp: "#25d366",
+} as const;
+
+type Look = Pick<NavLink, "icon" | "logo" | "logoFit" | "color" | "accent">;
+
+const LOOKS: Record<string, Look> = {
+  "/product/email": { logo: BRAND.google, accent: ACCENT.email },
+  "/product/linkedin": { icon: RiLinkedinBoxFill, color: BRAND.linkedin, accent: ACCENT.linkedin },
+  "/product/whatsapp": { icon: RiWhatsappFill, color: BRAND.whatsapp, accent: ACCENT.whatsapp },
+  "/product/ai-crm": { icon: RiFlowChart, accent: ACCENT.ai },
   "/product/inbox": { icon: RiInbox2Line, accent: ACCENT.ai },
   "/product/lead-database": { icon: RiContactsBook3Line, accent: ACCENT.data },
-  "/product/tables": { icon: RiLayoutGridLine, accent: ACCENT.data },
-  "/product/analytics": { icon: RiBarChartBoxLine, accent: ACCENT.linkedin },
-  "/solutions/founders": { icon: RiRocket2Line, accent: ACCENT.email },
+  "/product/tables": { icon: RiTableLine, accent: ACCENT.data },
+  "/product/analytics": { icon: RiBarChart2Line, accent: ACCENT.linkedin },
+  "/solutions/founders": { icon: RiUserStarLine, accent: ACCENT.email },
   "/solutions/agencies": { icon: RiBuilding2Line, accent: ACCENT.ai },
   "/solutions/sales-teams": { icon: RiTeamLine, accent: ACCENT.linkedin },
   "/open-source": { icon: RiServerLine, accent: ACCENT.neutral },
   "/compare": { icon: RiScales3Line, accent: ACCENT.neutral },
-  "/compare/clay": { icon: RiScales3Line, accent: ACCENT.neutral },
-  "/compare/lemlist": { icon: RiScales3Line, accent: ACCENT.neutral },
-  "/compare/heyreach": { icon: RiScales3Line, accent: ACCENT.neutral },
-  "/compare/instantly": { icon: RiScales3Line, accent: ACCENT.neutral },
-  "/compare/apollo": { icon: RiScales3Line, accent: ACCENT.neutral },
-  "/guides": { icon: RiBookOpenLine, accent: ACCENT.linkedin },
-  "/guides/cold-email-google-workspace": { icon: RiFileList3Line, accent: ACCENT.email },
-  "/guides/linkedin-automation-limits": { icon: RiFileList3Line, accent: ACCENT.linkedin },
-  "/guides/whatsapp-b2b-outreach": { icon: RiFileList3Line, accent: ACCENT.whatsapp },
+  // Each alternative wears the company's own unaltered mark (public/landing/tools,
+  // the same files and fits the landing hero uses: src/components/landing/data/tools.ts).
+  "/compare/clay": { logo: "/landing/tools/clay.png", logoFit: 0.74, accent: ACCENT.neutral },
+  "/compare/lemlist": { logo: "/landing/tools/lemlist.svg", logoFit: "bleed", accent: ACCENT.neutral },
+  "/compare/heyreach": { logo: "/landing/tools/heyreach.png", logoFit: "bleed", accent: ACCENT.neutral },
+  "/compare/instantly": { logo: "/landing/tools/instantly.png", logoFit: 0.66, accent: ACCENT.neutral },
+  "/compare/apollo": { logo: "/landing/tools/apollo.png", logoFit: "bleed", accent: ACCENT.neutral },
+  "/guides": { icon: RiBookletLine, accent: ACCENT.linkedin },
+  // Each guide wears its channel's mark.
+  "/guides/cold-email-google-workspace": { logo: BRAND.google, accent: ACCENT.email },
+  "/guides/linkedin-automation-limits": { icon: RiLinkedinBoxFill, color: BRAND.linkedin, accent: ACCENT.linkedin },
+  "/guides/whatsapp-b2b-outreach": { icon: RiWhatsappFill, color: BRAND.whatsapp, accent: ACCENT.whatsapp },
   "/changelog": { icon: RiHistoryLine, accent: ACCENT.neutral },
 };
 
 export function linkFor(path: string, overrides?: Partial<NavLink>): NavLink {
   const page = PAGES.find((p) => p.path === path) as MarketingPage;
-  const look = ICONS[path] ?? { icon: RiFileList3Line, accent: ACCENT.neutral };
+  const look = LOOKS[path] ?? { icon: RiScales3Line, accent: ACCENT.neutral };
   return { href: page.path, label: page.label, blurb: page.blurb, ...look, ...overrides };
 }
 

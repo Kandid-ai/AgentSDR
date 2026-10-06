@@ -103,8 +103,6 @@ export default function AgenciesPage() {
   return (
     <>
       <PageHero
-        path={PATH}
-        crumb="Agencies"
         eyebrow="For agencies"
         eyebrowIcon={RiBuilding2Line}
         title="The outbound tool for lead generation agencies"

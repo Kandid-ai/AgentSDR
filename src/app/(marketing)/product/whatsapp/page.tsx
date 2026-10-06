@@ -79,8 +79,6 @@ export default function WhatsappPage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="WhatsApp outreach"
         eyebrow="WhatsApp outreach and calling"
         eyebrowIcon={RiWhatsappFill}
         title="WhatsApp outreach and calling for sales, from your own number"

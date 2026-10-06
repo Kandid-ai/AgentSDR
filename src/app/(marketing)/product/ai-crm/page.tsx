@@ -75,8 +75,6 @@ export default function AiCrmPage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="AI CRM"
         eyebrow="AI CRM"
         eyebrowIcon={RiSparkling2Fill}
         title="An AI CRM for outbound sales, built around replies"

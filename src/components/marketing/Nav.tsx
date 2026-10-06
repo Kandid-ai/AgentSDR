@@ -7,6 +7,7 @@ import { cn } from "@/utils/cn";
 import landing from "../landing/landing.module.css";
 import { AppIcon, Cta, displayFont, LINKS, monoFont } from "../landing/ui";
 import { NAV, type NavLink, type NavSection } from "./catalog";
+import { NavIcon } from "./NavIcon";
 import styles from "./marketing.module.css";
 
 /**
@@ -258,18 +259,12 @@ function Pane({ id, labelledBy, section, active, dir, onNavigate }: { id: string
 }
 
 function MenuLink({ link, onNavigate, size = "md" }: { link: NavLink; onNavigate?: () => void; size?: "md" | "lg" }) {
-  const Icon = link.icon;
+  const marked = Boolean(link.icon || link.logo);
   const body = (
     <>
-      <span
-        aria-hidden="true"
-        className={cn(styles.menuIcon, "flex size-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset")}
-        style={{ background: `color-mix(in srgb, ${link.accent} 10%, white)`, color: link.accent, "--tw-ring-color": `color-mix(in srgb, ${link.accent} 18%, transparent)` } as CSSProperties}
-      >
-        <Icon className="size-5" />
-      </span>
+      {marked && <NavIcon link={link} className={styles.menuIcon} />}
       <span className="min-w-0">
-        <span className={cn("flex items-center gap-1 font-medium leading-5 text-[#141414]", size === "lg" ? "text-[16px]" : "text-[14.5px]")}>
+        <span className={cn("flex items-center gap-1 font-medium leading-5 text-[#141414]", size === "lg" ? "text-[16px]" : "text-[14.5px]", marked && "pt-0.5")}>
           {link.label}
           {link.external && <RiArrowRightUpLine className="size-3.5 text-[#a3a3a3]" aria-hidden="true" />}
         </span>
@@ -277,14 +272,18 @@ function MenuLink({ link, onNavigate, size = "md" }: { link: NavLink; onNavigate
       </span>
     </>
   );
-  const cls = cn(styles.menuItem, "flex items-center gap-3 rounded-2xl px-3 py-2.5 outline-none transition-colors duration-200 hover:bg-[#f5f5f6] focus-visible:bg-[#f5f5f6] focus-visible:ring-2 focus-visible:ring-[#335cff]/40");
-  const style = { "--accent": link.accent } as CSSProperties;
+  // Icon and title share a top edge; a row with no mark is a compact text link.
+  const cls = cn(
+    styles.menuItem,
+    "flex items-start gap-3 rounded-2xl px-3 outline-none transition-colors duration-200 hover:bg-[#f5f5f6] focus-visible:bg-[#f5f5f6] focus-visible:ring-2 focus-visible:ring-[#335cff]/40",
+    marked ? "py-2.5" : "py-2",
+  );
   return link.external ? (
-    <a href={link.href} target="_blank" rel="noopener noreferrer" className={cls} style={style} onClick={onNavigate}>
+    <a href={link.href} target="_blank" rel="noopener noreferrer" className={cls} onClick={onNavigate}>
       {body}
     </a>
   ) : (
-    <Link href={link.href} className={cls} style={style} onClick={onNavigate}>
+    <Link href={link.href} className={cls} onClick={onNavigate}>
       {body}
     </Link>
   );

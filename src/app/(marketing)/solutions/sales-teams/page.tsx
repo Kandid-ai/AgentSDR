@@ -53,8 +53,6 @@ export default function SalesTeamsPage() {
   return (
     <>
       <PageHero
-        path={PATH}
-        crumb="Sales teams"
         eyebrow="For sales teams"
         eyebrowIcon={RiTeamLine}
         title="The open-source sales engagement platform for teams"

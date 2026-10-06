@@ -62,7 +62,6 @@ export default function Page() {
   return (
     <GuideLayout
       path={PATH}
-      crumb="LinkedIn automation limits"
       headline="LinkedIn automation limits: what is safe"
       description={DESCRIPTION}
       title="LinkedIn automation limits"

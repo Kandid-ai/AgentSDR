@@ -61,7 +61,6 @@ export default function Page() {
   return (
     <GuideLayout
       path={PATH}
-      crumb="WhatsApp for B2B outreach"
       headline="WhatsApp for B2B outreach: a practical guide"
       description={DESCRIPTION}
       title="WhatsApp for B2B outreach"

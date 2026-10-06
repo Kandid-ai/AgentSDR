@@ -61,7 +61,6 @@ export default function Page() {
   return (
     <GuideLayout
       path={PATH}
-      crumb="Cold email from Google Workspace"
       headline="Cold email from Google Workspace: a safe setup"
       description={DESCRIPTION}
       title="Cold email from Google Workspace"

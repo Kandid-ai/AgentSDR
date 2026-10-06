@@ -41,8 +41,6 @@ export default function ComparePage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="All comparisons"
         eyebrow="Compare"
         eyebrowIcon={RiScalesLine}
         title="Open-source alternatives to your outbound stack"

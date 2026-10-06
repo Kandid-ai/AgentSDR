@@ -27,7 +27,7 @@ const GUIDES = [
 export default function GuidesPage() {
   return (
     <>
-      <PageHero path={PATH} crumb="Guides" eyebrow="Guides" eyebrowIcon={RiBookOpenLine} title="Guides to safe multichannel outbound" lede="Long-form, practical guides to sending email, LinkedIn and WhatsApp outreach without burning your domain, account or number, each ending with the defaults AgentSDR ships." />
+      <PageHero eyebrow="Guides" eyebrowIcon={RiBookOpenLine} title="Guides to safe multichannel outbound" lede="Long-form, practical guides to sending email, LinkedIn and WhatsApp outreach without burning your domain, account or number, each ending with the defaults AgentSDR ships." />
       <Section id="guides" eyebrow="Start here" title="Three channels, three sets of limits" lede="Each guide separates general practice from what AgentSDR does, and links to the provider's own rules where we cite one.">
         <ul className="grid gap-5 lg:grid-cols-3">
           {GUIDES.map((g, i) => {

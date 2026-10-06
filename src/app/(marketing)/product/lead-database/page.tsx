@@ -82,8 +82,6 @@ export default function LeadDatabasePage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="Lead database"
         eyebrow="Lead database"
         eyebrowIcon={RiContactsBook3Fill}
         title="A B2B lead database that every channel shares"

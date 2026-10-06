@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { EXTERNAL, PAGES, SITE_NAME, SITE_URL } from "./site";
+import { EXTERNAL, SITE_NAME, SITE_URL } from "./site";
 
 /**
  * Metadata and structured data for marketing pages. Every page calls
@@ -81,23 +81,6 @@ export function softwareLd(description: string, path = "/"): Json {
     isAccessibleForFree: true,
     offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
     codeRepository: EXTERNAL.github,
-  };
-}
-
-/** Home → each ancestor that is itself a page → this page. */
-export function breadcrumbLd(path: string, name: string): Json {
-  const crumbs: Array<{ name: string; path: string }> = [{ name: "Home", path: "/" }];
-  const parts = path.split("/").filter(Boolean);
-  for (let i = 1; i < parts.length; i++) {
-    const parent = `/${parts.slice(0, i).join("/")}`;
-    const page = PAGES.find((p) => p.path === parent);
-    if (page) crumbs.push({ name: page.label, path: parent });
-  }
-  crumbs.push({ name, path });
-  return {
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    itemListElement: crumbs.map((c, i) => ({ "@type": "ListItem", position: i + 1, name: c.name, item: absoluteUrl(c.path) })),
   };
 }
 

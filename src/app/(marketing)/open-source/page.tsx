@@ -78,8 +78,6 @@ export default function OpenSourcePage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="Open source"
         eyebrow="Open source and self-hosted"
         eyebrowIcon={RiCodeSSlashLine}
         title="The open-source AI SDR you host yourself"

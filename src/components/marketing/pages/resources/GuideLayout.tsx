@@ -11,7 +11,6 @@ export const GUIDE_PUBLISHED = "2026-10-06";
 /** The shared frame of a guide: hero, takeaways, sticky contents, prose, FAQ, related, closing. */
 export function GuideLayout({
   path,
-  crumb,
   title,
   headline,
   description,
@@ -25,7 +24,6 @@ export function GuideLayout({
   children,
 }: {
   path: string;
-  crumb: string;
   /** The h1. */
   title: ReactNode;
   /** Plain-text headline for the Article structured data. */
@@ -43,7 +41,7 @@ export function GuideLayout({
   return (
     <>
       <JsonLd data={articleLd({ path, title: headline, description, published: GUIDE_PUBLISHED })} />
-      <PageHero path={path} crumb={crumb} eyebrow={`Guide · ${readMinutes} min read`} eyebrowIcon={RiBookOpenLine} title={title} lede={lede} primary={null} secondary={null} />
+      <PageHero eyebrow={`Guide · ${readMinutes} min read`} eyebrowIcon={RiBookOpenLine} title={title} lede={lede} primary={null} secondary={null} />
       <article className="bg-white pb-8 pt-12 sm:pt-16">
         <div className="mx-auto grid max-w-[1128px] gap-12 px-4 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-16">
           <aside className="order-2 lg:order-1">

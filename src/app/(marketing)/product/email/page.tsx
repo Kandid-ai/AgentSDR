@@ -59,8 +59,6 @@ export default function EmailPage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="Email sequences"
         eyebrow="Email sequences"
         eyebrowIcon={RiMailFill}
         title="Cold email sequences from your own mailboxes"

@@ -23,7 +23,7 @@ export default function ChangelogPage() {
   const releases = parseChangelog(fs.readFileSync(path.join(process.cwd(), "CHANGELOG.md"), "utf8"));
   return (
     <>
-      <PageHero path={PATH} crumb="Changelog" eyebrow="Changelog" eyebrowIcon={RiHistoryLine} title="AgentSDR changelog" lede="What shipped, release by release, including the database migrations each release needs. This page is the project's CHANGELOG.md, built with the site." primary={{ href: "https://github.com/Kandid-ai/AgentSDR/blob/main/CHANGELOG.md", label: "View on GitHub", external: true }} secondary={null} />
+      <PageHero eyebrow="Changelog" eyebrowIcon={RiHistoryLine} title="AgentSDR changelog" lede="What shipped, release by release, including the database migrations each release needs. This page is the project's CHANGELOG.md, built with the site." primary={{ href: "https://github.com/Kandid-ai/AgentSDR/blob/main/CHANGELOG.md", label: "View on GitHub", external: true }} secondary={null} />
       <Section id="releases">
         <ol className="mx-auto max-w-[820px]">
           {releases.map((r, i) => (

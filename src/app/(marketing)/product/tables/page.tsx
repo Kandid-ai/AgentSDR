@@ -87,8 +87,6 @@ export default function TablesPage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="Enrichment tables"
         eyebrow="Enrichment tables"
         eyebrowIcon={RiLayoutGridFill}
         title="AI enrichment tables for your lead lists"

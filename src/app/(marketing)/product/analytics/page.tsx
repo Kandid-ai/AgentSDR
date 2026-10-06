@@ -69,8 +69,6 @@ export default function AnalyticsPage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="Analytics"
         eyebrow="Analytics"
         eyebrowIcon={RiBarChartBoxFill}
         title="Outbound sales analytics, from first touch to customer"

@@ -66,8 +66,6 @@ export default function LinkedinPage() {
     <>
       <JsonLd data={softwareLd(DESCRIPTION, PATH)} />
       <PageHero
-        path={PATH}
-        crumb="LinkedIn automation"
         eyebrow="LinkedIn automation"
         eyebrowIcon={RiLinkedinBoxFill}
         title="LinkedIn automation across many accounts, paced like a person"
