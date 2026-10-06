@@ -20,24 +20,19 @@ const CLONE: Line[] = [
   { kind: "comment", text: "# 1 · Clone" },
   { kind: "cmd", text: "git clone https://github.com/Kandid-ai/AgentSDR.git && cd AgentSDR" },
 ];
-const CONFIGURE: Line[] = [
-  { kind: "comment", text: "# 2 · Configure" },
-  { kind: "cmd", text: "cp .env.example .env.local" },
-  { kind: "out", text: "  DATABASE_URL=postgres://…" },
-  { kind: "out", text: "  BETTER_AUTH_SECRET=…   BETTER_AUTH_URL=…" },
-  { kind: "out", text: "  INTEGRATION_CREDENTIALS_KEY=…" },
-  { kind: "note", text: "# then create the schema: the migrations in scripts/" },
-];
-
+// Both recipes follow the README's Quick start.
 const RECIPES: Record<"docker" | "bun", { label: string; lines: Line[] }> = {
   docker: {
     label: "Docker",
     lines: [
       ...CLONE,
-      ...CONFIGURE,
-      { kind: "comment", text: "# 3 · Build and run one container" },
-      { kind: "cmd", text: "docker build -t agentsdr ." },
-      { kind: "cmd", text: "docker run --env-file .env.local -p 3000:3000 agentsdr" },
+      { kind: "comment", text: "# 2 · Configure" },
+      { kind: "cmd", text: "cp .env.example .env" },
+      { kind: "out", text: "  POSTGRES_PASSWORD=…   BETTER_AUTH_SECRET=…" },
+      { kind: "out", text: "  BETTER_AUTH_URL=…   INTEGRATION_CREDENTIALS_KEY=…" },
+      { kind: "note", text: "# each secret: openssl rand -hex 32" },
+      { kind: "comment", text: "# 3 · Postgres, schema, app and scheduler" },
+      { kind: "cmd", text: "docker compose up -d" },
       { kind: "done", text: "✓ Ready — http://localhost:3000" },
     ],
   },
@@ -45,9 +40,12 @@ const RECIPES: Record<"docker" | "bun", { label: string; lines: Line[] }> = {
     label: "Bun",
     lines: [
       ...CLONE,
-      ...CONFIGURE,
-      { kind: "comment", text: "# 3 · Install and start" },
-      { kind: "cmd", text: "bun install" },
+      { kind: "comment", text: "# 2 · Configure (PostgreSQL 16+)" },
+      { kind: "cmd", text: "bun install && createdb agentsdr" },
+      { kind: "cmd", text: "cp .env.example .env.local" },
+      { kind: "out", text: "  DATABASE_URL=…   BETTER_AUTH_SECRET=…   INTEGRATION_CREDENTIALS_KEY=…" },
+      { kind: "comment", text: "# 3 · Create the schema and start" },
+      { kind: "cmd", text: "bun run db:setup" },
       { kind: "cmd", text: "bun run dev" },
       { kind: "done", text: "✓ Ready — http://localhost:3000" },
     ],

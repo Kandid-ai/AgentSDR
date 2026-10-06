@@ -8,12 +8,8 @@ import styles from "./landing.module.css";
 /** Where the calls to action go. */
 export const LINKS = {
   github: "https://github.com/Kandid-ai/AgentSDR",
-  /**
-   * The README's setup section. Today the README is still the create-next-app
-   * boilerplate and "Getting started" is its only setup heading; point this at
-   * a real self-hosting section once one is written.
-   */
-  selfHost: "https://github.com/Kandid-ai/AgentSDR#getting-started",
+  /** The README's Quick start (Docker Compose, or from source). */
+  selfHost: "https://github.com/Kandid-ai/AgentSDR#quick-start",
   issues: "https://github.com/Kandid-ai/AgentSDR/issues",
   // The app's home. Signed out, proxy.ts sends this to /sign-in?from=/analytics,
   // so signing in lands here too.

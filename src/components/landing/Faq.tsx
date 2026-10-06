@@ -45,9 +45,9 @@ const QUESTIONS: Array<{ q: string; a: React.ReactNode }> = [
     q: "What do I need to deploy it?",
     a: (
       <>
-        A machine that runs Docker and a Postgres database. The repository&apos;s Dockerfile builds one image; you set the database URL, a workspace password and the keys for the channels you use. Start with the{" "}
+        A machine that runs Docker, and PostgreSQL 16 or newer (the Compose file brings its own). Copy the example environment file, set the database URL, an auth secret and an encryption key, then connect each channel from inside the app. Start with the{" "}
         <a href={LINKS.selfHost} target="_blank" rel="noopener noreferrer" className="font-medium text-[#141414] underline decoration-black/20 underline-offset-2 hover:decoration-black/60">
-          getting-started notes on GitHub
+          quick start on GitHub
         </a>
         .
       </>
