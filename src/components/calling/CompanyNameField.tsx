@@ -37,10 +37,7 @@ export function CompanyNameField({
 
   useEffect(() => {
     const term = query.trim();
-    if (!term) {
-      setSuggestions([]);
-      return;
-    }
+    if (!term) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       fetch(`/api/leads/companies/suggest?q=${encodeURIComponent(term)}`, { signal: controller.signal })
@@ -98,6 +95,7 @@ export function CompanyNameField({
                   onChange={(event) => {
                     onChange(event.target.value);
                     setQuery(event.target.value);
+                    if (!event.target.value.trim()) setSuggestions([]);
                   }}
                   onFocus={() => setFocused(true)}
                   onBlur={() => setFocused(false)}

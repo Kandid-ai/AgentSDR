@@ -164,7 +164,8 @@ export default function AiDialog({
   const [delaySeconds, setDelaySeconds] = useState(saved?.delaySeconds ?? 0);
 
   const [openRouterChoices, setOpenRouterChoices] = useState<OpenRouterChoice[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
+  // Starts true when the dialog mounts open (it always does, see GridClient), so the list shows "Loading models…".
+  const [modelsLoading, setModelsLoading] = useState(open);
   const [defaultModel, setDefaultModel] = useState<{ provider: string; modelId: string } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
@@ -241,9 +242,14 @@ export default function AiDialog({
     ?? (providerKey === "openrouter" ? null : getAiModel(providerKey, modelKey, useCase));
 
   // Once per open: the use case only filters the list, which happens here.
+  // The loading flag is raised while rendering the open transition (not in the effect).
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) setModelsLoading(true);
+  }
   useEffect(() => {
     if (!open) return;
-    setModelsLoading(true);
     void fetch("/api/ai/openrouter/models").then(async (response) => {
       const body = await response.json() as { error?: string; models?: Array<{ id: string; name: string; description?: string; provider: string; providerName: string; outputModalities?: string[] }>; settings?: { connectionId?: string | null; defaultModel?: { provider: string; modelId: string } | null } };
       if (!response.ok) return setError(body.error ?? "Could not load configured OpenRouter models");
@@ -276,17 +282,16 @@ export default function AiDialog({
 
   // A new column starts on the AI Settings default when it suits the use
   // case — without replacing a model the person already picked.
-  useEffect(() => {
-    if (saved?.modelKey || modelKey || !defaultModel) return;
-    if (openRouterChoices.some((choice) =>
+  // Adjusted while rendering: once the choice is made, modelKey is set and this stops.
+  if (!saved?.modelKey && !modelKey && defaultModel
+    && openRouterChoices.some((choice) =>
       choice.model.key === defaultModel.modelId
       && choice.upstreamProvider === defaultModel.provider
       && choice.model.useCases.includes(useCase))) {
-      setProviderKey("openrouter");
-      setModelKey(defaultModel.modelId);
-      setUpstreamProvider(defaultModel.provider);
-    }
-  }, [defaultModel, openRouterChoices, useCase, saved?.modelKey, modelKey]);
+    setProviderKey("openrouter");
+    setModelKey(defaultModel.modelId);
+    setUpstreamProvider(defaultModel.provider);
+  }
 
   /**
    * "{{" anywhere, or "/" at the start of a word (so a URL's slashes do not

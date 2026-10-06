@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
+import pkg from "./package.json";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+
+  // package.json's version, inlined into client code for the Help menu's bug-report link.
+  env: { NEXT_PUBLIC_APP_VERSION: pkg.version },
 
   // The formula sandbox reads these library sources off disk at runtime and
   // evaluates them inside the QuickJS isolate (src/lib/grid/runners/sandbox.ts).

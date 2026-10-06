@@ -45,7 +45,8 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   function go(item: PaletteItem | undefined) {
     if (!item) return;
     change(false);
-    router.push(item.href);
+    if (item.external) window.open(item.href, "_blank", "noopener,noreferrer");
+    else router.push(item.href);
   }
 
   useEffect(() => {

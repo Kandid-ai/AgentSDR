@@ -1,5 +1,9 @@
 import {
   RiBarChartBoxLine,
+  RiBookOpenLine,
+  RiBugLine,
+  RiLightbulbLine,
+  RiShieldCheckLine,
   RiChat3Line,
   RiFilter3Line,
   RiGlobalLine,
@@ -26,6 +30,7 @@ import {
   type RemixiconComponentType,
 } from "@remixicon/react";
 import { HUE } from "@/components/analytics/theme";
+import { APP_VERSION, bugReportUrl, SUPPORT_LINKS } from "@/lib/support";
 import { SETTINGS_HOME, SETTINGS_NAV } from "@/components/settings/settingsNav";
 
 /**
@@ -181,7 +186,7 @@ export function activeHref(pathname: string): string | undefined {
 }
 
 /** Every destination for the ⌘K palette: nav pages, settings screens, and "create" shortcuts. */
-export type PaletteItem = { href: string; label: string; group: string; icon: RemixiconComponentType; keywords?: string };
+export type PaletteItem = { href: string; label: string; group: string; icon: RemixiconComponentType; keywords?: string; /** Opens in a new tab instead of navigating in the app. */ external?: boolean };
 
 export function paletteItems(): PaletteItem[] {
   const items: PaletteItem[] = [];
@@ -203,6 +208,13 @@ export function paletteItems(): PaletteItem[] {
   items.push(
     { href: "/outreach/campaigns/new", label: "New email campaign", group: "Create", icon: RiMailFill },
     { href: "/linkedin/campaigns/new", label: "New LinkedIn campaign", group: "Create", icon: RiLinkedinBoxFill },
+  );
+  items.push(
+    { href: SUPPORT_LINKS.docs, label: "Documentation", group: "Help", icon: RiBookOpenLine, external: true },
+    { href: bugReportUrl(APP_VERSION), label: "Report a bug", group: "Help", icon: RiBugLine, external: true },
+    { href: SUPPORT_LINKS.featureRequest, label: "Request a feature", group: "Help", icon: RiLightbulbLine, external: true },
+    { href: SUPPORT_LINKS.community, label: "Ask the community", group: "Help", icon: RiChat3Line, external: true },
+    { href: SUPPORT_LINKS.security, label: "Report a security issue", group: "Help", icon: RiShieldCheckLine, external: true },
   );
   return items;
 }

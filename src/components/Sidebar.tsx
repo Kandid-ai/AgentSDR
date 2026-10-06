@@ -6,13 +6,20 @@ import { useCallback, useEffect, useState } from "react";
 import {
   RiAddLine,
   RiArrowDownSLine,
+  RiBookOpenLine,
+  RiBugLine,
   RiCheckLine,
   RiCloseLine,
+  RiExternalLinkLine,
+  RiLightbulbLine,
   RiLogoutBoxRLine,
   RiMore2Line,
+  RiQuestionLine,
   RiSearchLine,
   RiSettings3Line,
+  RiShieldCheckLine,
   RiSideBarLine,
+  RiChat3Line,
 } from "@remixicon/react";
 
 import { AppIcon, Logo } from "@/components/brand/Logo";
@@ -23,6 +30,7 @@ import { SETTINGS_HOME } from "@/components/settings/settingsNav";
 import { CommandPalette } from "@/components/nav/CommandPalette";
 import { ThemeToggleButton } from "@/components/theme/ThemeSwitch";
 import { activeHref, NAV_FOOTER, NAV_SECTIONS, type NavBadges, type NavEntry, type NavGroup, type NavLink } from "@/components/nav/navConfig";
+import { APP_VERSION, bugReportUrl, SUPPORT_LINKS } from "@/lib/support";
 import { cn } from "@/utils/cn";
 
 /**
@@ -120,6 +128,50 @@ function LinkRow({ link, active, badges, collapsed, compact }: { link: NavLink; 
       <span className="min-w-0 flex-1 truncate">{link.label}</span>
       <Badge link={link} badges={badges} />
     </Link>
+  );
+}
+
+const HELP_LINKS = [
+  { label: "Documentation", href: SUPPORT_LINKS.docs, icon: RiBookOpenLine },
+  { label: "Report a bug", href: bugReportUrl(APP_VERSION), icon: RiBugLine },
+  { label: "Request a feature", href: SUPPORT_LINKS.featureRequest, icon: RiLightbulbLine },
+  { label: "Ask the community", href: SUPPORT_LINKS.community, icon: RiChat3Line },
+  { label: "Report a security issue", href: SUPPORT_LINKS.security, icon: RiShieldCheckLine },
+];
+
+/** Help: a menu of external links (docs, bug, feature, community, security), each in a new tab. */
+function HelpRow({ collapsed, compact }: { collapsed: boolean; compact?: boolean }) {
+  return (
+    <Dropdown.Root>
+      {collapsed ? (
+        <RailTip label="Help">
+          <Dropdown.Trigger asChild>
+            <button type="button" aria-label="Help" className={cn(rowBase, rowState(false), "h-9 justify-center")}>
+              <RiQuestionLine className="size-[18px] shrink-0 text-text-soft-400" />
+            </button>
+          </Dropdown.Trigger>
+        </RailTip>
+      ) : (
+        <Dropdown.Trigger asChild>
+          <button type="button" className={cn(rowBase, rowState(false), compact ? "h-8 px-2 text-paragraph-sm" : "h-9 px-2")}>
+            <RiQuestionLine className={cn("shrink-0 text-text-soft-400", compact ? "size-4" : "size-[18px]")} />
+            <span className="min-w-0 flex-1 truncate text-left">Help</span>
+          </button>
+        </Dropdown.Trigger>
+      )}
+      <Dropdown.Content side={collapsed ? "right" : "top"} align={collapsed ? "end" : "start"} sideOffset={collapsed ? 10 : undefined} className="w-56">
+        <p className="px-2 pb-1 pt-1.5 text-paragraph-xs text-text-soft-400">Help</p>
+        {HELP_LINKS.map((l) => (
+          <Dropdown.Item key={l.href} asChild>
+            <a href={l.href} target="_blank" rel="noopener noreferrer">
+              <Dropdown.ItemIcon as={l.icon} />
+              <span className="flex-1">{l.label}</span>
+              <RiExternalLinkLine className="size-3.5 shrink-0 text-text-soft-400" aria-hidden="true" />
+            </a>
+          </Dropdown.Item>
+        ))}
+      </Dropdown.Content>
+    </Dropdown.Root>
   );
 }
 
@@ -346,6 +398,7 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
         {/* Pinned: developer links, settings, workspace */}
         <div className={cn("shrink-0 space-y-0.5 border-t border-stroke-soft-200 pt-2", collapsed ? "px-3" : "px-3")}>
           {NAV_FOOTER.map((e) => renderEntry(e, true))}
+          <HelpRow collapsed={collapsed} compact />
         </div>
         <div className={cn("shrink-0 p-3", collapsed && "flex justify-center")}>
           <Dropdown.Root>
