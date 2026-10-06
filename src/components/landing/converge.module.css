@@ -1,0 +1,177 @@
+/*
+ * The hero's convergence layer: the fan of hairlines at either edge, the
+ * tools that travel them, and the bloom and ring on the headline's icon when
+ * one lands. Converge.tsx positions everything (transform and opacity only)
+ * from the icon's measured centre; this file holds the looks. The layer sits
+ * behind the hero's text, which is always on top.
+ */
+
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------------------------------------------------------------- tiles */
+
+/* A uniform frame for every mark: white tile, hairline, soft shadow. */
+.tile {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  width: 56px;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 24%;
+  background: #fff;
+  box-shadow:
+    0 1px 2px rgb(4 6 30 / 0.3),
+    0 12px 28px -12px rgb(4 6 30 / 0.75);
+  opacity: 0.8;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.tile::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 0 0 1px rgb(12 16 48 / 0.1),
+    inset 0 1px 0 rgb(255 255 255 / 0.6);
+}
+
+.mark {
+  width: var(--inset);
+  height: var(--inset);
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* A mark that is itself an app tile fills the frame edge to edge. */
+.bleed {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* The sky's own colour over a tool, for depth: thick at the edge and behind the text. */
+.veil {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: #15123d;
+  opacity: 0.4;
+  will-change: opacity;
+}
+
+/* Nothing shows until the script has measured the icon and placed the tools. */
+.layer:not([data-ready]) .tile,
+.layer:not([data-ready]) .ring,
+.layer:not([data-ready]) .bloom {
+  visibility: hidden;
+}
+
+/* With motion allowed, the tools wait hidden until the loop starts. */
+@media (prefers-reduced-motion: no-preference) {
+  .layer:not([data-live]) .tile {
+    opacity: 0;
+  }
+}
+
+/* ---------------------------------------------------------- the landing */
+
+/* A soft circular light centred on the icon, lifting on each landing. */
+.bloom {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 230px;
+  height: 230px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(118 146 255 / 0.42), rgb(70 105 255 / 0.14) 50%, transparent 100%);
+  /* Off at rest (and under prefers-reduced-motion); the loop lights it. */
+  opacity: 0;
+  will-change: opacity;
+}
+
+/* The icon's own outline, easing out from its edge as a tool lands. Same size and radius as the icon. */
+.ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 68px;
+  height: 68px;
+  border-radius: 14%; /* ICON_RADIUS in ui.tsx */
+  box-shadow:
+    0 0 0 1px rgb(180 198 255 / 0.9),
+    0 0 14px rgb(91 123 255 / 0.45);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+/*
+ * The headline icon's wrapper; the script nudges its scale on a landing.
+ * A flex box, so the icon fills it exactly — as an inline-block the icon
+ * would sit on a baseline inside it and hang below the box being measured.
+ */
+.target {
+  position: relative;
+  /* vertical-align: middle centres it on the x-height; lift it onto the capitals' centre. */
+  top: -0.03em;
+  display: inline-flex;
+  vertical-align: middle;
+  will-change: transform;
+}
+
+.glint {
+  position: absolute;
+  inset: 0;
+  border-radius: 14%; /* ICON_RADIUS in ui.tsx */
+  background: radial-gradient(120% 90% at 50% 0%, rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.12));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- phone */
+
+@media (max-width: 639.98px) {
+  /* The headline fills a phone's width: the lines would only show as ticks at the edges. */
+  .lines,
+  .notPhone {
+    display: none;
+  }
+
+  .tile {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* Still, on a phone, the tools would sit on the text, so only the icon remains. */
+@media (max-width: 639.98px) and (prefers-reduced-motion: reduce) {
+  .tile {
+    display: none;
+  }
+}
+
+

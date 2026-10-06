@@ -1,0 +1,14 @@
+/*
+ * Utilities for the video's own components. The app's globals.css excludes
+ * video/ from its scan (so the app build never sees these classes), and that
+ * exclusion travels with any @import or @reference of it — so the film has
+ * its own Tailwind entry, on Tailwind's default theme, generating utilities
+ * from the video's sources only. The app's named tokens (bg-bg-weak-50, …)
+ * come from the app's own pass in style.css. Imported from Root.tsx.
+ */
+/* Loaded before style.css: declare Tailwind's layer order here, or this
+   file's utilities layer would be declared first and rank below base. */
+@layer theme, base, components, utilities;
+@reference "tailwindcss";
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./";

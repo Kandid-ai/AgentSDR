@@ -1,0 +1,5 @@
+# gitleaks: reviewed false positives (fingerprint = file:rule:line).
+# A variable name that looks like a LinkedIn client secret:
+scripts/backfill-campaign-people.ts:linkedin-client-secret:322
+# The check that a pasted Google key is a PEM private key (a regex, not a key):
+src/lib/platform/clients.ts:private-key:26

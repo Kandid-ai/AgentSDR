@@ -1,0 +1,8 @@
+/*
+ * The app's own stylesheet (Tailwind v4 + the AlignUI tokens), generating
+ * utilities for the app components the film borrows. Its base excludes
+ * video/ — the video's own utilities come from video.css.
+ */
+@import "../../src/app/globals.css";
+@source "../../src/components";
+@source "../../src/app";

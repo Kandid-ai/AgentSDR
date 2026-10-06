@@ -1,0 +1,25 @@
+{
+  "name": "agentsdr-launch-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Launch out/final/agentsdr-launch-4k.mp4 --scale=2 --image-format=png --crf=12 --x264-preset=slow --pixel-format=yuv420p --audio-codec=aac --audio-bitrate=320k && bun run tools/finalize.ts out/final/agentsdr-launch-4k.mp4",
+    "preview": "remotion render src/index.ts Launch out/preview.mp4 --scale=0.5 --jpeg-quality=60 --crf=30 --x264-preset=veryfast --audio-bitrate=128k",
+    "still": "remotion still src/index.ts Launch out/still.png",
+    "ph": "bun run tools/ph.ts"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.532",
+    "@remotion/google-fonts": "^4.0.532",
+    "@remotion/tailwind-v4": "^4.0.532",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "remotion": "^4.0.532"
+  },
+  "devDependencies": {
+    "@remotion/bundler": "4.0.532",
+    "@remotion/renderer": "4.0.532",
+    "@types/node": "^26.6.3"
+  }
+}

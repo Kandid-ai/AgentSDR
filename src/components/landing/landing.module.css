@@ -1,0 +1,484 @@
+/*
+ * The landing page's own styles. Everything else is Tailwind + the app's
+ * AlignUI tokens; this file holds what utilities can't say well: the scoped
+ * light palette, the hero's gradient and circuit traces, gradient text, and
+ * the motion (all of it off under prefers-reduced-motion).
+ */
+
+/*
+ * The page is designed light (with its own dark hero and CTA), whatever the
+ * visitor's stored app theme is. When <html> carries `.dark` (someone who
+ * picked dark mode in the app), the AlignUI tokens flip for the whole tree;
+ * re-declaring every token that `.dark` changes, at their light values, on
+ * the page's root puts the real components back in light mode. Generated from
+ * the `.dark` block of src/app/globals.css — keep in step with it.
+ */
+.page {
+  color-scheme: light;
+  --chart-muted: #cacfd8;
+  --chart-muted-strong: #99a0ae;
+  --color-bg-strong-950: var(--color-neutral-950);
+  --color-bg-surface-800: var(--color-neutral-800);
+  --color-bg-sub-300: var(--color-neutral-300);
+  --color-bg-soft-200: var(--color-neutral-200);
+  --color-bg-weak-50: var(--color-neutral-50);
+  --color-bg-weak-25: var(--color-neutral-50);
+  --color-bg-white-0: var(--color-neutral-0);
+  --color-text-strong-950: var(--color-neutral-950);
+  --color-text-sub-600: var(--color-neutral-600);
+  --color-text-soft-400: var(--color-neutral-400);
+  --color-text-disabled-300: var(--color-neutral-300);
+  --color-text-white-0: var(--color-neutral-0);
+  --color-stroke-strong-950: var(--color-neutral-950);
+  --color-stroke-sub-300: var(--color-neutral-300);
+  --color-stroke-soft-200: var(--color-neutral-200);
+  --color-stroke-white-0: var(--color-neutral-0);
+  --color-faded-dark: var(--color-neutral-800);
+  --color-faded-base: var(--color-neutral-500);
+  --color-faded-light: var(--color-neutral-200);
+  --color-faded-lighter: var(--color-neutral-100);
+  --color-information-dark: var(--color-blue-950);
+  --color-information-base: var(--color-blue-500);
+  --color-information-light: var(--color-blue-200);
+  --color-information-lighter: var(--color-blue-50);
+  --color-warning-dark: var(--color-orange-950);
+  --color-warning-base: var(--color-orange-500);
+  --color-warning-light: var(--color-orange-200);
+  --color-warning-lighter: var(--color-orange-50);
+  --color-error-dark: var(--color-red-950);
+  --color-error-base: var(--color-red-500);
+  --color-error-light: var(--color-red-200);
+  --color-error-lighter: var(--color-red-50);
+  --color-success-dark: var(--color-green-950);
+  --color-success-base: var(--color-green-500);
+  --color-success-light: var(--color-green-200);
+  --color-success-lighter: var(--color-green-50);
+  --color-away-dark: var(--color-yellow-950);
+  --color-away-base: var(--color-yellow-500);
+  --color-away-light: var(--color-yellow-200);
+  --color-away-lighter: var(--color-yellow-50);
+  --color-feature-dark: var(--color-purple-950);
+  --color-feature-base: var(--color-purple-500);
+  --color-feature-light: var(--color-purple-200);
+  --color-feature-lighter: var(--color-purple-50);
+  --color-verified-dark: var(--color-sky-950);
+  --color-verified-base: var(--color-sky-500);
+  --color-verified-light: var(--color-sky-200);
+  --color-verified-lighter: var(--color-sky-50);
+  --color-highlighted-dark: var(--color-pink-950);
+  --color-highlighted-base: var(--color-pink-500);
+  --color-highlighted-light: var(--color-pink-200);
+  --color-highlighted-lighter: var(--color-pink-50);
+  --color-stable-dark: var(--color-teal-950);
+  --color-stable-base: var(--color-teal-500);
+  --color-stable-light: var(--color-teal-200);
+  --color-stable-lighter: var(--color-teal-50);
+  --color-primary-base: var(--color-blue-500);
+  --color-primary-light: var(--color-blue-100);
+  --color-primary-lighter: var(--color-blue-50);
+  --color-overlay-gray: oklch(32.11% 0.0000 0 / 24%);
+  --color-overlay-slate: oklch(30.90% 0.0210 265.90 / 24%);
+  --color-overlay: var(--color-overlay-slate);
+  --color-social-apple: oklch(0.00% 0.0000 0);
+  --color-social-twitter: oklch(6.72% 0.0000 0);
+  --color-social-github: oklch(27.85% 0.0132 253.04);
+  --color-social-notion: oklch(24.96% 0.0096 248.21);
+  --color-social-tidal: oklch(0.00% 0.0000 0);
+  --color-social-amazon: oklch(35.92% 0.0197 248.38);
+  --color-social-zendesk: oklch(19.11% 0.0138 94.02);
+  --shadow-complex-12: 0 80px 80px -40px rgba(23, 23, 23, 0.04),\n    0 48px 48px -24px rgba(23, 23, 23, 0.04);
+  --shadow-colored-gray: 0 20px 20px -10px rgba(23, 23, 23, 0.04),\n    0 10px 10px -5px rgba(23, 23, 23, 0.04),\n    0 6px 6px -3px rgba(23, 23, 23, 0.04),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1px rgba(23, 23, 23, 0.04);
+  --shadow-complex: 0 20px 20px -10px rgba(23, 23, 23, 0.04),\n    0 10px 10px -5px rgba(23, 23, 23, 0.04),\n    0 6px 6px -3px rgba(23, 23, 23, 0.04),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1px rgba(23, 23, 23, 0.08),\n    0 -1px 1px -0.5px rgba(23, 23, 23, 0.06) inset;
+  --shadow-complex-2: 0 10px 10px -5px rgba(23, 23, 23, 0.02),\n    0 6px 6px -3px rgba(23, 23, 23, 0.04),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1px rgba(23, 23, 23, 0.02);
+  --shadow-complex-4: 0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1px rgba(23, 23, 23, 0.02);
+  --shadow-complex-5: 0 0 6px 0 rgba(255, 255, 255, 0.24) inset,\n    0 40px 40px -20px rgba(23, 23, 23, 0.06),\n    0 10px 10px -5px rgba(23, 23, 23, 0.06),\n    0 6px 6px -3px rgba(23, 23, 23, 0.04),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04);
+  --shadow-complex-6: 0 40px 40px -20px rgba(23, 23, 23, 0.06),\n    0 10px 10px -5px rgba(23, 23, 23, 0.06),\n    0 6px 6px -3px rgba(23, 23, 23, 0.04),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 6px 0 rgba(255, 255, 255, 0.24) inset;
+  --shadow-complex-7: 0 1px 2px 0 rgba(14, 18, 27, 0.24),\n    0 0 0 1px #335cff;
+  --shadow-complex-8: 0 20px 20px -10px rgba(23, 23, 23, 0),\n    0 10px 10px -5px rgba(23, 23, 23, 0),\n    0 6px 6px -3px rgba(23, 23, 23, 0),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0),\n    0 0 0 1px rgba(23, 23, 23, 0.08),\n    0 -1px 1px -0.5px rgba(23, 23, 23, 0.06) inset;
+  --shadow-complex-9: 0 80px 40px -20px rgba(23, 23, 23, 0.06),\n    0 40px 40px -20px rgba(23, 23, 23, 0.06),\n    0 10px 10px -5px rgba(23, 23, 23, 0.06),\n    0 6px 6px -3px rgba(23, 23, 23, 0.04),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 6px 0 rgba(255, 255, 255, 0.04) inset;
+  --shadow-complex-10: 0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04);
+  --shadow-complex-11: 0 -1px 1px -0.5px rgba(23, 23, 23, 0.06) inset,\n    0 20px 20px -10px rgba(23, 23, 23, 0.04),\n    0 10px 10px -5px rgba(23, 23, 23, 0.04),\n    0 6px 6px -3px rgba(23, 23, 23, 0.04),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1px rgba(23, 23, 23, 0.04);
+  --shadow-custom-input: 0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1px rgba(23, 23, 23, 0.08);
+  --shadow-custom-input-2: 0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1px var(--color-bg-soft-200);
+  --shadow-custom-input-3: 0 3px 3px -1.5px rgba(23, 23, 23, 0.06),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.06);
+  --shadow-custom-input-4: 0 3px 3px -1.5px rgba(23, 23, 23, 0.06),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.06),\n    0 0 0 1px rgba(23, 23, 23, 0.02);
+  --shadow-custom-input-active: 0 6px 6px -3px rgba(23, 23, 23, 0.02),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1.4px #335cff;
+  --shadow-gray-shadow: 0 0 0 1px rgba(23, 23, 23, 0.08);
+  --shadow-gray-shadow-4: 0 6px 6px -3px rgba(23, 23, 23, 0.04),\n    0 3px 3px -1.5px rgba(23, 23, 23, 0.04),\n    0 1px 1px -0.5px rgba(23, 23, 23, 0.04),\n    0 0 0 1px rgba(23, 23, 23, 0.08),\n    0 -1px 1px -0.5px rgba(23, 23, 23, 0.04) inset;
+  background: #fff;
+  color: #141414;
+}
+
+/*
+ * The opposite, for one showcase that shows off the app's own dark mode: the
+ * `.dark` class on that window re-tones the tokens, this restores the dark
+ * chart grays that globals.css scopes to `.dark` inside @layer base.
+ */
+.darkWindow {
+  color-scheme: dark;
+  --chart-muted: #3b404b;
+  --chart-muted-strong: #717784;
+}
+
+/* ------------------------------------------------------------ hero sky */
+
+/*
+ * The hero's sky: near-black indigo at the top, through AgentSDR's own blue
+ * ramp (AlignUI blue 800 → 300, the Analytics ORDINAL_BLUE), to white at the
+ * hero's foot, so the white sections below continue it without a seam.
+ */
+.sky {
+  background: linear-gradient(
+    180deg,
+    #0b0a1a 0%,
+    #100a26 14%,
+    #120c3a 26%,
+    #0f1669 36%,
+    #1f3bad 44%,
+    #2547d0 49%,
+    #335cff 56%,
+    #4d82ff 64%,
+    #739eff 71%,
+    #a9c2ff 79%,
+    #dbe6ff 88%,
+    #ffffff 97%
+  );
+}
+
+/* A soft light pool behind the headline. */
+.heroGlow {
+  background: radial-gradient(55% 38% at 50% 24%, rgb(77 130 255 / 0.18), transparent 70%);
+}
+
+/* Blueprint lines: one symmetric frame of hairlines with 45° chamfers. */
+.trace {
+  stroke: rgb(255 255 255 / 0.1);
+}
+
+/* Headline text on the dark sky: white fading slightly to the baseline. */
+.skyText {
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 0.96), rgb(255 255 255 / 0.72));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* The frame around a product window on the sky: a faint outer ring. */
+.skyFrame {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.03));
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
+}
+
+/*
+ * The "desktop" a hero window sits on, in place of an OS wallpaper: the three
+ * channel colours as soft light, so the app's colour identity frames the app.
+ */
+.wallpaper {
+  background:
+    radial-gradient(55% 60% at 12% 85%, rgb(250 115 25 / 0.55), transparent 70%),
+    radial-gradient(45% 55% at 92% 80%, rgb(31 193 107 / 0.45), transparent 70%),
+    radial-gradient(70% 60% at 50% 0%, rgb(151 186 255 / 0.9), transparent 75%),
+    linear-gradient(180deg, #a9c2ff 0%, #7b9dff 45%, #5b73e8 100%);
+}
+
+/* ------------------------------------------------------------ app window */
+
+.window {
+  box-shadow:
+    0 0 0 1px rgb(14 18 27 / 0.08),
+    0 1px 1px -0.5px rgb(14 18 27 / 0.06),
+    0 6px 6px -3px rgb(14 18 27 / 0.06),
+    0 24px 24px -12px rgb(14 18 27 / 0.08),
+    0 64px 64px -32px rgb(14 18 27 / 0.18);
+}
+
+/* Fades the bottom of a clipped window into the card it sits on. */
+.fadeBottom {
+  mask-image: linear-gradient(180deg, #000 78%, transparent 100%);
+}
+
+/* ------------------------------------------------------------ nav */
+
+/* The header on the hero: a dark glass bar with a hairline top highlight. */
+.navGlass {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.07), rgb(255 255 255 / 0.03));
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.09),
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 12px 32px -12px rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(16px) saturate(1.3);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+}
+
+/* Near-opaque: at 0.86 the headings and window URLs it floats over read
+   through the links (the blur alone doesn't hide large type). */
+.navPill {
+  background: rgb(255 255 255 / 0.96);
+  box-shadow:
+    0 0 0 1px rgb(20 20 20 / 0.06),
+    0 12px 32px -8px rgb(14 18 27 / 0.16);
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+}
+
+/* ------------------------------------------------------------ buttons */
+
+.btnPrimary {
+  background: #335cff;
+  box-shadow:
+    inset 0 1px 2px -0.5px rgb(255 255 255 / 0.12),
+    inset 0 0.5px 0.5px rgb(255 255 255 / 0.2),
+    inset 0 8px 24px -4px rgb(255 255 255 / 0.18),
+    0 0 0 1px #2f53eb,
+    0 8px 8px -3px rgb(9 1 20 / 0.04),
+    0 5px 5px -2.5px rgb(9 1 20 / 0.04),
+    0 6px 18px -6px rgb(51 92 255 / 0.55);
+}
+.btnPrimary:hover {
+  background: #3f66ff;
+}
+.btnGlass {
+  background: rgb(255 255 255 / 0.06);
+  box-shadow:
+    inset 0 -4px 12px -4px rgb(255 255 255 / 0.08),
+    inset 0 1px 3px rgb(255 255 255 / 0.06),
+    inset 0 0.5px 0.5px rgb(255 255 255 / 0.14),
+    inset 0 0 0 1px rgb(255 255 255 / 0.1),
+    0 8px 8px -3px rgb(9 1 20 / 0.06);
+}
+.btnGlass:hover {
+  background: rgb(255 255 255 / 0.12);
+}
+.btnLight {
+  background: #fff;
+  box-shadow:
+    0 0 0 1px rgb(20 20 20 / 0.08),
+    0 1px 2px rgb(20 20 20 / 0.06),
+    0 4px 10px -4px rgb(20 20 20 / 0.08);
+}
+.btnLight:hover {
+  background: #fafafa;
+}
+
+/* ------------------------------------------------------------ cards */
+
+/* The reference's inner white slab: white at 88% over the ghost card, a layered soft shadow. */
+.slab {
+  background: rgb(255 255 255 / 0.88);
+  box-shadow:
+    0 6px 6px -3px rgb(0 0 0 / 0.02),
+    0 3px 3px -1.5px rgb(0 0 0 / 0.02),
+    0 1px 1px -0.5px rgb(0 0 0 / 0.03),
+    0 0 0 1px rgb(0 0 0 / 0.04);
+}
+
+/* The final CTA's card: the same sky, tilted, ending in light at the bottom. */
+.ctaSky {
+  background: linear-gradient(
+    173deg,
+    #0b0a1a 6%,
+    #120c3a 26%,
+    #0f1669 42%,
+    #1f3bad 56%,
+    #335cff 68%,
+    #4d82ff 80%,
+    #97baff 94%,
+    #eef3ff 110%
+  );
+}
+
+/* ------------------------------------------------------------ motion */
+
+/* Scroll reveal: Reveal.tsx adds .shown once the element is in view. */
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity 800ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 800ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.reveal.shown {
+  opacity: 1;
+  transform: none;
+}
+
+/* The channel stage: a soft dotted surface the screen slice floats on. */
+.stage {
+  background-color: #f6f7f9;
+  background-image: radial-gradient(rgb(14 18 27 / 0.07) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+/* Fades the slice out where it runs off the stage (right and bottom), softly at the left. */
+.stageFade {
+  -webkit-mask-image: linear-gradient(90deg, rgb(0 0 0 / 0.55), #000 3%, #000 84%, transparent), linear-gradient(180deg, #000 84%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(90deg, rgb(0 0 0 / 0.55), #000 3%, #000 84%, transparent), linear-gradient(180deg, #000 84%, transparent);
+  mask-composite: intersect;
+}
+/* The channel rail filling while the list auto-advances (vertical on wide screens). */
+.progressY {
+  animation: progressX var(--step-ms, 9000ms) linear forwards;
+}
+@media (min-width: 1024px) {
+  .progressY { animation-name: progressY; }
+}
+@keyframes progressX {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes progressY {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+/* The step tabs' progress bar under the active step. */
+.progress {
+  transform-origin: left center;
+  animation: progress var(--step-ms, 7000ms) linear forwards;
+}
+@keyframes progress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* Screens cross-fade when a step or a dock item changes them. */
+.screenIn {
+  animation: screenIn 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes screenIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.995); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Status dot "breathing" in the footer pill. */
+.breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(31 193 107 / 0.45); }
+  50% { box-shadow: 0 0 0 5px rgb(31 193 107 / 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress,
+  .progressY,
+  .screenIn,
+  .breathe {
+    animation: none;
+  }
+  .progress { transform: scaleX(1); }
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* Room between the hero's calls to action and the product frame (640px up). */
+@media (min-width: 640px) {
+  .heroCopy { padding-bottom: 8rem; }
+}
+
+/*
+ * The hero step switcher on desktop (HeroSteps): titled columns between
+ * hairline rules, heading the product frame, with one rail under all three
+ * that fills continuously from step to step.
+ */
+.index {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 0 4px 20px;
+}
+.indexItem {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 28px 12px;
+  text-align: left;
+  outline: none;
+  border-radius: 18px;
+}
+.indexItem + .indexItem { position: relative; }
+.indexItem + .indexItem::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 16px;
+  bottom: 12px;
+  width: 1px;
+  background: rgb(255 255 255 / 0.1);
+}
+.indexItem:focus-visible { box-shadow: inset 0 0 0 2px rgb(255 255 255 / 0.4); }
+.indexIcon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: rgb(255 255 255 / 0.4);
+  transition: color 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Each title sits beside its step's icon, bare, with no tile. */
+.indexHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.indexTitle {
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 24px;
+  color: rgb(255 255 255 / 0.6);
+  transition: color 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.indexBody {
+  margin-top: 6px;
+  max-width: 34ch;
+  font-size: 14px;
+  line-height: 1.55;
+  color: rgb(255 255 255 / 0.4);
+  transition: color 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.indexItem:hover .indexTitle { color: rgb(255 255 255 / 0.85); }
+.indexItem:hover .indexIcon { color: rgb(255 255 255 / 0.75); }
+.indexItem.on .indexIcon { color: #b7c8ff; }
+.indexItem.on .indexTitle { color: #fff; }
+.indexItem.on .indexBody { color: rgb(255 255 255 / 0.66); }
+
+/* The rail: from the first column's text to the last column's, one stretch per step. */
+.indexRail {
+  position: absolute;
+  left: 32px;
+  right: 32px;
+  bottom: 10px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.12);
+}
+.indexFill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #fff;
+  transform-origin: left center;
+  transform: scaleX(var(--to, 1));
+  transition: transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.indexFilling { animation: railFill var(--step-ms, 8000ms) linear both; }
+@keyframes railFill {
+  from { transform: scaleX(var(--from, 0)); }
+  to { transform: scaleX(var(--to, 1)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .indexFilling { animation: none; }
+  .indexFill { transition: none; }
+}
+
+/* The nav's wordmark: the name in the display face, capitals about two-thirds the icon tile's height. */
+.wordmark {
+  font-size: 23px;
+  line-height: 1;
+  letter-spacing: -0.025em;
+}
+.wordmarkSm { font-size: 18px; }

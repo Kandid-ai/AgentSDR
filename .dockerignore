@@ -1,0 +1,29 @@
+# Never send secrets or local data into the build context.
+.env*
+!.env.example
+*.dump
+*.key
+*.pem
+
+.git
+.next
+node_modules
+coverage
+output
+reports
+feedback
+.playwright-cli
+.claude
+.conductor
+video
+docs
+tests
+extensions/*/dist
+extensions/*/release
+
+# Migrations run by hand against a database, not from the image — except
+# the fresh-install setup the Compose `setup` service runs.
+scripts
+!scripts/db/setup.ts
+
+README.md

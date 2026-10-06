@@ -1,0 +1,119 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "AgentSDR",
+  "description": "The open-source AI SDR: find leads, reach them on email, LinkedIn and WhatsApp, and let AI work every reply, from one workspace you run yourself.",
+  "colors": {
+    "primary": "#335cff",
+    "light": "#5b7bff",
+    "dark": "#1f3bad"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "favicon": "/assets/logo.svg",
+  "logo": {
+    "light": "/assets/logo-light.svg",
+    "dark": "/assets/logo-dark.svg",
+    "href": "https://agentsdr.ai"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Website",
+        "href": "https://agentsdr.ai"
+      }
+    ],
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Kandid-ai/AgentSDR"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": ["index", "quickstart", "concepts"]
+          },
+          {
+            "group": "Leads",
+            "pages": ["leads/overview", "leads/import", "leads/custom-fields"]
+          },
+          {
+            "group": "Tables",
+            "pages": ["tables/overview", "tables/enrichment", "tables/ai-columns"]
+          },
+          {
+            "group": "Email",
+            "pages": ["email/connect", "email/campaigns", "email/inbox"]
+          },
+          {
+            "group": "LinkedIn",
+            "pages": ["linkedin/accounts", "linkedin/campaigns", "linkedin/messages"]
+          },
+          {
+            "group": "WhatsApp",
+            "pages": ["whatsapp/accounts", "whatsapp/campaigns", "whatsapp/calling"]
+          },
+          {
+            "group": "AI CRM",
+            "pages": [
+              "crm/overview",
+              "crm/action-required",
+              "crm/pipeline",
+              "crm/sequences",
+              "crm/knowledge"
+            ]
+          },
+          {
+            "group": "Analytics",
+            "pages": ["analytics"]
+          },
+          {
+            "group": "Workspace",
+            "pages": [
+              "workspace/organizations",
+              "workspace/ai-provider",
+              "workspace/sending-rules"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Self-hosting",
+        "groups": [
+          {
+            "group": "Run AgentSDR",
+            "pages": ["self-hosting", "configuration", "integrations"]
+          },
+          {
+            "group": "Policies",
+            "pages": ["responsible-use"]
+          }
+        ]
+      },
+      {
+        "tab": "Developers",
+        "groups": [
+          {
+            "group": "Contributing",
+            "pages": ["development", "architecture"]
+          },
+          {
+            "group": "Reference",
+            "pages": ["database", "multi-tenancy/conventions"]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Kandid-ai/AgentSDR",
+      "website": "https://agentsdr.ai"
+    }
+  }
+}
