@@ -163,41 +163,49 @@ function Overview({ dur }: { dur: number }) {
   );
 }
 
-/** The Admin console step, drawn in AgentSDR's own style (no capture of it). */
+/**
+ * The Admin console step: the menu path, then the real "Add a new client ID"
+ * dialog (cropped to the dialog; placeholder Client ID), its fields outlined
+ * one after another.
+ */
 function Delegation({ dur }: { dur: number }) {
   const f = useCurrentFrame();
   const path = ["Security", "Access and data control", "API controls", "Manage domain-wide delegation", "Add new"];
-  const scopes = "https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/gmail.readonly";
-  const formIn = tw(f, s(3.6), 16);
-  const idChars = Math.floor(Math.max(0, f - s(4.4)) * 1.2);
-  const scChars = Math.floor(Math.max(0, f - s(5.6)) * 3.2);
-  const btn = tw(f, s(9.6), 10);
+  const IW = 472 * 1.6, IH = 420 * 1.6;
+  const dialog = tw(f, s(2.6), 16);
+  // Fractions of the dialog image: Client ID, OAuth scopes, Authorise.
+  const marks: ReadonlyArray<readonly [Box, number, number]> = [
+    [[0.04, 0.215, 0.935, 0.355], s(3.6), s(6.6)],
+    [[0.04, 0.465, 0.84, 0.605], s(6.6), s(9.8)],
+    [[0.775, 0.895, 0.96, 0.98], s(9.8), dur],
+  ];
   return (
     <Fade dur={dur}>
       <Canvas>
-        <div style={{ position: "absolute", left: 160, right: 160, top: 190, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14 }}>
-          <div style={{ fontSize: 30, color: SOFT_INK, marginRight: 6, fontFamily: "var(--font-landing-display), Inter, sans-serif" }}>admin.google.com</div>
+        <div style={{ position: "absolute", left: 0, right: 0, top: 150, display: "flex", justifyContent: "center", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 26, color: SOFT_INK, marginRight: 4, fontFamily: "var(--font-landing-display), Inter, sans-serif" }}>admin.google.com</div>
           {path.map((p, i) => {
             const a = tw(f, 10 + i * 12, 10);
             return (
-              <div key={p} style={{ display: "flex", alignItems: "center", gap: 14, opacity: a }}>
-                <span style={{ color: SOFT_INK, fontSize: 30 }}>→</span>
-                <span className={display} style={{ fontSize: 30, color: i === path.length - 1 ? "white" : INK, background: i === path.length - 1 ? BLUE : "white", border: `1px solid ${LINE}`, borderRadius: 12, padding: "8px 18px" }}>{p}</span>
+              <div key={p} style={{ display: "flex", alignItems: "center", gap: 12, opacity: a }}>
+                <span style={{ color: SOFT_INK, fontSize: 26 }}>→</span>
+                <span className={display} style={{ fontSize: 26, color: i === path.length - 1 ? "white" : INK, background: i === path.length - 1 ? BLUE : "white", border: `1px solid ${LINE}`, borderRadius: 12, padding: "6px 14px", whiteSpace: "nowrap" }}>{p}</span>
               </div>
             );
           })}
         </div>
-        <div style={{ position: "absolute", left: 300, right: 300, top: 330, opacity: formIn, transform: `translateY(${(1 - formIn) * 20}px)`, background: "white", border: `1px solid ${LINE}`, borderRadius: 22, padding: 40, boxShadow: "0 20px 60px rgba(0,0,0,0.08)" }}>
-          <div className={display} style={{ fontSize: 30, color: INK, marginBottom: 26 }}>Add a new client ID</div>
-          <div style={{ fontSize: 24, color: SOFT_INK, marginBottom: 8 }}>Client ID: the service account's Unique ID</div>
-          <div className={mono} style={{ fontSize: 28, color: INK, border: `2px solid ${idChars > 0 && idChars < 30 ? BLUE : LINE}`, borderRadius: 12, padding: "14px 18px", marginBottom: 26, minHeight: 34 }}>{"112233445566778899001".slice(0, idChars)}</div>
-          <div style={{ fontSize: 24, color: SOFT_INK, marginBottom: 8 }}>OAuth scopes: paste as one line</div>
-          <div className={mono} style={{ fontSize: 23, color: INK, border: `2px solid ${scChars > 0 && scChars < scopes.length + 10 ? BLUE : LINE}`, borderRadius: 12, padding: "14px 18px", minHeight: 30, wordBreak: "break-all" }}>{scopes.slice(0, scChars)}</div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 28 }}>
-            <div className={display} style={{ fontSize: 26, color: "white", background: BLUE, borderRadius: 12, padding: "12px 26px", opacity: 0.35 + 0.65 * btn, transform: `scale(${1 + 0.06 * Math.sin(btn * Math.PI)})` }}>Authorise</div>
+        <div style={{ position: "absolute", left: 960 - IW / 2, top: 236, width: IW, height: IH, opacity: dialog, transform: `translateY(${(1 - dialog) * 24}px)` }}>
+          <div style={{ position: "absolute", inset: 0, borderRadius: 10, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.06)" }}>
+            <Img src={staticFile("guides/admin-delegation-add-client.jpg")} style={{ width: IW, height: IH, display: "block" }} />
           </div>
+          {marks.map(([m, from, to], i) => {
+            const o = Math.min(tw(f, from, 10), 1 - tw(f, to - 6, 6));
+            return (
+              <div key={i} style={{ position: "absolute", left: m[0] * IW - 6, top: m[1] * IH - 6, width: (m[2] - m[0]) * IW + 12, height: (m[3] - m[1]) * IH + 12, border: `4px solid ${BLUE}`, borderRadius: 10, opacity: o, boxShadow: "0 0 0 6px rgba(51,92,255,0.22)" }} />
+            );
+          })}
         </div>
-        <Chrome label="Step 6" title="Allow it in the Admin console" caption={<>Super admin only. Changes usually apply within minutes; Google allows up to 24 hours.</>} captionAt={s(10.4)} />
+        <Chrome label="Step 6" title="Allow it in the Admin console" caption={<>Paste the Unique ID and both Gmail scopes (comma-separated), then <B>Authorise</B>.</>} captionAt={s(3.4)} />
       </Canvas>
     </Fade>
   );
