@@ -17,11 +17,11 @@ import { marketingMetadata, softwareLd } from "@/lib/marketing/seo";
 
 const PATH = "/product/email";
 const DESCRIPTION =
-  "Open-source cold email software that sends multi-step sequences from your own Google Workspace mailboxes, with per-mailbox limits, merge fields, bounce and unsubscribe handling built in.";
+  "Open-source cold email software: multi-step sequences from your own Google Workspace mailboxes, with per-mailbox limits, merge fields and bounce handling.";
 
 export const metadata = marketingMetadata({
   path: PATH,
-  title: "Cold email sequences from your own Google Workspace",
+  title: "Cold email sequences from Google Workspace",
   ogTitle: "Cold email sequences from your own mailboxes",
   eyebrow: "Email",
   description: DESCRIPTION,
@@ -34,7 +34,7 @@ const FAQ = [
   },
   {
     q: "How many cold emails does it send per mailbox a day?",
-    a: "30 by default, with a random 18 to 24 minute gap between emails from the same mailbox, only inside that mailbox's sending hours. All three are Sending rules you can change for your organization, and a single mailbox can override its own daily limit.",
+    a: "30 by default, with a random 18 to 24 minute gap between emails from the same mailbox, only inside that mailbox's sending hours. All three are Sending rules you can change for your organization; a new mailbox takes the daily limit in force when it is added, and each mailbox's sending hours can be edited on its own.",
   },
   {
     q: "Do follow-ups stay in the same thread?",

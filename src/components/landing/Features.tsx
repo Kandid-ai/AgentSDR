@@ -47,7 +47,7 @@ export function Features() {
 
       <div className="mx-auto mt-12 grid max-w-[1128px] gap-4 px-4 sm:mt-16 sm:gap-6 sm:px-6 lg:grid-cols-2">
         <Reveal>
-          <Card title="One lead database for every channel" body="People and companies shared by every channel. Import CSV or XLSX, add your own columns, merge duplicates.">
+          <Card title="One lead database for every channel" body="People and companies shared by every channel. Import CSV or XLSX, add your own columns; duplicates match on email or LinkedIn.">
             <LeadsVignette />
           </Card>
         </Reveal>
@@ -109,7 +109,7 @@ const IMPORTING = { at: 200, ms: 1_900 };
 const ADD_COLUMN_AT = 2_400;
 const PEOPLE_BEFORE = 4_812 - LEADS.length;
 
-function LeadsVignette() {
+export function LeadsVignette() {
   return (
     <Stage {...LEADS_LOOP}>
       {({ t }) => (
@@ -204,7 +204,7 @@ function GridCell({ cell, entering, muted }: { cell: Cell; entering: boolean; mu
   );
 }
 
-function TablesVignette() {
+export function TablesVignette() {
   return (
     <Stage {...TABLES_LOOP}>
       {({ t, live }) => {

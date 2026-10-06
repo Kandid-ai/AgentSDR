@@ -31,7 +31,7 @@ const QUESTIONS: Array<{ q: string; a: React.ReactNode }> = [
   },
   {
     q: "Does the AI send replies on its own?",
-    a: "No. Drafts wait in Action required until someone sends them, as written or edited. The AI can move a lead forward in the pipeline when it is confident; a sideways or backward move, a low-confidence call, and every new Customer are held for a person.",
+    a: "No. Drafts wait in Action required until someone sends them, as written or edited. The AI can move a lead forward in the pipeline when it is confident; a backward move, a low-confidence call, and every new Customer are held for a person.",
   },
   {
     q: "Where does my data live?",

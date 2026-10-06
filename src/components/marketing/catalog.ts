@@ -3,7 +3,6 @@ import {
   RiBarChartBoxLine,
   RiBookOpenLine,
   RiBuilding2Line,
-  RiChatSmile3Line,
   RiCodeSSlashLine,
   RiContactsBook3Line,
   RiFileList3Line,

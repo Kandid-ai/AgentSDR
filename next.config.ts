@@ -16,6 +16,8 @@ const nextConfig: NextConfig = {
     ],
     // The Call Recorder zip, built by `bun run build` and read off disk by the download route.
     "/downloads/call-recorder": ["./extensions/whatsapp-recorder/release/agentsdr-call-recorder.zip"],
+    // The marketing changelog page renders CHANGELOG.md, read off disk.
+    "/changelog": ["./CHANGELOG.md"],
   },
 
   async redirects() {

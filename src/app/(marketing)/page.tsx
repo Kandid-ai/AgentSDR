@@ -3,7 +3,7 @@ import { JsonLd } from "@/components/marketing/JsonLd";
 import { marketingMetadata, softwareLd } from "@/lib/marketing/seo";
 
 const description =
-  "The open-source AI SDR: email sequences, LinkedIn campaigns and WhatsApp calls, with an AI CRM that classifies every reply and drafts the answer. Self-hosted, with your own AI key.";
+  "The open-source AI SDR: email sequences, LinkedIn campaigns and WhatsApp calls, with an AI CRM that classifies every reply and drafts the answer. Self-hosted.";
 
 export const metadata = marketingMetadata({
   path: "/",

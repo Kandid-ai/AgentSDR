@@ -109,12 +109,9 @@ export function ProductShot({ screen, rail = true, height = "h-[480px] sm:h-[580
 
 /** Big numbers that count up the first time they scroll into view. */
 export function StatBand({ items, className }: { items: ReadonlyArray<{ value: number; prefix?: string; suffix?: string; label: string }>; className?: string }) {
-  const { ref, inView } = useInView<HTMLDListElement>(0.4);
+  const { ref, visits } = useInView<HTMLDListElement>(0.4);
   const reduced = useReducedMotion();
-  const [started, setStarted] = useState(false);
-  useEffect(() => {
-    if (inView) setStarted(true);
-  }, [inView]);
+  const started = visits > 0;
   return (
     <dl ref={ref} className={cn("grid overflow-hidden rounded-3xl bg-black/[0.06] [gap:1px] ring-1 ring-black/[0.06] sm:grid-cols-2 lg:grid-cols-4", className)}>
       {items.map((item) => (
