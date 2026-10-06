@@ -16,11 +16,23 @@ export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://agentsdr.a
 export const SITE_NAME = "AgentSDR";
 
 /**
- * Path prefixes served by src/app/(marketing). Public in proxy.ts and
+ * The blog: Ghost, installed at the subpath agentsdr.ai/blog and reached through
+ * the rewrites in next.config.ts (infra/ghost/README.md). Not a Next.js route,
+ * so links to it are plain <a> tags (a client-side <Link> would try to fetch it
+ * as an app page).
+ */
+export const BLOG_PATH = "/blog";
+
+export function isBlogPath(href: string): boolean {
+  return href === BLOG_PATH || href.startsWith(`${BLOG_PATH}/`);
+}
+
+/**
+ * Path prefixes served by src/app/(marketing), plus the proxied blog. Public in proxy.ts and
  * chromeless in AppShell. None may collide with an app route (/linkedin,
  * /whatsapp, /crm, /leads, /tables and /analytics are all taken by the app).
  */
-export const MARKETING_PREFIXES = ["/product", "/solutions", "/compare", "/open-source", "/guides", "/changelog", "/og"] as const;
+export const MARKETING_PREFIXES = ["/product", "/solutions", "/compare", "/open-source", "/guides", "/changelog", "/og", BLOG_PATH] as const;
 
 export function isMarketingPath(pathname: string): boolean {
   return pathname === "/" || MARKETING_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));

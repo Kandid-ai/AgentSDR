@@ -1,5 +1,6 @@
 import type { ComponentType, CSSProperties } from "react";
 import {
+  RiArticleLine,
   RiBarChart2Line,
   RiBookOpenLine,
   RiBookletLine,
@@ -19,7 +20,7 @@ import {
   RiUserStarLine,
   RiWhatsappFill,
 } from "@remixicon/react";
-import { EXTERNAL, PAGES, type MarketingPage } from "@/lib/marketing/site";
+import { BLOG_PATH, EXTERNAL, PAGES, type MarketingPage } from "@/lib/marketing/site";
 
 /**
  * The marketing site's navigation: the pages in src/lib/marketing/site.ts
@@ -105,6 +106,8 @@ export function linkFor(path: string, overrides?: Partial<NavLink>): NavLink {
   return { href: page.path, label: page.label, blurb: page.blurb, ...look, ...overrides };
 }
 
+/** The Ghost blog under /blog (see BLOG_PATH); a trailing slash because Ghost's pages end in one. */
+const BLOG: NavLink = { href: `${BLOG_PATH}/`, label: "Blog", blurb: "Notes on outbound, AI and building in the open", icon: RiArticleLine, accent: ACCENT.linkedin };
 const DOCS: NavLink = { href: EXTERNAL.docs, label: "Documentation", blurb: "Set up every channel, step by step", icon: RiBookOpenLine, accent: ACCENT.linkedin, external: true };
 const GITHUB: NavLink = { href: EXTERNAL.github, label: "GitHub", blurb: "Read the code, star the repo", icon: RiGithubFill, accent: "#141414", external: true };
 const ISSUES: NavLink = { href: EXTERNAL.issues, label: "Issues & requests", blurb: "Report a bug or ask for a feature", icon: RiGitBranchLine, accent: ACCENT.neutral, external: true };
@@ -144,7 +147,7 @@ export const NAV: NavSection[] = [
     key: "resources",
     label: "Resources",
     groups: [
-      { title: "Learn", links: [DOCS, linkFor("/guides"), linkFor("/changelog")] },
+      { title: "Learn", links: [BLOG, DOCS, linkFor("/guides"), linkFor("/changelog")] },
       { title: "Guides", links: [linkFor("/guides/cold-email-google-workspace"), linkFor("/guides/linkedin-automation-limits"), linkFor("/guides/whatsapp-b2b-outreach")] },
       { title: "Developers", links: [GITHUB, SELF_HOST, ISSUES] },
     ],
@@ -157,5 +160,5 @@ export const FOOTER: NavGroup[] = [
   { title: "Product", links: ["/product/email", "/product/linkedin", "/product/whatsapp", "/product/ai-crm", "/product/inbox", "/product/lead-database", "/product/tables", "/product/analytics"].map((p) => linkFor(p)) },
   { title: "Solutions", links: ["/solutions/founders", "/solutions/agencies", "/solutions/sales-teams", "/open-source"].map((p) => linkFor(p)) },
   { title: "Compare", links: ["/compare/clay", "/compare/lemlist", "/compare/heyreach", "/compare/instantly", "/compare/apollo", "/compare"].map((p) => linkFor(p)) },
-  { title: "Resources", links: [DOCS, linkFor("/guides"), linkFor("/changelog"), GITHUB, ISSUES] },
+  { title: "Resources", links: [BLOG, DOCS, linkFor("/guides"), linkFor("/changelog"), GITHUB, ISSUES] },
 ];

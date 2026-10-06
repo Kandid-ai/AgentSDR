@@ -1,6 +1,6 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextRequest, NextResponse } from "next/server";
-import { isMarketingPath } from "@/lib/marketing/site";
+import { isBlogPath, isMarketingPath } from "@/lib/marketing/site";
 import { migrationMutationBlockReason } from "@/lib/migration/controls";
 
 /**
@@ -49,6 +49,16 @@ const CRON_PATHS = ["/api/linkedin/jobs"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // next.config.ts sets skipTrailingSlashRedirect so the proxied Ghost blog
+  // keeps the trailing slashes it depends on. Everywhere else, keep Next's
+  // usual behaviour: one canonical URL, without the slash.
+  if (pathname.length > 1 && pathname.endsWith("/") && !isBlogPath(pathname)) {
+    // A plain URL: NextURL remembers the request's trailing slash and puts it back.
+    const url = new URL(request.url);
+    url.pathname = pathname.replace(/\/+$/, "") || "/";
+    return NextResponse.redirect(url, 308);
+  }
 
   const migrationBlockReason = migrationMutationBlockReason(pathname, request.method);
   if (migrationBlockReason) {

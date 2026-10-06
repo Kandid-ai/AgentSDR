@@ -6,6 +6,7 @@ import { RiArrowDownSLine, RiArrowRightLine, RiArrowRightUpLine, RiCloseLine, Ri
 import { cn } from "@/utils/cn";
 import landing from "../landing/landing.module.css";
 import { AppIcon, Cta, displayFont, LINKS, monoFont } from "../landing/ui";
+import { isBlogPath } from "@/lib/marketing/site";
 import { NAV, type NavLink, type NavSection } from "./catalog";
 import { NavIcon } from "./NavIcon";
 import styles from "./marketing.module.css";
@@ -278,11 +279,22 @@ function MenuLink({ link, onNavigate, size = "md" }: { link: NavLink; onNavigate
     "flex items-start gap-3 rounded-2xl px-3 outline-none transition-colors duration-200 hover:bg-[#f5f5f6] focus-visible:bg-[#f5f5f6] focus-visible:ring-2 focus-visible:ring-[#335cff]/40",
     marked ? "py-2.5" : "py-2",
   );
-  return link.external ? (
-    <a href={link.href} target="_blank" rel="noopener noreferrer" className={cls} onClick={onNavigate}>
-      {body}
-    </a>
-  ) : (
+  if (link.external) {
+    return (
+      <a href={link.href} target="_blank" rel="noopener noreferrer" className={cls} onClick={onNavigate}>
+        {body}
+      </a>
+    );
+  }
+  // The blog is proxied Ghost, not an app route: a full page load, same tab.
+  if (isBlogPath(link.href)) {
+    return (
+      <a href={link.href} className={cls} onClick={onNavigate}>
+        {body}
+      </a>
+    );
+  }
+  return (
     <Link href={link.href} className={cls} onClick={onNavigate}>
       {body}
     </Link>

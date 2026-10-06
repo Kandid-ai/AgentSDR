@@ -1,0 +1,88 @@
+# Ghost CMS for the AgentSDR blog at agentsdr.ai/blog.
+#
+# A SUBPATH install: Ghost runs at blog.agentsdr.ai, listens on /blog, and
+# emits agentsdr.ai/blog URLs. Readers reach it through the /blog rewrites in
+# next.config.ts. Read infra/ghost/README.md before deploying.
+#
+# Deploy as a Dokploy Compose app. Values come from Dokploy's Environment tab
+# (see .env.example beside this file). Routing is set in Dokploy → Domains,
+# not with Traefik labels here: Dokploy regenerates its own labels on every
+# redeploy, and two sets of rules for one container conflict.
+
+services:
+  ghost:
+    image: ghost:6-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+
+      # GHOST_HOST=agentsdr.ai/blog makes Ghost both emit agentsdr.ai/blog URLs
+      # (canonicals, sitemap, RSS) AND listen on the /blog path — which is why
+      # Strip Path must stay OFF in the Dokploy domain settings.
+      url: https://${GHOST_HOST:?set GHOST_HOST in the Dokploy Environment tab, e.g. agentsdr.ai/blog}
+
+      database__client: mysql
+      database__connection__host: db
+      database__connection__port: 3306
+      database__connection__user: ghost
+      database__connection__password: ${GHOST_DB_PASSWORD:?set GHOST_DB_PASSWORD in the Dokploy Environment tab}
+      database__connection__database: ghost
+      database__connection__charset: utf8mb4
+
+      # Staff invites, password resets and sign-in codes. Without working SMTP
+      # you can lock yourself out of /blog/ghost/. Resend: smtp.resend.com, user
+      # "resend", password = a Resend API key.
+      mail__transport: SMTP
+      mail__options__host: ${MAIL_HOST:?set MAIL_HOST in the Dokploy Environment tab, e.g. smtp.resend.com}
+      mail__options__port: ${MAIL_PORT:-465}
+      # "true" for port 465 (TLS from the start); leave EMPTY for 587. Ghost
+      # keeps env values as text and the text "false" counts as true.
+      mail__options__secure: ${MAIL_SECURE:-}
+      mail__options__auth__user: ${MAIL_USER:?set MAIL_USER in the Dokploy Environment tab}
+      mail__options__auth__pass: ${MAIL_PASSWORD:?set MAIL_PASSWORD in the Dokploy Environment tab}
+      mail__from: ${MAIL_FROM:?set MAIL_FROM in the Dokploy Environment tab}
+
+    volumes:
+      # Images, themes and uploads. Losing this loses every image even if the
+      # database survives: back it up with the database.
+      - ghost-content:/var/lib/ghost/content
+
+    networks:
+      - ghost-internal
+      - dokploy-network
+
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in the Dokploy Environment tab}
+      MYSQL_DATABASE: ghost
+      MYSQL_USER: ghost
+      MYSQL_PASSWORD: ${GHOST_DB_PASSWORD:?set GHOST_DB_PASSWORD in the Dokploy Environment tab}
+    volumes:
+      - ghost-db:/var/lib/mysql
+    healthcheck:
+      # Ghost crash-loops if it starts before MySQL accepts connections, so it
+      # waits on this.
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - ghost-internal
+
+volumes:
+  ghost-content:
+  ghost-db:
+
+networks:
+  ghost-internal:
+  # Traefik routes only to containers on this network. It already exists on
+  # the Dokploy host; do not let Compose create a second one.
+  dokploy-network:
+    external: true

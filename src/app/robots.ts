@@ -26,12 +26,15 @@ const APP_ROUTES = [
   "/accept-invitation",
   "/reset-password",
   "/forgot-password",
+  // Ghost's admin, behind the proxied blog.
+  "/blog/ghost/",
 ];
 
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: [{ userAgent: "*", allow: "/", disallow: APP_ROUTES }],
-    sitemap: `${SITE_URL}/sitemap.xml`,
+    // The site's own pages, and the blog's (Ghost writes and serves its own).
+    sitemap: [`${SITE_URL}/sitemap.xml`, `${SITE_URL}/blog/sitemap.xml`],
     host: SITE_URL,
   };
 }

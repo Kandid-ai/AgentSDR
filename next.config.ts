@@ -24,6 +24,45 @@ const nextConfig: NextConfig = {
     "/changelog": ["./CHANGELOG.md"],
   },
 
+  // Ghost (the blog, proxied below) 301s its admin to the trailing-slash URL,
+  // and Next's own trailing-slash normalisation strips it straight back off:
+  // the two bounce until the browser gives up. So Next leaves slashes alone,
+  // and src/proxy.ts strips them itself everywhere except /blog.
+  skipTrailingSlashRedirect: true,
+
+  // The blog is Ghost installed at the subpath agentsdr.ai/blog, so its posts
+  // build authority for agentsdr.ai instead of a subdomain. These rewrites
+  // proxy /blog/* to the Ghost origin (infra/ghost/README.md). Ghost's `url`
+  // must be https://agentsdr.ai/blog or it emits the origin's canonicals.
+  // GHOST_ORIGIN must never be a hostname that redirects back here: that loops.
+  // Read at build time.
+  async rewrites() {
+    const ghostOrigin = (process.env.GHOST_ORIGIN ?? "https://blog.agentsdr.ai").replace(/\/$/, "");
+    return [
+      { source: "/blog", destination: `${ghostOrigin}/blog/` },
+      // Admin: Ghost serves it at /blog/ghost/ and 301s the bare form, so the
+      // slash has to survive the hop or the two redirect at each other.
+      { source: "/blog/ghost", destination: `${ghostOrigin}/blog/ghost/` },
+      // Admin files keep their exact path.
+      { source: "/blog/ghost/:path*.:ext", destination: `${ghostOrigin}/blog/ghost/:path*.:ext` },
+      // Every other admin route (the app shell and its API) wants the slash back.
+      { source: "/blog/ghost/:path*", destination: `${ghostOrigin}/blog/ghost/:path*/` },
+      // The theme's own CSS/JS live under /blog/assets/built/. Matched before
+      // the admin shim below, which would otherwise send them to the admin
+      // asset path and serve the blog unstyled. Theme assets must stay in built/.
+      { source: "/blog/assets/built/:path*", destination: `${ghostOrigin}/blog/assets/built/:path*` },
+      // Ghost admin loads its assets by relative path ("./assets/…"), which the
+      // browser resolves to /blog/assets/* once the slash is gone. Map those
+      // back onto the real admin assets, or admin renders blank.
+      { source: "/blog/assets/:path*", destination: `${ghostOrigin}/blog/ghost/assets/:path*` },
+      // Files (sitemap.xml, content/images/*, rss) keep their exact path:
+      // anything with a dot is a file, and a trailing slash would 404 it.
+      { source: "/blog/:path*.:ext", destination: `${ghostOrigin}/blog/:path*.:ext` },
+      // Ghost's pages end in a slash and 404 without one; put it back.
+      { source: "/blog/:path*", destination: `${ghostOrigin}/blog/:path*/` },
+    ];
+  },
+
   async redirects() {
     // The enrichment grid moved from /grid to /tables, to match what the
     // sidebar has always called it. Existing bookmarks and already-open tabs

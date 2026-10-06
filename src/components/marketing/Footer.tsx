@@ -3,6 +3,7 @@ import { MascotStroll } from "@/components/brand/Mascot";
 import { cn } from "@/utils/cn";
 import styles from "../landing/landing.module.css";
 import { AppIcon, displayFont, LINKS } from "../landing/ui";
+import { isBlogPath } from "@/lib/marketing/site";
 import { FOOTER } from "./catalog";
 
 /** Every marketing page, in columns under the brand row, so each page links to every other. */
@@ -37,6 +38,10 @@ export function Footer() {
                   <li key={l.label}>
                     {l.external ? (
                       <a href={l.href} target="_blank" rel="noopener noreferrer" className="rounded text-[14px] text-[#141414] outline-none hover:text-[#335cff] focus-visible:ring-2 focus-visible:ring-[#335cff]">
+                        {l.label}
+                      </a>
+                    ) : isBlogPath(l.href) ? (
+                      <a href={l.href} className="rounded text-[14px] text-[#141414] outline-none hover:text-[#335cff] focus-visible:ring-2 focus-visible:ring-[#335cff]">
                         {l.label}
                       </a>
                     ) : (
