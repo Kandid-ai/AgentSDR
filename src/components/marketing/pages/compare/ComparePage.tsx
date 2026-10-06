@@ -4,6 +4,7 @@ import { ClosingCta, FaqSection, FeatureGrid, FeatureSplit, HeroFrame, PageHero,
 import { JsonLd } from "@/components/marketing/JsonLd";
 import { ProductShot, SceneStage, StatBand } from "@/components/marketing/live";
 import { marketingMetadata, softwareLd } from "@/lib/marketing/seo";
+import { AGENTSDR_COLUMN, competitorColumn } from "./columns";
 import { ComparisonTable } from "./ComparisonTable";
 import { disclaimerFor, getCompetitor, type Competitor } from "./data";
 
@@ -42,7 +43,7 @@ export function ComparePage({ slug }: { slug: Competitor["slug"] }) {
       <Section id="compare" tone="grey" eyebrow="Side by side" title={`AgentSDR vs ${c.name}, feature by feature`} lede={c.tableLede}>
         <ComparisonTable
           caption={`AgentSDR compared with ${c.name}, feature by feature`}
-          columns={[{ name: "AgentSDR", highlight: true }, { name: c.name }]}
+          columns={[AGENTSDR_COLUMN, competitorColumn(c.name)]}
           rows={c.rows.map((r) => ({ feature: r.feature, cells: [r.agentsdr, r.them] }))}
         />
         <p className="mt-4 text-[13px] leading-5 text-[#6b6b6b]">&ldquo;Not compared&rdquo; means we could not confirm it from {c.name}&rsquo;s own site, so we have not claimed either way.</p>

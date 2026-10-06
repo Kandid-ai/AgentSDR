@@ -3,9 +3,13 @@ import { RiArrowRightLine, RiGroupLine, RiLinkedinBoxFill, RiMailSendLine, RiSca
 import { ClosingCta, FaqSection, FeatureGrid, HeroFrame, PageHero, RelatedPages, Section } from "@/components/marketing/blocks";
 import { JsonLd } from "@/components/marketing/JsonLd";
 import { marketingMetadata, softwareLd } from "@/lib/marketing/seo";
+import { linkFor } from "@/components/marketing/catalog";
+import { NavIcon } from "@/components/marketing/NavIcon";
+import { AGENTSDR_COLUMN, competitorColumn } from "@/components/marketing/pages/compare/columns";
 import { ComparisonTable } from "@/components/marketing/pages/compare/ComparisonTable";
 import { COMPETITORS, DISCLAIMER_MONTH, MATRIX, MATRIX_COLUMNS } from "@/components/marketing/pages/compare/data";
 import { StackCollapse } from "@/components/marketing/pages/compare/StackCollapse";
+import { AppIcon } from "@/components/landing/ui";
 import { cn } from "@/utils/cn";
 
 const PATH = "/compare";
@@ -70,7 +74,12 @@ export default function ComparePage() {
           {COMPETITORS.map((c) => (
             <li key={c.slug}>
               <Link href={`/compare/${c.slug}`} className="group flex h-full flex-col rounded-3xl bg-white p-6 ring-1 ring-black/[0.07] transition-shadow duration-300 hover:shadow-[0_18px_40px_-24px_rgb(10_20_60/0.35)] focus-visible:outline-2 focus-visible:outline-[#335cff] sm:p-7">
-                <span className="font-mono text-[12px] uppercase tracking-[0.06em] text-[#335cff]">{c.eyebrow}</span>
+                <span className="flex items-center gap-3">
+                  <AppIcon small className="size-10 shrink-0" />
+                  <span aria-hidden="true" className="font-mono text-[12px] uppercase tracking-[0.06em] text-[#a3a3a3]">vs</span>
+                  <NavIcon link={linkFor(`/compare/${c.slug}`)} />
+                </span>
+                <span className="mt-5 font-mono text-[12px] uppercase tracking-[0.06em] text-[#335cff]">{c.eyebrow}</span>
                 <span className="mt-3 text-[20px] font-medium leading-[1.25] tracking-[-0.01em] text-[#141414]">{c.h1}</span>
                 <span className="mt-3 text-[14px] leading-[22px] text-[#656565]">
                   {c.name} is {c.whatItIs.charAt(0).toLowerCase()}
@@ -90,7 +99,7 @@ export default function ComparePage() {
         <ComparisonTable
           compact
           caption="AgentSDR compared with Clay, lemlist, HeyReach, Instantly and Apollo"
-          columns={MATRIX_COLUMNS.map((name, i) => ({ name, highlight: i === 0 }))}
+          columns={MATRIX_COLUMNS.map((name, i) => (i === 0 ? AGENTSDR_COLUMN : competitorColumn(name)))}
           rows={MATRIX.map((r) => ({ feature: r.feature, cells: r.cells }))}
         />
         <p className={cn("mt-4 max-w-[52rem] text-[13px] leading-5 text-[#6b6b6b]")}>

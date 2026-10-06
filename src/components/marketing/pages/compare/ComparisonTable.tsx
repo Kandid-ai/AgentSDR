@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { RiCheckLine, RiCloseLine, RiSubtractLine } from "@remixicon/react";
 import { cn } from "@/utils/cn";
 import { useReducedMotion } from "../../../landing/motion/Stage";
+import { AppIcon } from "../../../landing/ui";
+import type { Column } from "./columns";
 import type { Verdict } from "./data";
 
 /**
@@ -13,7 +15,6 @@ import type { Verdict } from "./data";
  */
 
 type TableCell = { v: Verdict; text: string };
-type Column = { name: string; highlight?: boolean };
 type Row = { feature: string; cells: TableCell[] };
 
 const LABEL: Record<Verdict, string> = { yes: "Yes", partial: "Partly", no: "No", info: "", unknown: "Not compared" };
@@ -74,7 +75,10 @@ export function ComparisonTable({ caption, columns, rows, compact = false }: { c
             </th>
             {columns.map((c) => (
               <th key={c.name} scope="col" className={cn("px-4 py-4 text-[15px] font-medium text-[#141414] sm:px-6", c.highlight ? "bg-[#335cff]/[0.07] text-[#2547d0]" : "bg-[#f7f7f8]")}>
-                {c.name}
+                <span className="flex items-center gap-2.5">
+                  <ColumnMark column={c} />
+                  {c.name}
+                </span>
               </th>
             ))}
           </tr>
@@ -105,5 +109,19 @@ export function ComparisonTable({ caption, columns, rows, compact = false }: { c
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** A column's mark: AgentSDR's tile, or the competitor's own logo on a white tile (see ../../catalog LOOKS). */
+function ColumnMark({ column }: { column: Column }) {
+  if (column.self) return <AppIcon small className="size-7 shrink-0" />;
+  if (!column.logo) return null;
+  const bleed = column.logoFit === "bleed";
+  const size = typeof column.logoFit === "number" ? Math.round(28 * column.logoFit) : 18;
+  return (
+    <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-[8px] bg-white shadow-[0_0_0_1px_rgb(20_20_20/0.08)]">
+      {/* eslint-disable-next-line @next/next/no-img-element -- a small static mark */}
+      <img src={column.logo} alt="" width={bleed ? 28 : size} height={bleed ? 28 : size} className={bleed ? "size-full object-cover" : undefined} />
+    </span>
   );
 }
