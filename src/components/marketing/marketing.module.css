@@ -1,0 +1,206 @@
+/*
+ * Motion and surfaces for the marketing pages beyond the landing page's own
+ * (../landing/landing.module.css): the mega-menu, the page hero's entrance,
+ * scene stages and the closing card. All motion is off under
+ * prefers-reduced-motion.
+ */
+
+/* ------------------------------------------------------------ mega-menu */
+
+.panel {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.985);
+  transform-origin: 50% 0;
+  pointer-events: none;
+  transition:
+    opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.panel[data-open="true"] {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.panelCard {
+  background: #fff;
+  box-shadow:
+    0 0 0 1px rgb(20 20 20 / 0.06),
+    0 2px 4px rgb(14 18 27 / 0.04),
+    0 24px 64px -16px rgb(14 18 27 / 0.28);
+}
+
+/* One section's content; the others sit in the same grid cell, faded out and nudged towards their trigger. */
+.pane {
+  grid-area: 1 / 1;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(calc(var(--dir, 0) * 24px));
+  transition:
+    opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms linear 200ms;
+}
+.pane[data-active="true"] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 40ms, 0ms, 0ms;
+}
+
+.menuItem .menuIcon {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 260ms;
+}
+.menuItem:hover .menuIcon,
+.menuItem:focus-visible .menuIcon {
+  transform: translateY(-2px) rotate(-4deg);
+  box-shadow: 0 8px 18px -8px var(--accent);
+}
+
+.chevron {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+[aria-expanded="true"] > .chevron {
+  transform: rotate(180deg);
+}
+
+.featureCard {
+  background: linear-gradient(165deg, #0b0a1a 0%, #120c3a 30%, #0f1669 48%, #1f3bad 66%, #335cff 82%, #739eff 100%);
+}
+.featureCard .featureArrow {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.featureCard:hover .featureArrow {
+  transform: translateX(4px);
+}
+
+/* ------------------------------------------------------------ hero */
+
+/* The hero's copy rises in on load, one line after another. */
+.rise {
+  animation: rise 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--rise-delay, 0ms);
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* The product frame lifts in a beat later, from a little further down. */
+.lift {
+  animation: lift 1200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 280ms;
+}
+@keyframes lift {
+  from {
+    opacity: 0;
+    transform: translateY(48px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Blueprint grid behind the hero copy, fading out towards the edges. */
+.grid {
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(60% 55% at 50% 30%, #000 20%, transparent 75%);
+}
+
+/* A slow light that drifts across the hero. */
+.aurora {
+  background:
+    radial-gradient(35% 45% at 20% 30%, rgb(125 82 244 / 0.28), transparent 70%),
+    radial-gradient(30% 40% at 80% 25%, rgb(51 92 255 / 0.3), transparent 70%);
+  animation: drift 18s ease-in-out infinite alternate;
+}
+@keyframes drift {
+  to {
+    transform: translate3d(3%, 4%, 0) scale(1.06);
+  }
+}
+
+/* ------------------------------------------------------------ stages */
+
+/* The soft card a scene plays on: the channel's colour as light from one corner. */
+.stage {
+  background:
+    radial-gradient(80% 70% at 100% 0%, color-mix(in srgb, var(--accent, #335cff) 14%, transparent), transparent 70%),
+    radial-gradient(70% 60% at 0% 100%, color-mix(in srgb, var(--accent, #335cff) 8%, transparent), transparent 70%),
+    #f6f7f9;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.05);
+}
+
+/* Checklist ticks pop in one after another once their row is revealed. */
+.tick {
+  animation: pop 500ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: var(--tick-delay, 0ms);
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Related-page cards: lift on hover, arrow nudges. */
+.liftCard {
+  transition:
+    transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 300ms;
+}
+.liftCard:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 40px -18px rgb(14 18 27 / 0.25), 0 0 0 1px rgb(0 0 0 / 0.06);
+}
+.liftCard .arrow {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.liftCard:hover .arrow {
+  transform: translateX(4px);
+}
+
+/* A row of chips or logos that scrolls sideways forever (duplicated content, -50%). */
+.marquee {
+  animation: marquee var(--marquee-s, 40s) linear infinite;
+}
+.marquee:hover {
+  animation-play-state: paused;
+}
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .pane,
+  .menuItem .menuIcon,
+  .chevron,
+  .liftCard {
+    transition: none;
+  }
+  .rise,
+  .lift,
+  .aurora,
+  .tick,
+  .marquee {
+    animation: none;
+  }
+}

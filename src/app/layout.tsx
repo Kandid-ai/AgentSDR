@@ -4,6 +4,7 @@ import AppShell from "@/components/AppShell";
 import DialogProvider from "@/components/DialogProvider";
 import { brandDisplay } from "@/components/brand/font";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/components/theme/ThemeProvider";
+import { SITE_URL } from "@/lib/marketing/site";
 import "./globals.css";
 
 const fontSans = FontSans({
@@ -18,6 +19,8 @@ const fontSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
+  // Resolves relative Open Graph and canonical URLs on the marketing pages.
+  metadataBase: new URL(SITE_URL),
   title: "AgentSDR",
   description: "Outreach, qualification and CRM for GTM teams",
   // The favicon is src/app/icon.svg and apple-icon.png (Next's file convention):

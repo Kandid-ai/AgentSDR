@@ -1,36 +1,11 @@
 import Link from "next/link";
-import { cn } from "@/utils/cn";
-import styles from "./landing.module.css";
 import { MascotStroll } from "@/components/brand/Mascot";
-import { AppIcon, displayFont, LINKS } from "./ui";
+import { cn } from "@/utils/cn";
+import styles from "../landing/landing.module.css";
+import { AppIcon, displayFont, LINKS } from "../landing/ui";
+import { FOOTER } from "./catalog";
 
-const COLUMNS: Array<{ title: string; links: Array<{ label: string; href: string; external?: boolean }> }> = [
-  {
-    title: "Product",
-    links: [
-      { label: "Features", href: "#product" },
-      { label: "Channels", href: "#channels" },
-      { label: "WhatsApp calling", href: "#whatsapp" },
-      { label: "Self-host", href: "#self-host" },
-    ],
-  },
-  {
-    title: "Developers",
-    links: [
-      { label: "Source code", href: LINKS.github, external: true },
-      { label: "Getting started", href: LINKS.selfHost, external: true },
-      { label: "Issues", href: LINKS.issues, external: true },
-    ],
-  },
-  {
-    title: "Resources",
-    links: [
-      { label: "FAQ", href: "#faq" },
-      { label: "Open the app", href: LINKS.app },
-    ],
-  },
-];
-
+/** Every marketing page, in columns under the brand row, so each page links to every other. */
 export function Footer() {
   return (
     <footer className="border-t border-black/[0.06] bg-white">
@@ -53,8 +28,8 @@ export function Footer() {
         {/* Shade strolls along the rule between the brand row and the links. */}
         <MascotStroll className="mt-4 h-9 border-b border-black/[0.06]" walkerClassName="size-9 text-[#335cff]" />
 
-        <nav aria-label="Footer" className="grid grid-cols-2 gap-x-6 gap-y-10 pt-10 sm:grid-cols-4">
-          {COLUMNS.map((col) => (
+        <nav aria-label="Footer" className="grid grid-cols-2 gap-x-6 gap-y-10 pt-10 sm:grid-cols-3 lg:grid-cols-5">
+          {FOOTER.map((col) => (
             <div key={col.title}>
               <p className="text-[14px] text-[#707070]">{col.title}</p>
               <ul className="mt-4 space-y-3">
@@ -62,10 +37,6 @@ export function Footer() {
                   <li key={l.label}>
                     {l.external ? (
                       <a href={l.href} target="_blank" rel="noopener noreferrer" className="rounded text-[14px] text-[#141414] outline-none hover:text-[#335cff] focus-visible:ring-2 focus-visible:ring-[#335cff]">
-                        {l.label}
-                      </a>
-                    ) : l.href.startsWith("#") ? (
-                      <a href={l.href} className="rounded text-[14px] text-[#141414] outline-none hover:text-[#335cff] focus-visible:ring-2 focus-visible:ring-[#335cff]">
                         {l.label}
                       </a>
                     ) : (
@@ -86,7 +57,7 @@ export function Footer() {
 
         <div className="mt-14 flex flex-wrap items-center justify-between gap-4 border-t border-black/[0.06] pt-8 text-[14px] text-[#707070]">
           <p>© {new Date().getFullYear()} AgentSDR</p>
-          <p>Sample data throughout this page. No customer data is shown.</p>
+          <p>AGPL-3.0 · Sample data throughout. No customer data is shown.</p>
         </div>
       </div>
     </footer>

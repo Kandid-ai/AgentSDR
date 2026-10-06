@@ -1,5 +1,6 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextRequest, NextResponse } from "next/server";
+import { isMarketingPath } from "@/lib/marketing/site";
 import { migrationMutationBlockReason } from "@/lib/migration/controls";
 
 /**
@@ -54,7 +55,10 @@ export function proxy(request: NextRequest) {
     return NextResponse.json({ error: migrationBlockReason }, { status: 503 });
   }
   const isPublic =
-    pathname === "/" ||
+    // The marketing site (src/app/(marketing)), its social cards, and what crawlers read.
+    isMarketingPath(pathname) ||
+    pathname === "/sitemap.xml" ||
+    pathname === "/robots.txt" ||
     PUBLIC.some((p) => pathname.startsWith(p)) ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
