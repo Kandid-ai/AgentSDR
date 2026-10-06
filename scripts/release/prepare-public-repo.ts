@@ -14,7 +14,7 @@
  *   2. Exports HEAD with `git archive` into --out, which must not exist yet.
  *   3. Removes every --exclude path (and the defaults in EXCLUDE below), and
  *      with --repo points every link at the public repository (README,
- *      docs, issue templates, package.json, the landing page's GitHub links).
+ *      docs, issue templates, package.json).
  *   4. Refuses if a sensitive-looking file is present (.env files other than
  *      .env.example, dumps, keys, backups).
  *   5. Runs gitleaks over the tree when it is installed (with the repository's

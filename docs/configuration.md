@@ -270,15 +270,6 @@ clicking. That is a compliance problem. See
 | **What it does** | Legacy fallback for `BETTER_AUTH_URL`, used only when that is unset. Next.js inlines `NEXT_PUBLIC_*` values into the build, so an image built once carries the build-time value. Prefer `BETTER_AUTH_URL`. |
 | **Read in** | `src/lib/http/publicAppUrl.ts`, `src/lib/auth/server.ts` |
 
-### `NEXT_PUBLIC_SITE_URL`
-
-| | |
-|---|---|
-| **Required?** | No. |
-| **Default** | `https://agentsdr.ai` |
-| **What it does** | The canonical address used in the marketing pages' metadata, sitemap and social cards, so that a self-hosted copy (which serves the same pages) does not compete with the public site in search. Inlined at build time. You normally leave it alone. |
-| **Read in** | `src/lib/marketing/site.ts` |
-
 ### `OPENROUTER_SITE_URL`
 
 | | |

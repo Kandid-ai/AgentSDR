@@ -65,7 +65,7 @@ bun run release:prepare -- --out ../agentsdr-public --repo <owner>/<name> --mess
 It refuses a dirty working tree, an existing `--out` directory,
 sensitive-looking files (`.env*` other than `.env.example`, dumps, keys) and
 any gitleaks finding not listed in `.gitleaksignore`. `--repo` points every
-link (README, docs, issue templates, `package.json`, the landing page) at the
+link (README, docs, issue templates, `package.json`) at the
 public repository. Pass `--exclude <path>` to leave something out. It never
 pushes; it prints the two commands to do so.
 

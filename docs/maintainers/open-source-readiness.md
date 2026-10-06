@@ -150,6 +150,6 @@ Each phase ends with the checks listed under it; nothing is pushed.
    requiring the `CI / required` check.
 5. Set up the `security@kandid.ai` and `opensource@kandid.ai` mail routes
    named in `SECURITY.md` and `CODE_OF_CONDUCT.md`.
-6. Review the launch video assets in `video/` for real customer data before
-   they go public. (The README screenshots in `docs/assets/screenshots/` show
+6. Review the launch video assets in `video/` (since moved to the private
+   website repository) for real customer data before they go public. (The README screenshots in `docs/assets/screenshots/` show
    only the fictional demo organization.)

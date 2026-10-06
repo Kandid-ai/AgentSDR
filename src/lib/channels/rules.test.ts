@@ -97,7 +97,7 @@ test("pickInRange stays inside the range", () => {
   expect(pickInRange([5, 5])).toBe(5);
 });
 
-test("WhatsApp's contract constants (shown on the landing page and kept import-free for the recorder) match the rule defaults", async () => {
+test("WhatsApp's contract constants (shown by the recorder and the website, kept import-free) match the rule defaults", async () => {
   const contract = await import("@/lib/whatsapp/contract");
   expect(defaultValues("whatsapp")).toEqual({
     sendingHours: null,

@@ -250,7 +250,6 @@ scripts/                 Migration history, audits, database tooling, e2e checks
 extensions/whatsapp-recorder/   Chrome extension that dials and records WhatsApp calls
 docker/, docker-compose.yml     Self-hosting
 docs/                    Documentation (published at docs.agentsdr.ai)
-video/                   The launch film and setup videos (Remotion)
 ```
 
 | Command | What it does |
@@ -263,7 +262,7 @@ video/                   The launch film and setup videos (Remotion)
 
 CI runs typecheck, lint, tests, a secret scan, the production build, the extension build and a fresh install on PostgreSQL 16, 17 and 18. See the [development guide](https://docs.agentsdr.ai/development).
 
-**Built with** [Next.js 16](https://nextjs.org) and React 19, TypeScript, [Drizzle ORM](https://orm.drizzle.team), [Better Auth](https://www.better-auth.com), [Tailwind CSS](https://tailwindcss.com) with [AlignUI](https://www.alignui.com), [Bun](https://bun.sh) and [Remotion](https://www.remotion.dev).
+**Built with** [Next.js 16](https://nextjs.org) and React 19, TypeScript, [Drizzle ORM](https://orm.drizzle.team), [Better Auth](https://www.better-auth.com), [Tailwind CSS](https://tailwindcss.com) with [AlignUI](https://www.alignui.com), and [Bun](https://bun.sh).
 </details>
 
 ## Security and privacy
@@ -350,7 +349,7 @@ The [LICENSE](LICENSE) file is the binding text.
 <br>
 
 - The sign-in page photograph is by [Marek Piwnicki](https://unsplash.com/photos/w4sxddUJ5-0) on Unsplash.
-- Built on [Next.js](https://nextjs.org), [Drizzle](https://orm.drizzle.team), [Better Auth](https://www.better-auth.com), [AlignUI](https://www.alignui.com), [Remix Icon](https://remixicon.com) and [Remotion](https://www.remotion.dev).
+- Built on [Next.js](https://nextjs.org), [Drizzle](https://orm.drizzle.team), [Better Auth](https://www.better-auth.com), [AlignUI](https://www.alignui.com) and [Remix Icon](https://remixicon.com).
 </details>
 
 <div align="center">

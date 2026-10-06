@@ -1,6 +1,6 @@
 /**
- * Where people go for help, in one client-safe place so the app's Help menu,
- * the docs and the landing page all point at the same URLs. No imports.
+ * Where people go for help, in one client-safe place so the app's Help menu
+ * and the docs point at the same URLs. No imports.
  */
 
 const REPO = "https://github.com/Kandid-ai/AgentSDR";

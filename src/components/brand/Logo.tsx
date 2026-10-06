@@ -4,13 +4,13 @@ import { Mascot } from "./Mascot";
 import type { MascotCycle } from "./mascotFrames";
 
 /**
- * The AgentSDR logo — the one source for the landing page, the app chrome
- * and the login screen. The mascot's pixels live in ./mascotFrames.ts; the favicon
+ * The AgentSDR logo — the one source for the app chrome and the login
+ * screen. The mascot's pixels live in ./mascotFrames.ts; the favicon
  * (src/app/icon.svg, apple-icon.png) and the recorder extension's icons are
  * this same tile drawn as static files; change them together.
  */
 
-/** The icon tile's corner radius, shared with the hero's ring and glint (landing/converge.module.css). */
+/** The icon tile's corner radius. */
 export const ICON_RADIUS = "14%";
 
 /** How a logo's mascot moves: a walk cycle, looping or only while its `.group` is hovered. */
