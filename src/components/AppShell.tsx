@@ -20,6 +20,9 @@ const CHROMELESS_ROUTES = [
   "/reset-password",
   "/onboarding",
   "/accept-invitation",
+  // First-run setup: no session exists yet, so SessionGate would send the
+  // visitor to /sign-in, which sends a fresh instance straight back here.
+  "/setup",
 ];
 
 /** The sign-in screens: no sidebar, no app chrome. */

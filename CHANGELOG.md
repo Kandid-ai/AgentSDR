@@ -18,6 +18,9 @@ Each release lists the database migrations it needs; see
   the new file: 0.2.0's image does not create the schema, so every query
   failed with `relation … does not exist`. Upgrade by downloading the new
   file; `AGENTSDR_VERSION` still overrides the tag.
+- **First-run setup no longer loops.** On a fresh install the page bounced
+  between `/sign-in` and `/setup` forever: the signed-in frame wrapped
+  `/setup` and sent the session-less visitor to sign-in, which sent them back.
 - **A rejected database password is explained at startup**: the bundled
   database keeps the password its volume was first created with, and the log
   now says so, with the two ways out.

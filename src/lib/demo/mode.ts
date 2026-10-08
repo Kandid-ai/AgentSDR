@@ -32,7 +32,7 @@ export const DEMO_READ_ONLY_CODE = "DEMO_READ_ONLY";
 export const DEMO_READ_ONLY_MESSAGE = "This is a read-only demo, so changes are not saved. Self-host AgentSDR to use it for real.";
 
 /** Screens that would ask for a password or create an account: in the demo they lead in instead. */
-const AUTH_SCREENS = ["/login", "/sign-in", "/sign-up", "/forgot-password", "/reset-password", "/accept-invitation", "/onboarding"];
+const AUTH_SCREENS = ["/login", "/sign-in", "/sign-up", "/forgot-password", "/reset-password", "/accept-invitation", "/onboarding", "/setup"];
 
 /**
  * Better Auth: its GET endpoints read (session, organization, members,
