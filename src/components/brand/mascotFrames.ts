@@ -66,3 +66,13 @@ export function frameRuns({ grid, dx = 0 }: MascotFrame): PixelRun[] {
   });
   return runs;
 }
+
+/**
+ * A frame as one SVG path: each run is a 1-unit-tall rectangle. One element per
+ * frame instead of one per run keeps a page with many walking Shades light.
+ */
+export function framePath(frame: MascotFrame): string {
+  return frameRuns(frame)
+    .map((r) => `M${r.x} ${r.y}h${r.w}v1h-${r.w}z`)
+    .join("");
+}

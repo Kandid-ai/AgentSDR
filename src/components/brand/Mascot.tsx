@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { cn } from "@/utils/cn";
-import { CYCLES, STAND, VIEWBOX, frameRuns, type MascotCycle, type MascotFrame } from "./mascotFrames";
+import { CYCLES, STAND, VIEWBOX, framePath, type MascotCycle, type MascotFrame } from "./mascotFrames";
 import styles from "./mascot.module.css";
 
 /**
@@ -29,11 +29,7 @@ export function Mascot({
       style={cycle ? ({ "--cycle": `${n * ms}ms` } as CSSProperties) : undefined}
     >
       {frames.map((frame, i) => (
-        <g key={i} className={cycle ? styles.frame : undefined} style={cycle ? ({ "--delay": `${-((n - i) % n) * ms}ms` } as CSSProperties) : undefined}>
-          {frameRuns(frame).map((r) => (
-            <rect key={`${r.x},${r.y}`} x={r.x} y={r.y} width={r.w} height={1} />
-          ))}
-        </g>
+        <path key={i} d={framePath(frame)} className={cycle ? styles.frame : undefined} style={cycle ? ({ "--delay": `${-((n - i) % n) * ms}ms` } as CSSProperties) : undefined} />
       ))}
     </svg>
   );
