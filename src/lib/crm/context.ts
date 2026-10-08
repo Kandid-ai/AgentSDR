@@ -130,6 +130,7 @@ function messageSnapshot(
     bodyText: bodyLimit === undefined
       ? bodyText
       : boundedText(bodyText, bodyLimit) ?? "",
+    ...(message.participants ? { participants: message.participants } : {}),
   };
 }
 

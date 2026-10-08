@@ -209,6 +209,7 @@ function normalizeConversation(messages: readonly ClassificationMessage[]) {
       sentAt: isoDate(message.sentAt, `CRM draft conversation message ${id}`),
       subject: cleanOptionalText(message.subject),
       bodyText: cleanRequiredText(message.bodyText, `CRM draft conversation message ${id} body`),
+      ...(message.participants ? { participants: message.participants } : {}),
     };
   }).sort((left, right) => (
     left.sentAt.localeCompare(right.sentAt) || left.id.localeCompare(right.id)
@@ -279,6 +280,7 @@ export function draftChannelConstraints(channel: CrmChannel): string[] {
         "Return a non-empty subject and plain-text body.",
         "bodyHtml may contain an equivalent HTML rendering or null.",
         "Do not include threading headers or send instructions.",
+        "Messages in recentConversation may list participants (from, to, cc). If others are copied on the thread, write so it reads correctly to all of them; the reply goes to the person and the rep may Cc the others.",
       ];
     case "linkedin":
       return [

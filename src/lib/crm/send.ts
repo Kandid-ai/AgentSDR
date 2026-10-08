@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { inboxContacts, inboxMessages } from "@/lib/inbox/schema";
 import { people } from "@/lib/leads/schema";
@@ -16,7 +16,10 @@ import { whatsappMessages } from "@/lib/whatsapp/schema";
 import { crmChannelSendProvider } from "./channels";
 import { insertConversationMessageInTransaction } from "./conversations";
 import { appendCrmEvent } from "./events";
-import { isPersonDoNotContact } from "./policies";
+import { isEmailDoNotContact, isPersonDoNotContact } from "./policies";
+import { CrmConfigurationValidationError } from "./categories";
+import { isSuppressed } from "@/lib/outreach/suppression";
+import { dedupeAddresses, normalizeEmail, type EmailAddress } from "@/lib/email/recipients";
 import {
   CrmConflictError,
   CrmNotFoundError,
@@ -60,7 +63,71 @@ export type CrmSendAdapterInput = {
   bodyText: string;
   bodyHtml: string | null;
   inReplyTo: string | null;
+  /** Email only: extra visible / hidden recipients, already de-duplicated and stripped of the lead and our mailbox. */
+  ccEmails?: string[];
+  bccEmails?: string[];
+  /** Email only: the conversation's RFC Message-ID chain (oldest first), ending with inReplyTo. */
+  references?: string[];
 };
+
+const RFC_MESSAGE_ID = /^<[^<>\s@]+@[^<>\s@]+>$/;
+
+/** True for an RFC 5322 Message-ID such as `<abc@mail.example.com>`; false for a bare Gmail API id. */
+export function isRfcMessageId(value: unknown): value is string {
+  return typeof value === "string" && RFC_MESSAGE_ID.test(value.trim());
+}
+
+const MAX_REFERENCES = 20;
+
+/**
+ * The In-Reply-To / References for a reply: the RFC Message-IDs of the
+ * conversation's email messages in send order (last 20, no repeats), always
+ * ending with the message being answered.
+ */
+export function buildThreadHeaders(
+  messages: ReadonlyArray<{ raw: unknown; providerMessageId: string | null }>,
+): { inReplyTo: string | null; references: string[] } {
+  // Outreach-history rows keep the RFC id only in providerMessageId; inbound
+  // and rep-sent rows have it on raw.messageId.
+  const rfcId = (message: { raw: unknown; providerMessageId: string | null } | undefined): string | null => {
+    if (!message) return null;
+    const raw = message.raw && typeof message.raw === "object" ? (message.raw as { messageId?: unknown }) : null;
+    if (isRfcMessageId(raw?.messageId)) return raw.messageId.trim();
+    return isRfcMessageId(message.providerMessageId) ? message.providerMessageId.trim() : null;
+  };
+  const chain = messages.map(rfcId).filter((id): id is string => Boolean(id));
+  const inReplyTo = rfcId(messages[messages.length - 1]) ?? chain[chain.length - 1] ?? null;
+  const unique: string[] = [];
+  for (const id of chain) {
+    const at = unique.indexOf(id);
+    if (at >= 0) unique.splice(at, 1);
+    unique.push(id);
+  }
+  return { inReplyTo, references: unique.slice(-MAX_REFERENCES) };
+}
+
+/** Cc/Bcc for the send: valid unique addresses minus the lead (the To) and our own mailbox. */
+export function resolveExtraRecipients(
+  input: { ccEmails?: readonly string[]; bccEmails?: readonly string[] },
+  exclude: { recipient: string | null; mailbox: string | null },
+): { cc: string[]; bcc: string[] } {
+  const skip = [exclude.recipient, exclude.mailbox].filter((v): v is string => Boolean(v));
+  const toList = (list: readonly string[] | undefined): EmailAddress[] =>
+    (list ?? []).map((email) => ({ email: normalizeEmail(email), name: null }));
+  const cc = dedupeAddresses(toList(input.ccEmails), skip).map((a) => a.email);
+  const bcc = dedupeAddresses(toList(input.bccEmails), [...skip, ...cc]).map((a) => a.email);
+  return { cc, bcc };
+}
+
+/** The addresses as actually sent, in the shape stored on message `raw`. */
+export function sentRecipients(request: Pick<CrmSendAdapterInput, "recipientEmail" | "ccEmails" | "bccEmails">) {
+  const address = (email: string): EmailAddress => ({ email, name: null });
+  return {
+    to: request.recipientEmail ? [address(request.recipientEmail)] : [],
+    cc: (request.ccEmails ?? []).map(address),
+    bcc: (request.bccEmails ?? []).map(address),
+  };
+}
 
 export type CrmSendAdapter = (input: CrmSendAdapterInput) => Promise<NormalizedCrmSendResult>;
 
@@ -88,11 +155,13 @@ export const sendThroughCrmProvider: CrmSendAdapter = async (input) => {
     const result = await sendEmail({
       from: input.accountRef,
       to: [input.recipientEmail],
+      cc: input.ccEmails?.length ? input.ccEmails : undefined,
+      bcc: input.bccEmails?.length ? input.bccEmails : undefined,
       subject: input.subject,
       text: input.bodyText,
       html: input.bodyHtml ?? undefined,
       inReplyTo: input.inReplyTo ?? undefined,
-      references: input.inReplyTo ? [input.inReplyTo] : undefined,
+      references: input.references?.length ? input.references : input.inReplyTo ? [input.inReplyTo] : undefined,
       threadId: input.providerThreadId ?? undefined,
     });
     return {
@@ -169,6 +238,8 @@ async function prepareSend(tx: CrmTransaction, input: {
   idempotencyKey: string;
   requestId: string;
   actorRef?: string | null;
+  ccEmails?: string[];
+  bccEmails?: string[];
 }): Promise<PreparedSend | { replay: true; attemptId: string }> {
   const [existingAttempt] = await tx.select().from(crmSendAttempts)
     .where(and(
@@ -227,10 +298,22 @@ async function prepareSend(tx: CrmTransaction, input: {
   const [person] = await tx.select({ email: people.email, phone: people.phone }).from(people)
     .where(and(inOrg(people), eq(people.id, record.personId))).limit(1);
   if (!person) throw new CrmNotFoundError("Person", record.personId);
-  const [lastMessage] = await tx.select().from(crmConversationMessages)
+  const history = await tx.select({ raw: crmConversationMessages.raw, providerMessageId: crmConversationMessages.providerMessageId })
+    .from(crmConversationMessages)
     .where(eq(crmConversationMessages.conversationId, conversation.id))
-    .orderBy(desc(crmConversationMessages.sentAt), desc(crmConversationMessages.id)).limit(1);
-  const raw = lastMessage?.raw as { messageId?: unknown } | null;
+    .orderBy(asc(crmConversationMessages.sentAt), asc(crmConversationMessages.id));
+  const thread = buildThreadHeaders(history);
+  const requestedExtras = (input.ccEmails?.length ?? 0) + (input.bccEmails?.length ?? 0);
+  if (draft.channel !== "email" && requestedExtras > 0) {
+    throw new CrmConfigurationValidationError("cc and bcc are only supported on email conversations");
+  }
+  const extras = draft.channel === "email"
+    ? resolveExtraRecipients(input, { recipient: person.email, mailbox: conversation.accountRef })
+    : { cc: [], bcc: [] };
+  for (const address of [...extras.cc, ...extras.bcc]) {
+    if (await isSuppressed(address)) throw new CrmConflictError(`${address} is on the suppression list; remove it from Cc/Bcc to send`);
+    if (await isEmailDoNotContact(tx, address)) throw new CrmConflictError(`${address} is marked Do Not Contact; remove it from Cc/Bcc to send`);
+  }
   const bodyText = draft.editedBodyText?.trim() || draft.aiBodyText?.trim() || "";
   if (!bodyText) throw new CrmConflictError("Draft has no sendable body");
   const request: CrmSendAdapterInput = {
@@ -243,7 +326,8 @@ async function prepareSend(tx: CrmTransaction, input: {
     subject: draft.subject,
     bodyText,
     bodyHtml: draft.editedBodyHtml ?? draft.aiBodyHtml,
-    inReplyTo: typeof raw?.messageId === "string" ? raw.messageId : lastMessage?.providerMessageId ?? null,
+    inReplyTo: thread.inReplyTo,
+    ...(draft.channel === "email" ? { ccEmails: extras.cc, bccEmails: extras.bcc, references: thread.references } : {}),
   };
   const provider = crmChannelSendProvider(draft.channel);
   const [attempt] = existingAttempt
@@ -326,6 +410,7 @@ async function finishSuccessfulSend(
         providerThreadId: result.providerThreadId,
         messageId: result.rfcMessageId,
         response: result.response,
+        ...(conversation.channel === "email" ? sentRecipients(prepared.request) : {}),
       },
       sentAt: now,
     });
@@ -389,6 +474,7 @@ async function finishSuccessfulSend(
             threadId: result.providerThreadId,
             messageId: result.rfcMessageId,
             crmConversationMessageId: message.id,
+            ...sentRecipients(prepared.request),
           },
         }).onConflictDoNothing();
       }
@@ -523,6 +609,8 @@ export async function sendDraft(input: {
   idempotencyKey: string;
   requestId: string;
   actorRef?: string | null;
+  ccEmails?: string[];
+  bccEmails?: string[];
 }, dependencies: { send?: CrmSendAdapter } = {}) {
   const prepared = await withCrmTransaction((tx) => prepareSend(tx, input));
   if ("replay" in prepared) {

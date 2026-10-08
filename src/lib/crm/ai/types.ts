@@ -51,7 +51,11 @@ export type ClassificationMessage = {
   sentAt: Date | string;
   subject?: string | null;
   bodyText: string;
+  /** Email only: who the message came from and was addressed to, so a reply can account for everyone on the thread. */
+  participants?: MessageParticipants;
 };
+
+export type MessageParticipants = { from: string | null; to: string[]; cc: string[] };
 
 export type ClassificationCampaignSummary = {
   channel?: CrmChannel | null;

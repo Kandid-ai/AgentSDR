@@ -17,6 +17,7 @@ import { loadInboxCrmSummariesForRecords } from "@/lib/crm/inboxContext.server";
 import { loadInboxEmailCrmContext } from "@/lib/inbox/crmContext.server";
 import { inOrg } from "@/lib/tenancy/scope";
 import { leadsInOrg } from "@/lib/outreach/orgScope";
+import { recipientsFromRaw, replyAllCc, type EmailAddress, type MessageRecipients } from "@/lib/email/recipients";
 
 /** Ids of the current organization's inbox contacts — inbox messages, drafts and CCs inherit scope through these. */
 function orgContactIds() {
@@ -284,7 +285,23 @@ export async function getThreadForLead(leadId: string) {
     loadInboxEmailCrmContext(leadId),
   ]);
 
-  return { lead, statusConfig, messages, draft, ccs: ccs.map((c) => c.email), crm };
+  // Recipients come from the message's own headers. For inbound mail the
+  // to_email column is only our mailbox, so it is a last resort there.
+  const threadMessages = messages.map(({ raw, ...message }) => ({
+    ...message,
+    recipients: recipientsFromRaw(raw, message.toEmail) as MessageRecipients,
+  }));
+  const latestInbound = [...threadMessages].reverse().find((m) => m.direction === "inbound");
+  const replyAll: EmailAddress[] = latestInbound ? replyAllCc(latestInbound, { mailbox: lead.mailbox, lead: lead.email }) : [];
+  const seen = new Set<string>();
+  const mergedCcs = [...ccs.map((c) => c.email), ...replyAll.map((a) => a.email)].filter((email) => {
+    const key = email.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { lead, statusConfig, messages: threadMessages, draft, ccs: mergedCcs, replyAllCc: replyAll, crm };
 }
 
 /** Sidebar nav counts — same three AgentSDR-app actually computed (Inbox/Important/Scheduled), kept cheap. */

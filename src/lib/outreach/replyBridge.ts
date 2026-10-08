@@ -9,6 +9,7 @@ import { suppressEmailOutreach } from "./suppression";
 import type { InboundMessage } from "./gmail";
 import { upsertPerson, withLeadTransaction } from "@/lib/leads/records";
 import { people } from "@/lib/leads/schema";
+import { crmConversations } from "@/lib/crm/schema";
 import { gmailInboundEventKey } from "./inboundIdentity";
 import { ingestInboundReply as ingestCrmInboundReply } from "@/lib/crm/conversations";
 import { quarantineCrmIdentity } from "@/lib/crm/identity";
@@ -180,27 +181,39 @@ function domainFromEmail(email: string): string | null {
 
 type MasterInboxStoreResult = { leadId: string; created: boolean };
 
+/** Whose Master Inbox contact a message is filed under, when not its sender. */
+type MasterInboxContact = { email: string; firstName?: string | null; lastName?: string | null };
+
+/** The CRM conversation a Gmail thread already belongs to. */
+type ThreadConversation = { personId: string; providerContactId: string | null; personEmail: string | null };
+
 /**
  * Master Inbox intentionally has a storage boundary separate from People CRM,
- * so unknown senders remain visible without creating CRM work.
+ * so unknown senders remain visible without creating CRM work. `contact`
+ * files the message under another address (a colleague replying on a lead's
+ * thread) while the message keeps its real `fromEmail`.
  */
 async function storeGmailMessageInMasterInbox(
   mailboxAddress: string,
   msg: InboundMessage & { fromEmail: string },
   bodyText: string | null,
   durableMessageKey: string,
+  contact?: MasterInboxContact,
 ): Promise<MasterInboxStoreResult> {
-  const { first, last } = splitName(msg.fromName);
+  const { first, last } = contact
+    ? { first: contact.firstName ?? null, last: contact.lastName ?? null }
+    : splitName(msg.fromName);
+  const contactEmail = contact?.email ?? msg.fromEmail;
   const repliedAt = msg.internalDate ?? new Date();
   return db.transaction(async (tx) => {
     const [lead] = await tx
       .insert(inboxContacts)
       .values({
         organizationId: currentOrganizationId(),
-        email: msg.fromEmail,
+        email: contactEmail,
         firstName: first,
         lastName: last,
-        domain: domainFromEmail(msg.fromEmail),
+        domain: domainFromEmail(contactEmail),
         mailbox: mailboxAddress,
         lastReplyAt: repliedAt,
       })
@@ -236,6 +249,65 @@ async function storeGmailMessageInMasterInbox(
   });
 }
 
+async function findThreadConversationInDb(mailboxAddress: string, threadId: string): Promise<ThreadConversation | null> {
+  const [row] = await db
+    .select({
+      personId: crmConversations.personId,
+      providerContactId: crmConversations.providerContactId,
+      personEmail: people.email,
+    })
+    .from(crmConversations)
+    .leftJoin(people, and(eq(people.id, crmConversations.personId), inOrg(people)))
+    .where(and(
+      inOrg(crmConversations),
+      eq(crmConversations.channel, "email"),
+      eq(crmConversations.accountRef, mailboxAddress),
+      eq(crmConversations.providerThreadId, threadId),
+    ))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * A sender who is not an outreach recipient wrote on a thread that already
+ * belongs to a lead (a manager looped in, a reply-all). The message joins that
+ * lead's conversation and Master Inbox contact; no Person is created for the
+ * colleague.
+ */
+async function attachToThreadConversation(
+  mailboxAddress: string,
+  msg: InboundMessage & { fromEmail: string },
+  bodyText: string | null,
+  durableMessageKey: string,
+  conversation: ThreadConversation,
+  log: StepLogger,
+  storeInMasterInbox: typeof storeGmailMessageInMasterInbox = storeGmailMessageInMasterInbox,
+  ingest: typeof ingestCrmInboundReply = ingestCrmInboundReply,
+) {
+  const leadEmail = conversation.personEmail ?? conversation.providerContactId;
+  if (!leadEmail) throw new Error("CRM conversation has no lead email to file the reply under");
+  const inbox = await storeInMasterInbox(mailboxAddress, msg, bodyText, durableMessageKey, { email: leadEmail });
+  log.info(inbox.created ? "Message stored in Master Inbox" : "Message already exists in Master Inbox");
+  if (!bodyText?.trim()) throw new Error("CRM cannot ingest an empty Gmail reply");
+  const result = await ingest({
+    personId: conversation.personId,
+    channel: "email",
+    accountRef: mailboxAddress,
+    providerThreadId: msg.threadId,
+    providerContactId: conversation.providerContactId,
+    idempotencyKey: durableMessageKey,
+    providerMessageId: msg.messageId ?? msg.gmailMessageId,
+    subject: msg.subject,
+    bodyText,
+    raw: msg as unknown as Record<string, unknown>,
+    sentAt: msg.internalDate ?? new Date(),
+    actorRef: "gmail",
+  });
+  log.info(`${msg.fromEmail} replied on ${leadEmail}'s thread — attached to that conversation`);
+  log.info(result.duplicate ? "CRM already stored this Gmail reply" : "Gmail reply routed to CRM");
+  return { leadId: result.record.id, skipped: result.duplicate };
+}
+
 /**
  * Stores one inbound Gmail message in Master Inbox. Known outreach recipients
  * are also routed into the canonical People CRM workflow; unknown senders stay
@@ -249,6 +321,8 @@ export async function ingestGmailReply(
     isKnownOutreachRecipient?: (email: string) => Promise<boolean>;
     storeInMasterInbox?: typeof storeGmailMessageInMasterInbox;
     suppress?: typeof suppressEmailOutreach;
+    findThreadConversation?: (mailboxAddress: string, threadId: string) => Promise<ThreadConversation | null>;
+    ingestCrm?: typeof ingestCrmInboundReply;
   } = {},
 ) {
   if (!msg.fromEmail) {
@@ -286,6 +360,26 @@ export async function ingestGmailReply(
     return Boolean(recipient);
   });
   const knownOutreachRecipient = await isKnownOutreachRecipient(msg.fromEmail);
+
+  // The thread decides whose conversation this is, not the sender: a manager
+  // looped in, a reply-all, or another emailed lead at the same company all
+  // belong on the lead's existing thread. (A second lead's own conversation
+  // would also collide with this thread id and be refused by the CRM.)
+  if (msg.threadId) {
+    const conversation = await (options.findThreadConversation ?? findThreadConversationInDb)(mailboxAddress, msg.threadId);
+    if (conversation && conversation.personEmail?.toLowerCase() !== msg.fromEmail.toLowerCase()) {
+      return attachToThreadConversation(
+        mailboxAddress,
+        msg as InboundMessage & { fromEmail: string },
+        bodyText,
+        durableMessageKey,
+        conversation,
+        log,
+        options.storeInMasterInbox,
+        options.ingestCrm,
+      );
+    }
+  }
 
   if (!knownOutreachRecipient) {
     const inbox = await (options.storeInMasterInbox ?? storeGmailMessageInMasterInbox)(

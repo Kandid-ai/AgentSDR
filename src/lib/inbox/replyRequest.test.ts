@@ -6,7 +6,7 @@ import { parseInboxReplyRequest } from "./replyRequest";
 const DRAFT_ID = "2f6d0a3e-6f4b-4c8e-9b1a-3f2e1d0c9b8a";
 
 describe("parseInboxReplyRequest", () => {
-  test("accepts the composer payload and drops the recipient fields", () => {
+  test("accepts the composer payload and ignores `to`", () => {
     const parsed = parseInboxReplyRequest({
       to: ["lead@example.com"],
       cc: [],
@@ -19,8 +19,30 @@ describe("parseInboxReplyRequest", () => {
       subject: "Re: hello",
       text: "Thanks, sounds good.",
       html: "<p>Thanks, sounds good.</p>",
+      cc: [],
+      bcc: [],
       draft: null,
     });
+  });
+
+  test("cc and bcc are normalized, deduplicated and kept apart", () => {
+    const parsed = parseInboxReplyRequest({
+      to: ["someone-else@example.com"],
+      cc: [" Boss@Example.com ", { email: "boss@example.com" }, "peer@example.com"],
+      bcc: ["peer@example.com", "audit@example.com"],
+      subject: "s",
+      text: "t",
+    });
+    assert.deepEqual(parsed.cc, ["boss@example.com", "peer@example.com"]);
+    assert.deepEqual(parsed.bcc, ["audit@example.com"]);
+  });
+
+  test("invalid or oversized cc/bcc is rejected", () => {
+    assert.throws(() => parseInboxReplyRequest({ subject: "s", text: "t", cc: ["nope"] }), /invalid email address: nope/);
+    assert.throws(() => parseInboxReplyRequest({ subject: "s", text: "t", bcc: "a@b.co" }), CrmConfigurationValidationError);
+    assert.throws(() => parseInboxReplyRequest({ subject: "s", text: "t", cc: [42] }), CrmConfigurationValidationError);
+    const many = Array.from({ length: 21 }, (_, i) => `p${i}@example.com`);
+    assert.throws(() => parseInboxReplyRequest({ subject: "s", text: "t", cc: many }), /at most 20/);
   });
 
   test("empty or missing html means text only", () => {

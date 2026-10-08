@@ -421,7 +421,7 @@ export async function getCrmRecordWorkspace(recordId: string) {
       id: inboxMessages.id, direction: inboxMessages.direction, providerMessageKey: inboxMessages.providerMessageKey, subject: inboxMessages.subject,
       bodyText: inboxMessages.bodyText, bodyHtml: inboxMessages.bodyHtml, fromEmail: inboxMessages.fromEmail, toEmail: inboxMessages.toEmail,
       sentAt: inboxMessages.sentAt, createdAt: inboxMessages.createdAt,
-      raw: sql<Record<string, unknown> | null>`jsonb_build_object('messageId', ${inboxMessages.raw}->'messageId', 'crmConversationMessageId', ${inboxMessages.raw}->'crmConversationMessageId')`,
+      raw: sql<Record<string, unknown> | null>`jsonb_build_object('messageId', ${inboxMessages.raw}->'messageId', 'crmConversationMessageId', ${inboxMessages.raw}->'crmConversationMessageId', 'to', ${inboxMessages.raw}->'to', 'cc', ${inboxMessages.raw}->'cc', 'bcc', ${inboxMessages.raw}->'bcc', 'toEmail', ${inboxMessages.raw}->'toEmail', 'ccEmails', ${inboxMessages.raw}->'ccEmails')`,
     })
       .from(inboxMessages)
       .innerJoin(inboxContacts, eq(inboxContacts.id, inboxMessages.contactId))

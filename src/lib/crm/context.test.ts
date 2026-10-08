@@ -95,6 +95,15 @@ describe("CRM classification context", () => {
     assert.match(context.prompt, /Can you show me a demo next Tuesday\?/);
   });
 
+  test("carries email participants into the snapshot only when present", () => {
+    const input = fixture();
+    input.recentConversation[0]!.participants = { from: "me@us.com", to: ["priya@example.com"], cc: ["boss@example.com"] };
+    const context = buildClassificationContext(input);
+    const [first, second] = context.snapshot.recentConversation;
+    assert.deepEqual(first?.participants?.cc, ["boss@example.com"]);
+    assert.equal("participants" in (second ?? {}), false);
+  });
+
   test("keeps the prompt inside the requested budget and drops whole older messages", () => {
     const input = fixture();
     input.latestInboundMessage.bodyText = "latest ".repeat(1_000);

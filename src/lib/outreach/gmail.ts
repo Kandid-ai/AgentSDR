@@ -10,6 +10,8 @@ import MailComposer from "nodemailer/lib/mail-composer";
 import { encode } from "js-base64";
 import { requirePlatformCredentials } from "@/lib/platform/credentials";
 import { googleServiceAccount } from "@/lib/platform/clients";
+import type { EmailAddress } from "@/lib/email/recipients";
+import { parseAddressHeader } from "./addressHeader";
 
 async function jwtFor(subject: string, scopes: string[]) {
   const key = googleServiceAccount(await requirePlatformCredentials("google"));
@@ -194,7 +196,12 @@ export type InboundMessage = {
   threadId: string | null;
   fromEmail: string | null;
   fromName: string | null;
+  /** First To address; kept for rows and readers that predate `to`. */
   toEmail: string | null;
+  to: EmailAddress[];
+  cc: EmailAddress[];
+  replyTo: EmailAddress[];
+  /** Cc addresses as plain strings; kept for compatibility with `cc`. */
   ccEmails: string[];
   subject: string | null;
   bodyText: string | null;
@@ -202,24 +209,6 @@ export type InboundMessage = {
   inReplyTo: string | null;
   internalDate: Date | null;
 };
-
-function parseFromHeader(value: string | null | undefined): { email: string | null; name: string | null } {
-  if (!value) return { email: null, name: null };
-  const match = value.match(/^(.*?)\s*<(.+)>$/);
-  if (match) {
-    return { name: match[1].replace(/^"|"$/g, "").trim() || null, email: match[2].trim().toLowerCase() };
-  }
-  return { email: value.trim().toLowerCase(), name: null };
-}
-
-/** Parses a comma-separated address-list header (Cc, To with multiple recipients) into normalized email addresses. */
-function parseAddressList(value: string | null | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(",")
-    .map((part) => parseFromHeader(part.trim()).email)
-    .filter((email): email is string => Boolean(email));
-}
 
 /** Best-effort plain-text body from a Gmail message payload (prefers text/plain, falls back to stripped text/html). */
 function extractBodyText(payload: import("googleapis").gmail_v1.Schema$MessagePart | undefined): string | null {
@@ -291,15 +280,20 @@ export async function fetchNewInboundMessages(
     const msg = await gmail.users.messages.get({ userId: "me", id, format: "full" });
     const headers = msg.data.payload?.headers ?? [];
     const header = (name: string) => headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
-    const { email: fromEmail, name: fromName } = parseFromHeader(header("From"));
+    const from = parseAddressHeader(header("From"))[0];
+    const to = parseAddressHeader(header("To"));
+    const cc = parseAddressHeader(header("Cc"));
 
     messages.push({
       gmailMessageId: id,
       threadId: msg.data.threadId ?? null,
-      fromEmail,
-      fromName,
-      toEmail: parseFromHeader(header("To")).email,
-      ccEmails: parseAddressList(header("Cc")),
+      fromEmail: from?.email ?? null,
+      fromName: from?.name ?? null,
+      toEmail: to[0]?.email ?? null,
+      to,
+      cc,
+      replyTo: parseAddressHeader(header("Reply-To")),
+      ccEmails: cc.map((a) => a.email),
       subject: header("Subject"),
       bodyText: extractBodyText(msg.data.payload ?? undefined),
       messageId: header("Message-Id"),
@@ -309,4 +303,35 @@ export async function fetchNewInboundMessages(
   }
 
   return { messages, newHistoryId };
+}
+
+/**
+ * Re-reads one message's To/Cc/Reply-To headers. Used to repair rows stored
+ * before inbound parsing kept every recipient (it kept only the first To).
+ * Returns null when the message no longer exists in the mailbox.
+ */
+export async function fetchMessageRecipients(
+  emailAddress: string,
+  gmailMessageId: string,
+): Promise<{ to: EmailAddress[]; cc: EmailAddress[]; replyTo: EmailAddress[] } | null> {
+  const auth = await jwtFor(emailAddress, ["https://www.googleapis.com/auth/gmail.readonly"]);
+  const gmail = google.gmail({ version: "v1", auth });
+  try {
+    const msg = await gmail.users.messages.get({
+      userId: "me",
+      id: gmailMessageId,
+      format: "metadata",
+      metadataHeaders: ["To", "Cc", "Reply-To"],
+    });
+    const headers = msg.data.payload?.headers ?? [];
+    const header = (name: string) => headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
+    return {
+      to: parseAddressHeader(header("To")),
+      cc: parseAddressHeader(header("Cc")),
+      replyTo: parseAddressHeader(header("Reply-To")),
+    };
+  } catch (err) {
+    if (isStaleHistoryCursorError(err)) return null; // 404: deleted or purged
+    throw err;
+  }
 }

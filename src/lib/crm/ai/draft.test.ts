@@ -82,6 +82,16 @@ function completion(
 }
 
 describe("CRM draft prompt", () => {
+  test("shows who else is on an email thread", () => {
+    const input = fixture();
+    const [message] = input.recentConversation;
+    const prompt = buildDraftPrompt(fixture({
+      recentConversation: [{ ...message!, participants: { from: "priya@example.com", to: ["me@us.com"], cc: ["boss@example.com"] } }],
+    }));
+    assert.match(prompt.userPrompt, /"cc": \[\s*"boss@example.com"\s*\]/);
+    assert.doesNotMatch(buildDraftPrompt(fixture()).userPrompt, /"participants"/);
+  });
+
   test("assembles every required source deterministically with human-send-only safety", () => {
     const first = buildDraftPrompt(fixture());
     const second = buildDraftPrompt(fixture({ mergeVariables: {

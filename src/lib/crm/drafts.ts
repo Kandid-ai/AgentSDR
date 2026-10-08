@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { messageParticipants } from "./participants";
 import { formatAiInstructions } from "./ai/instructions";
 import { db } from "@/lib/db";
 import { companies, people } from "@/lib/leads/schema";
@@ -123,6 +124,7 @@ async function loadDraftSubject(
         sentAt: message.sentAt,
         subject: message.subject,
         bodyText: message.bodyText,
+        participants: messageParticipants(message),
       })),
       ...calls,
     ],

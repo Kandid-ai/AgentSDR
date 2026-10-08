@@ -16,9 +16,10 @@ import { runInOrganization } from "@/lib/tenancy/scope";
  * conversation's sequence step (sendDraft adopts the pending step) and the
  * CRM stays the owner of the thread's state.
  *
- * Body: { subject, text, html?, draftId?, revision? } — with `draftId` the
+ * Body: { subject, text, html?, cc?, bcc?, draftId?, revision? } — cc/bcc are
+ * string[] (reply-all); `to` is ignored, the contact is always the To. With `draftId` the
  * existing CRM draft is edited and sent; without it a manual draft is created
- * on the contact's CRM email conversation. Other keys (to/cc/bcc) are ignored.
+ * on the contact's CRM email conversation. Other keys (incl. to) are ignored.
  * Responds { attempt } on success; 404 when the contact has no active CRM
  * email conversation; 409 with the CRM's message on conflicts.
  */
@@ -62,6 +63,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         revision: draft.revision,
         idempotencyKey,
         requestId,
+        ccEmails: body.cc,
+        bccEmails: body.bcc,
       });
       return Response.json({ attempt });
     });

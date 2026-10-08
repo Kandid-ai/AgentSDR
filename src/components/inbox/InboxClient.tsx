@@ -68,6 +68,8 @@ type ThreadResponse = {
   statusConfig: { label: string; statusGroup: string } | null;
   messages: ThreadMessage[];
   ccs: string[];
+  /** Cc a reply-all to the latest inbound message gets (absent on an older payload). */
+  replyAllCc?: { email: string; name: string | null }[];
   /** Absent on an older thread payload; then fetched from the crm-context route. */
   crm?: InboxCrmContext | null;
 };
@@ -294,7 +296,7 @@ export default function InboxClient() {
    * draft moved on underneath us, so the strip is resynced. Rejects so the
    * composer keeps its text.
    */
-  async function handleSendReply(payload: { subject: string; html: string; text: string }) {
+  async function handleSendReply(payload: { cc: string[]; bcc: string[]; subject: string; html: string; text: string }) {
     if (!thread) return;
     const leadId = thread.lead.id;
     setSendError(null);
@@ -305,6 +307,8 @@ export default function InboxClient() {
         subject: payload.subject,
         text: payload.text,
         html: payload.html,
+        ...(payload.cc.length > 0 ? { cc: payload.cc } : {}),
+        ...(payload.bcc.length > 0 ? { bcc: payload.bcc } : {}),
         ...(activeDraft ? { draftId: activeDraft.id, revision: activeDraft.revision } : {}),
       }),
     });
@@ -600,10 +604,11 @@ export default function InboxClient() {
                     </InlineError>
                   )}
                   <ReplyComposer
-                    key={selected.id + (activeDraft ? `-draft-${activeDraft.id}` : "")}
+                    key={`${selected.id}-${thread.lead.id}-${lastMessage?.id ?? ""}` + (activeDraft ? `-draft-${activeDraft.id}` : "")}
                     from={thread.lead.mailbox}
                     replyToName={leadName}
                     initialTo={[thread.lead.email]}
+                    initialCc={(thread.replyAllCc ?? []).map((a) => a.email)}
                     initialSubject={activeDraft?.subject || (lastMessage?.subject ? `Re: ${threadSubject(lastMessage.subject)}` : "")}
                     initialBody={activeDraft?.body}
                     quotedText={lastMessage?.bodyText ?? undefined}

@@ -120,6 +120,9 @@ const linkish = "text-paragraph-xs text-text-soft-400 outline-none hover:text-te
 export type ReplyComposerProps = {
   from: string;
   initialTo: string[];
+  /** Reply-all: addresses to open the Cc row with. */
+  initialCc?: string[];
+  initialBcc?: string[];
   initialSubject?: string;
   quotedText?: string;
   quotedFrom?: string;
@@ -138,6 +141,8 @@ export type ReplyComposerProps = {
 export default function ReplyComposer({
   from,
   initialTo,
+  initialCc,
+  initialBcc,
   initialSubject = "",
   quotedText,
   quotedFrom,
@@ -150,10 +155,10 @@ export default function ReplyComposer({
 }: ReplyComposerProps) {
   const [expanded, setExpanded] = useState(isDraftApproval);
   const [to, setTo] = useState<Recipient[]>(initialTo);
-  const [cc, setCc] = useState<Recipient[]>([]);
-  const [bcc, setBcc] = useState<Recipient[]>([]);
-  const [showCc, setShowCc] = useState(false);
-  const [showBcc, setShowBcc] = useState(false);
+  const [cc, setCc] = useState<Recipient[]>(initialCc ?? []);
+  const [bcc, setBcc] = useState<Recipient[]>(initialBcc ?? []);
+  const [showCc, setShowCc] = useState((initialCc?.length ?? 0) > 0);
+  const [showBcc, setShowBcc] = useState((initialBcc?.length ?? 0) > 0);
   const [subject, setSubject] = useState(initialSubject);
   const [sending, setSending] = useState(false);
   const [linkPromptOpen, setLinkPromptOpen] = useState(false);

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { RiMailLine, RiMoreLine, RiStarFill, RiStarLine } from "@remixicon/react";
 import { EmptyState } from "@/components/page/EmptyState";
 import { cn } from "@/utils/cn";
+import type { EmailAddress, MessageRecipients } from "@/lib/email/recipients";
 import { InboxAvatar, fullTime } from "./shell/InboxShell";
 
 export type ThreadMessage = {
@@ -16,7 +17,17 @@ export type ThreadMessage = {
   sentAt: string | null;
   createdAt: string | null;
   important: boolean;
+  /** Who the message was addressed to, from its own headers. */
+  recipients?: MessageRecipients;
 };
+
+/** "A, B" using names where known; the full addresses go in the tooltip. */
+export function formatAddresses(list: EmailAddress[]): { text: string; title: string } {
+  return {
+    text: list.map((a) => a.name || a.email).join(", "),
+    title: list.map((a) => (a.name ? `${a.name} <${a.email}>` : a.email)).join(", "),
+  };
+}
 
 function formatTimestamp(iso: string | null): string {
   if (!iso) return "";
@@ -108,6 +119,9 @@ function MessageCard({
   const when = message.sentAt ?? message.createdAt;
   const toggle = () => setOpen((o) => !o);
   const recipient = inbound ? message.toEmail : message.toEmail ?? leadEmail;
+  const to = message.recipients?.to ?? [];
+  const cc = message.recipients?.cc ?? [];
+  const bcc = inbound ? [] : message.recipients?.bcc ?? [];
 
   return (
     <article
@@ -164,7 +178,26 @@ function MessageCard({
             </div>
           </div>
           {open ? (
-            recipient && <p className="truncate text-paragraph-xs text-text-soft-400">to {recipient}</p>
+            to.length > 0 || cc.length > 0 || bcc.length > 0 ? (
+              <div className="text-paragraph-xs text-text-soft-400">
+                {[
+                  { label: "to", list: to },
+                  { label: "cc", list: cc },
+                  { label: "bcc", list: bcc },
+                ]
+                  .filter((part) => part.list.length > 0)
+                  .map((part) => {
+                    const { text, title } = formatAddresses(part.list);
+                    return (
+                      <p key={part.label} className="truncate" title={title}>
+                        {part.label} {text}
+                      </p>
+                    );
+                  })}
+              </div>
+            ) : (
+              recipient && <p className="truncate text-paragraph-xs text-text-soft-400">to {recipient}</p>
+            )
           ) : (
             <p className="mt-0.5 truncate text-paragraph-xs text-text-sub-600">{preview || "(empty)"}</p>
           )}

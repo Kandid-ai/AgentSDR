@@ -1,4 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
+import { messageParticipants } from "./participants";
 import { formatAiInstructions } from "./ai/instructions";
 import { db } from "@/lib/db";
 import { companies, people } from "@/lib/leads/schema";
@@ -176,6 +177,7 @@ async function classificationContext(messageId: string): Promise<{
         sentAt: message.sentAt,
         subject: message.subject,
         bodyText: message.bodyText,
+        participants: messageParticipants(message),
       })),
       ...calls,
     ],
