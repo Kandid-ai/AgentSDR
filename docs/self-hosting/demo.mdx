@@ -17,7 +17,7 @@ A demo is its **own deployment with its own database**. Never set `DEMO_MODE` on
 | **Sign-in** | Anyone without a session is signed in as the demo user at `/demo` and sent where they were going. Each visitor gets a session of their own. The sign-in, sign-up and onboarding screens lead to `/demo` too. |
 | **Read-only** | Every write is refused with `403 DEMO_READ_ONLY`, and the page shows a short "read-only demo" notice. A few writes the UI makes on its own when something opens (marking a thread or chat read) answer success without doing anything, so nothing looks broken. |
 | **No background work** | The send loops, the enrichment worker and the CRM's AI worker do not start. Requests that would call a model or restart a job (`/api/qualify`, `/api/campaigns/:id/stream`, the OpenRouter model list) are refused. No cron is needed. |
-| **Banner** | A strip across the top says the data is fictional and links to GitHub and these docs. Sign out and Create organization are hidden. |
+| **Banner** | A strip across the top says the people and conversations are made up and links to GitHub and these docs. Sign out and Create organization are hidden. |
 | **Clock** | Once at boot and every hour, the demo moves every date in the database forward by the whole days since it was seeded, so "replied 2 days ago" stays true and the last-30-days charts stay full. |
 
 The LinkedIn, WhatsApp, email and R2 integrations are stored with placeholder credentials so their pages open. Nothing ever uses them. Playing a call recording does not work, because there is no audio behind it; transcripts and summaries show as normal.
@@ -70,4 +70,4 @@ Without `DEMO_MODE`, the same seed is an ordinary organization you can sign in t
 
 ## What the seed creates
 
-`scripts/db/seed-demo.ts` runs the modules in `scripts/db/demo/` against one fictional world (`content.ts`). Every company and person is invented, domains use the reserved `.example` TLD, and phone numbers are in ranges reserved for fiction. Re-running it on a seeded database does nothing.
+`scripts/db/seed-demo.ts` runs the modules in `scripts/db/demo/` against one fictional world (`content.ts`). Northwind, its team and every person are invented; the companies they prospect are real, well-known ones, so lead lists show real logos, but nobody there said anything shown. Phone numbers are in ranges reserved for fiction. Re-running it on a seeded database does nothing.

@@ -67,7 +67,8 @@ function ReadOnlyToast({ onClose }: { onClose: () => void }) {
   return (
     <div
       role="status"
-      className="fixed inset-x-4 bottom-4 z-[100] mx-auto flex max-w-md items-start gap-3 rounded-xl bg-bg-strong-950 p-3.5 text-static-white shadow-regular-md animate-in fade-in-0 slide-in-from-bottom-2 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2"
+      // static-black, not bg-strong-950: that token flips to near-white in dark mode, which left white text on a white box.
+      className="fixed inset-x-4 bottom-4 z-[100] mx-auto flex max-w-md items-start gap-3 rounded-xl bg-static-black p-3.5 text-static-white shadow-regular-md ring-1 ring-inset ring-white/10 animate-in fade-in-0 slide-in-from-bottom-2 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2"
     >
       <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/10">
         <RiLockLine className="size-4" />
@@ -102,7 +103,7 @@ export function DemoBanner() {
         </span>
         <span className="truncate">
           <span className="text-label-sm text-text-strong-950">Live demo</span>
-          <span className="hidden sm:inline"> · every person and company here is fictional, and nothing you change is saved</span>
+          <span className="hidden sm:inline"> · sample data: the people and conversations are made up, and nothing you change is saved</span>
         </span>
       </span>
       <span className="flex shrink-0 items-center gap-2">

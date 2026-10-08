@@ -2,9 +2,10 @@
  * The fictional world of the demo: the seller (Northwind), its team, the
  * companies and people it prospects, and the words everyone writes.
  *
- * Every company and person here is invented. Domains use the reserved
- * `.example` TLD (RFC 2606) so no address can belong to anyone real, and
- * phone numbers sit in the 555-0100…0199 block reserved for fiction.
+ * The seller (Northwind), its team and every person are invented. The
+ * companies they prospect are real, well-known ones, so lead lists show real
+ * logos; the people at them and everything they "say" are fictional. Phone
+ * numbers sit in the 555-0100…0199 block reserved for fiction.
  */
 
 export const ORG_NAME = "Northwind";
@@ -40,107 +41,116 @@ export type Industry =
 export type CompanySeed = {
   name: string;
   slug: string;
+  /** The real website domain: its favicon is the logo the app shows. */
+  domain: string;
   industry: Industry;
   employees: number;
   hq: string;
   country: "US" | "UK" | "DE" | "NL" | "FR" | "SE" | "IN" | "CA" | "AU" | "SG" | "ES" | "IE";
-  funding: "Bootstrapped" | "Seed" | "Series A" | "Series B" | "Series C" | "Public" | "PE-backed";
+  funding: "Bootstrapped" | "Seed" | "Series A" | "Series B" | "Series C" | "Private" | "Public" | "PE-backed";
   founded: number;
   blurb: string;
 };
 
-/** [name, industry, employees, hq, country, funding, founded, one-line description] */
-const COMPANY_ROWS: [string, Industry, number, string, CompanySeed["country"], CompanySeed["funding"], number, string][] = [
-  ["Brightloop", "B2B SaaS", 140, "Austin, TX", "US", "Series B", 2017, "Customer feedback analytics for product teams"],
-  ["Harborview Logistics", "Logistics", 620, "Seattle, WA", "US", "PE-backed", 2009, "Freight brokerage for mid-market shippers"],
-  ["Pinecrest Health", "Healthtech", 310, "Nashville, TN", "US", "Series C", 2015, "Care-coordination software for clinics"],
-  ["Quillstone", "Legal tech", 85, "London", "UK", "Series A", 2019, "Contract review for in-house legal teams"],
-  ["Redwood Robotics", "Manufacturing", 450, "Pittsburgh, PA", "US", "Series C", 2014, "Warehouse picking robots"],
-  ["Saltmarsh Foods", "E-commerce", 230, "Portland, OR", "US", "Series B", 2016, "Direct-to-consumer pantry brand"],
-  ["Tallgrass Energy", "Climate tech", 190, "Denver, CO", "US", "Series B", 2018, "Commercial solar financing"],
-  ["Umbra Security", "Cybersecurity", 260, "Tel Aviv / New York", "US", "Series C", 2016, "Identity threat detection"],
-  ["Verdant Learning", "Edtech", 120, "Toronto", "CA", "Series A", 2019, "Upskilling platform for frontline teams"],
-  ["Willowbrook Capital", "Fintech", 175, "Boston, MA", "US", "Series B", 2017, "Revenue-based financing for SaaS"],
-  ["Yarrow Mobility", "Logistics", 95, "Amsterdam", "NL", "Series A", 2020, "Fleet electrification planning"],
-  ["Zephyr Cloudworks", "Developer tools", 210, "San Francisco, CA", "US", "Series B", 2018, "Preview environments for every pull request"],
-  ["Cobalt Ledger", "Fintech", 340, "New York, NY", "US", "Series C", 2015, "Spend management for multi-entity companies"],
-  ["Fernhill Studio", "Agency", 45, "Brooklyn, NY", "US", "Bootstrapped", 2013, "Brand and growth agency for B2B startups"],
-  ["Northstar Payroll", "HR tech", 280, "Chicago, IL", "US", "Series B", 2016, "Payroll and benefits for hourly teams"],
-  ["Lumen Atlas", "Martech", 160, "Berlin", "DE", "Series B", 2017, "Account-based advertising for B2B"],
-  ["Kestrel Analytics", "B2B SaaS", 72, "Dublin", "IE", "Series A", 2020, "Usage-based billing analytics"],
-  ["Marble Health", "Healthtech", 130, "Boston, MA", "US", "Series A", 2019, "Remote monitoring for cardiac patients"],
-  ["Orchard HR", "HR tech", 110, "London", "UK", "Series A", 2018, "Onboarding software for distributed companies"],
-  ["Granite Insure", "Insurtech", 390, "Hartford, CT", "US", "PE-backed", 2011, "Commercial insurance for contractors"],
-  ["Copperline", "Developer tools", 64, "Stockholm", "SE", "Seed", 2021, "API observability for platform teams"],
-  ["Hollow Pine", "E-commerce", 88, "Asheville, NC", "US", "Bootstrapped", 2014, "Outdoor gear marketplace"],
-  ["Meridian Freight", "Logistics", 870, "Rotterdam", "NL", "PE-backed", 2006, "Cross-border freight forwarding"],
-  ["Sparrow Pay", "Fintech", 150, "Bengaluru", "IN", "Series B", 2017, "B2B payments for Indian exporters"],
-  ["Tidewater Labs", "Climate tech", 58, "San Diego, CA", "US", "Seed", 2021, "Carbon accounting for manufacturers"],
-  ["Ironbark Systems", "Cybersecurity", 520, "Reston, VA", "US", "Public", 2008, "Security operations for regulated industries"],
-  ["Bluefin Commerce", "E-commerce", 205, "Miami, FL", "US", "Series B", 2016, "Headless storefronts for retail brands"],
-  ["Hearth Property", "Proptech", 140, "Atlanta, GA", "US", "Series A", 2018, "Maintenance software for property managers"],
-  ["Lattice Bridge", "B2B SaaS", 330, "Sydney", "AU", "Series C", 2014, "Partner relationship management"],
-  ["Mosaic Learning", "Edtech", 76, "Pune", "IN", "Series A", 2019, "Coding bootcamps for working engineers"],
-  ["Northgate Analytics", "B2B SaaS", 115, "Minneapolis, MN", "US", "Series A", 2018, "Forecasting for subscription businesses"],
-  ["Pebble Finance", "Fintech", 62, "London", "UK", "Seed", 2021, "Treasury automation for startups"],
-  ["Quartz Medical", "Healthtech", 290, "San Jose, CA", "US", "Series C", 2013, "Imaging AI for radiology groups"],
-  ["Riverbend Supply", "Manufacturing", 740, "Columbus, OH", "US", "PE-backed", 2002, "Industrial packaging supplier"],
-  ["Silverleaf Marketing", "Agency", 38, "Manchester", "UK", "Bootstrapped", 2015, "Demand generation agency"],
-  ["Thistle Data", "Developer tools", 92, "Edinburgh", "UK", "Series A", 2019, "Data quality monitoring"],
-  ["Upland Grid", "Climate tech", 240, "Houston, TX", "US", "Series B", 2017, "Battery storage for utilities"],
-  ["Vantage Freight", "Logistics", 180, "Dallas, TX", "US", "Series B", 2016, "Digital freight matching"],
-  ["Wren Insurance", "Insurtech", 125, "Toronto", "CA", "Series A", 2019, "Embedded insurance for marketplaces"],
-  ["Alder Analytics", "B2B SaaS", 54, "Raleigh, NC", "US", "Seed", 2021, "Product analytics for B2B apps"],
-  ["Beacon Hiring", "HR tech", 145, "Denver, CO", "US", "Series B", 2017, "Structured interviewing software"],
-  ["Cinder Security", "Cybersecurity", 88, "Munich", "DE", "Series A", 2020, "Cloud posture management"],
-  ["Driftwood Travel", "E-commerce", 160, "Barcelona", "ES", "Series A", 2018, "Corporate travel booking"],
-  ["Evergreen Clinics", "Healthtech", 560, "Phoenix, AZ", "US", "PE-backed", 2010, "Multi-site primary care group"],
-  ["Foxglove CRM", "B2B SaaS", 70, "Paris", "FR", "Series A", 2019, "CRM for real-estate agencies"],
-  ["Glasshouse Media", "Martech", 98, "Los Angeles, CA", "US", "Series A", 2018, "Creator partnerships platform"],
-  ["Halcyon Billing", "Fintech", 132, "Singapore", "SG", "Series B", 2017, "Invoicing for APAC distributors"],
-  ["Indigo Freightworks", "Logistics", 310, "Mumbai", "IN", "Series C", 2015, "Trucking marketplace"],
-  ["Juniper Legal", "Legal tech", 66, "Chicago, IL", "US", "Seed", 2021, "Matter intake for law firms"],
-  ["Kite Analytics", "Martech", 112, "Amsterdam", "NL", "Series A", 2018, "Attribution for B2B marketing teams"],
-  ["Larkspur Labs", "Developer tools", 48, "Portland, OR", "US", "Seed", 2022, "Feature flags for mobile apps"],
-  ["Moonrise Energy", "Climate tech", 175, "Oakland, CA", "US", "Series B", 2016, "EV charging for fleets"],
-  ["Nimbus Payroll", "HR tech", 92, "Melbourne", "AU", "Series A", 2019, "Payroll for agencies and studios"],
-  ["Oakridge Manufacturing", "Manufacturing", 980, "Grand Rapids, MI", "US", "PE-backed", 1998, "Precision metal components"],
-  ["Pillar Insurance", "Insurtech", 210, "Charlotte, NC", "US", "Series B", 2016, "Small-business insurance"],
-  ["Quay Commerce", "E-commerce", 74, "Dublin", "IE", "Seed", 2021, "Returns management for Shopify brands"],
-  ["Rainier Cloud", "Developer tools", 260, "Seattle, WA", "US", "Series C", 2014, "Managed Postgres for SaaS"],
-  ["Sable Health", "Healthtech", 86, "Philadelphia, PA", "US", "Series A", 2020, "Behavioral health scheduling"],
-  ["Tamarack Partners", "Agency", 52, "Vancouver", "CA", "Bootstrapped", 2012, "Revenue operations consultancy"],
-  ["Ultraviolet Ads", "Martech", 140, "New York, NY", "US", "Series B", 2017, "Programmatic CTV advertising"],
-  ["Vireo Learning", "Edtech", 190, "Austin, TX", "US", "Series B", 2016, "Compliance training for enterprises"],
-  ["Westwind Logistics", "Logistics", 420, "Los Angeles, CA", "US", "PE-backed", 2008, "Last-mile delivery for retailers"],
-  ["Xenon Robotics", "Manufacturing", 135, "Eindhoven", "NL", "Series A", 2019, "Inspection drones for factories"],
-  ["Yellowpine Software", "B2B SaaS", 230, "Salt Lake City, UT", "US", "Series B", 2015, "Field service management"],
-  ["Zinnia Commerce", "E-commerce", 58, "Hyderabad", "IN", "Seed", 2021, "Wholesale ordering for D2C brands"],
-  ["Aspen Ridge Bank", "Fintech", 760, "Denver, CO", "US", "Public", 2001, "Digital banking for small businesses"],
-  ["Blackthorn Cyber", "Cybersecurity", 175, "London", "UK", "Series B", 2017, "Phishing simulation and training"],
-  ["Clearwater Analytics Co", "B2B SaaS", 410, "Boise, ID", "US", "Series C", 2012, "Reporting for investment managers"],
-  ["Dune Studio", "Agency", 28, "Lisbon", "ES", "Bootstrapped", 2018, "Product design studio"],
-  ["Elmstead Property", "Proptech", 98, "Manchester", "UK", "Series A", 2019, "Tenant experience apps"],
-  ["Fable Health", "Healthtech", 150, "Austin, TX", "US", "Series B", 2017, "Pediatric telehealth"],
-  ["Gullwing Data", "Developer tools", 120, "Toronto", "CA", "Series A", 2018, "Reverse ETL for revenue teams"],
-  ["Heron Payments", "Fintech", 95, "Stockholm", "SE", "Series A", 2019, "Payouts for gig platforms"],
-  ["Ivy Recruit", "HR tech", 64, "Bengaluru", "IN", "Seed", 2021, "Campus hiring software"],
-  ["Jetstream Freight", "Logistics", 230, "Atlanta, GA", "US", "Series B", 2016, "Air cargo booking"],
-  ["Keystone Learning", "Edtech", 310, "Philadelphia, PA", "US", "PE-backed", 2007, "K-12 assessment platform"],
-  ["Lodestar Security", "Cybersecurity", 66, "Austin, TX", "US", "Seed", 2022, "Secrets scanning for CI pipelines"],
-  ["Magnolia Home", "Proptech", 180, "Houston, TX", "US", "Series B", 2016, "Home-services marketplace"],
-  ["Nettle Insurance", "Insurtech", 82, "Berlin", "DE", "Series A", 2020, "Cyber insurance for SMBs"],
-  ["Opal Commerce", "E-commerce", 115, "Sydney", "AU", "Series A", 2018, "Subscription commerce platform"],
-  ["Prairie Analytics", "B2B SaaS", 46, "Omaha, NE", "US", "Seed", 2021, "Pricing analytics for B2B sellers"],
-  ["Ridgeline Ops", "B2B SaaS", 128, "Boulder, CO", "US", "Series A", 2018, "Incident management for IT teams"],
-  ["Summit Legal", "Legal tech", 140, "Washington, DC", "US", "Series B", 2016, "eDiscovery for mid-size firms"],
+/**
+ * [name, domain, industry, employees, hq, country, funding, founded, one-line description].
+ * Real, well-known companies, so the lead lists show their real logos (the
+ * app fetches each domain's favicon). Headcounts and details are rough public
+ * figures; the people at them and everything they "say" are invented.
+ */
+const COMPANY_ROWS: [string, string, Industry, number, string, CompanySeed["country"], CompanySeed["funding"], number, string][] = [
+  ["Google", "google.com", "B2B SaaS", 182000, "Mountain View, CA", "US", "Public", 1998, "Search, ads, cloud and workspace software"],
+  ["Microsoft", "microsoft.com", "B2B SaaS", 228000, "Redmond, WA", "US", "Public", 1975, "Cloud, productivity and developer platforms"],
+  ["Amazon", "amazon.com", "E-commerce", 1500000, "Seattle, WA", "US", "Public", 1994, "Online retail and cloud infrastructure"],
+  ["Salesforce", "salesforce.com", "B2B SaaS", 72000, "San Francisco, CA", "US", "Public", 1999, "CRM and customer platforms"],
+  ["HubSpot", "hubspot.com", "Martech", 8000, "Cambridge, MA", "US", "Public", 2006, "CRM, marketing and sales software for growing teams"],
+  ["Stripe", "stripe.com", "Fintech", 8500, "San Francisco, CA", "US", "Private", 2010, "Payments infrastructure for the internet"],
+  ["Shopify", "shopify.com", "E-commerce", 8100, "Ottawa", "CA", "Public", 2006, "Commerce platform for online and retail stores"],
+  ["Notion", "notion.so", "B2B SaaS", 800, "San Francisco, CA", "US", "Private", 2013, "Connected workspace for docs, wikis and projects"],
+  ["Figma", "figma.com", "B2B SaaS", 1600, "San Francisco, CA", "US", "Public", 2012, "Collaborative design and prototyping"],
+  ["Slack", "slack.com", "B2B SaaS", 2500, "San Francisco, CA", "US", "Public", 2009, "Messaging for work"],
+  ["Zoom", "zoom.us", "B2B SaaS", 7400, "San Jose, CA", "US", "Public", 2011, "Video meetings, phone and contact center"],
+  ["Atlassian", "atlassian.com", "Developer tools", 12000, "Sydney", "AU", "Public", 2002, "Team collaboration and software development tools"],
+  ["Canva", "canva.com", "Martech", 5000, "Sydney", "AU", "Private", 2012, "Online design for everyone"],
+  ["Datadog", "datadoghq.com", "Developer tools", 6500, "New York, NY", "US", "Public", 2010, "Monitoring and security for cloud apps"],
+  ["Snowflake", "snowflake.com", "Developer tools", 7800, "Bozeman, MT", "US", "Public", 2012, "The data cloud"],
+  ["MongoDB", "mongodb.com", "Developer tools", 5000, "New York, NY", "US", "Public", 2007, "Developer data platform"],
+  ["Twilio", "twilio.com", "Developer tools", 5500, "San Francisco, CA", "US", "Public", 2008, "Customer engagement APIs: SMS, voice, email"],
+  ["Cloudflare", "cloudflare.com", "Cybersecurity", 4000, "San Francisco, CA", "US", "Public", 2009, "Connectivity cloud: security, performance, networking"],
+  ["GitLab", "gitlab.com", "Developer tools", 2100, "San Francisco, CA", "US", "Public", 2011, "DevSecOps platform"],
+  ["Vercel", "vercel.com", "Developer tools", 650, "San Francisco, CA", "US", "Private", 2015, "Frontend cloud for building and deploying web apps"],
+  ["Supabase", "supabase.com", "Developer tools", 150, "Singapore", "SG", "Private", 2020, "Open-source Postgres development platform"],
+  ["Postman", "postman.com", "Developer tools", 800, "San Francisco, CA", "US", "Private", 2014, "API development platform"],
+  ["Asana", "asana.com", "B2B SaaS", 1800, "San Francisco, CA", "US", "Public", 2008, "Work management for teams"],
+  ["Monday.com", "monday.com", "B2B SaaS", 2300, "Tel Aviv / New York", "US", "Public", 2012, "Work operating system"],
+  ["Airtable", "airtable.com", "B2B SaaS", 900, "San Francisco, CA", "US", "Private", 2012, "Build apps on top of shared data"],
+  ["Miro", "miro.com", "B2B SaaS", 1800, "Amsterdam", "NL", "Private", 2011, "Visual collaboration workspace"],
+  ["Intercom", "intercom.com", "B2B SaaS", 1000, "Dublin", "IE", "Private", 2011, "AI-first customer service platform"],
+  ["Zendesk", "zendesk.com", "B2B SaaS", 6000, "San Francisco, CA", "US", "PE-backed", 2007, "Customer service software"],
+  ["Freshworks", "freshworks.com", "B2B SaaS", 4500, "Chennai / San Mateo", "IN", "Public", 2010, "Customer and employee service software"],
+  ["Calendly", "calendly.com", "B2B SaaS", 600, "Atlanta, GA", "US", "Series B", 2013, "Scheduling automation"],
+  ["Dropbox", "dropbox.com", "B2B SaaS", 2700, "San Francisco, CA", "US", "Public", 2007, "File storage, sharing and e-signature"],
+  ["Zapier", "zapier.com", "B2B SaaS", 800, "San Francisco, CA", "US", "Bootstrapped", 2011, "No-code automation across apps"],
+  ["Webflow", "webflow.com", "Martech", 700, "San Francisco, CA", "US", "Private", 2013, "Visual web development platform"],
+  ["Mailchimp", "mailchimp.com", "Martech", 1200, "Atlanta, GA", "US", "Public", 2001, "Email marketing and automation"],
+  ["Semrush", "semrush.com", "Martech", 1500, "Boston, MA", "US", "Public", 2008, "Online visibility and SEO platform"],
+  ["Hootsuite", "hootsuite.com", "Martech", 1000, "Vancouver", "CA", "Private", 2008, "Social media management"],
+  ["Okta", "okta.com", "Cybersecurity", 5900, "San Francisco, CA", "US", "Public", 2009, "Identity for workforce and customers"],
+  ["CrowdStrike", "crowdstrike.com", "Cybersecurity", 9000, "Austin, TX", "US", "Public", 2011, "Endpoint and cloud security"],
+  ["Palo Alto Networks", "paloaltonetworks.com", "Cybersecurity", 15000, "Santa Clara, CA", "US", "Public", 2005, "Network and cloud security"],
+  ["1Password", "1password.com", "Cybersecurity", 1200, "Toronto", "CA", "Private", 2005, "Password and identity security"],
+  ["Zscaler", "zscaler.com", "Cybersecurity", 7300, "San Jose, CA", "US", "Public", 2007, "Zero-trust cloud security"],
+  ["Plaid", "plaid.com", "Fintech", 1200, "San Francisco, CA", "US", "Private", 2013, "Financial data network"],
+  ["Brex", "brex.com", "Fintech", 1100, "San Francisco, CA", "US", "Private", 2017, "Corporate cards and spend management"],
+  ["Ramp", "ramp.com", "Fintech", 1000, "New York, NY", "US", "Private", 2019, "Finance automation and corporate cards"],
+  ["Revolut", "revolut.com", "Fintech", 10000, "London", "UK", "Private", 2015, "Global financial super-app"],
+  ["Wise", "wise.com", "Fintech", 6000, "London", "UK", "Public", 2011, "International money transfers"],
+  ["Klarna", "klarna.com", "Fintech", 3500, "Stockholm", "SE", "Public", 2005, "Payments and shopping"],
+  ["Adyen", "adyen.com", "Fintech", 4300, "Amsterdam", "NL", "Public", 2006, "Global payments platform"],
+  ["Coinbase", "coinbase.com", "Fintech", 3700, "San Francisco, CA", "US", "Public", 2012, "Crypto exchange and infrastructure"],
+  ["Razorpay", "razorpay.com", "Fintech", 3000, "Bengaluru", "IN", "Private", 2014, "Payments and banking for businesses"],
+  ["Rippling", "rippling.com", "HR tech", 4000, "San Francisco, CA", "US", "Private", 2016, "HR, IT and finance in one place"],
+  ["Gusto", "gusto.com", "HR tech", 2500, "San Francisco, CA", "US", "Private", 2011, "Payroll and HR for small businesses"],
+  ["Deel", "deel.com", "HR tech", 4500, "San Francisco, CA", "US", "Private", 2019, "Global hiring and payroll"],
+  ["Workday", "workday.com", "HR tech", 18000, "Pleasanton, CA", "US", "Public", 2005, "Finance and HR cloud"],
+  ["Greenhouse", "greenhouse.com", "HR tech", 900, "New York, NY", "US", "PE-backed", 2012, "Hiring software"],
+  ["Lattice", "lattice.com", "HR tech", 500, "San Francisco, CA", "US", "Private", 2015, "People management platform"],
+  ["Duolingo", "duolingo.com", "Edtech", 800, "Pittsburgh, PA", "US", "Public", 2011, "Language learning app"],
+  ["Coursera", "coursera.org", "Edtech", 1300, "Mountain View, CA", "US", "Public", 2012, "Online courses and degrees"],
+  ["Udemy", "udemy.com", "Edtech", 1400, "San Francisco, CA", "US", "Public", 2010, "Online learning marketplace"],
+  ["Airbnb", "airbnb.com", "Proptech", 7000, "San Francisco, CA", "US", "Public", 2008, "Stays and experiences marketplace"],
+  ["Zillow", "zillow.com", "Proptech", 6800, "Seattle, WA", "US", "Public", 2006, "Real estate marketplace"],
+  ["Opendoor", "opendoor.com", "Proptech", 1500, "San Francisco, CA", "US", "Public", 2014, "Digital home buying and selling"],
+  ["Uber", "uber.com", "Logistics", 31000, "San Francisco, CA", "US", "Public", 2009, "Rides, delivery and freight"],
+  ["DoorDash", "doordash.com", "Logistics", 19000, "San Francisco, CA", "US", "Public", 2013, "Local delivery platform"],
+  ["Flexport", "flexport.com", "Logistics", 2500, "San Francisco, CA", "US", "Private", 2013, "Global freight and supply chain platform"],
+  ["Instacart", "instacart.com", "E-commerce", 3300, "San Francisco, CA", "US", "Public", 2012, "Grocery delivery and pickup"],
+  ["Etsy", "etsy.com", "E-commerce", 2400, "Brooklyn, NY", "US", "Public", 2005, "Marketplace for creative goods"],
+  ["Wayfair", "wayfair.com", "E-commerce", 12000, "Boston, MA", "US", "Public", 2002, "Online home goods retailer"],
+  ["Zalando", "zalando.com", "E-commerce", 15000, "Berlin", "DE", "Public", 2008, "Online fashion platform"],
+  ["Spotify", "spotify.com", "B2B SaaS", 7300, "Stockholm", "SE", "Public", 2006, "Audio streaming"],
+  ["Tesla", "tesla.com", "Climate tech", 125000, "Austin, TX", "US", "Public", 2003, "Electric vehicles and energy storage"],
+  ["Enphase Energy", "enphase.com", "Climate tech", 3100, "Fremont, CA", "US", "Public", 2006, "Solar microinverters and home energy"],
+  ["Sunrun", "sunrun.com", "Climate tech", 10000, "San Francisco, CA", "US", "Public", 2007, "Residential solar and batteries"],
+  ["Siemens", "siemens.com", "Manufacturing", 320000, "Munich", "DE", "Public", 1847, "Industrial automation and infrastructure"],
+  ["Bosch", "bosch.com", "Manufacturing", 420000, "Gerlingen", "DE", "Private", 1886, "Engineering and technology"],
+  ["Oscar Health", "hioscar.com", "Insurtech", 2400, "New York, NY", "US", "Public", 2012, "Technology-driven health insurance"],
+  ["Lemonade", "lemonade.com", "Insurtech", 1300, "New York, NY", "US", "Public", 2015, "AI-powered insurance"],
+  ["Doctolib", "doctolib.fr", "Healthtech", 2800, "Paris", "FR", "Private", 2013, "Medical appointments and practice software"],
+  ["Zocdoc", "zocdoc.com", "Healthtech", 900, "New York, NY", "US", "Private", 2007, "Find and book doctors"],
+  ["Teladoc Health", "teladochealth.com", "Healthtech", 5600, "Purchase, NY", "US", "Public", 2002, "Virtual care"],
+  ["DocuSign", "docusign.com", "Legal tech", 6800, "San Francisco, CA", "US", "Public", 2003, "Electronic signature and agreements"],
+  ["Clio", "clio.com", "Legal tech", 1200, "Burnaby", "CA", "Private", 2008, "Legal practice management"],
+  ["Ironclad", "ironcladapp.com", "Legal tech", 600, "San Francisco, CA", "US", "Private", 2014, "Contract lifecycle management"],
+  ["WPP", "wpp.com", "Agency", 110000, "London", "UK", "Public", 1985, "Creative transformation company"],
 ];
 
 const slugify = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
 
-export const COMPANIES: CompanySeed[] = COMPANY_ROWS.map(([name, industry, employees, hq, country, funding, founded, blurb]) => ({
+export const COMPANIES: CompanySeed[] = COMPANY_ROWS.map(([name, domain, industry, employees, hq, country, funding, founded, blurb]) => ({
   name,
   slug: slugify(name),
+  domain,
   industry,
   employees,
   hq,
@@ -150,7 +160,7 @@ export const COMPANIES: CompanySeed[] = COMPANY_ROWS.map(([name, industry, emplo
   blurb,
 }));
 
-export const companyDomain = (c: CompanySeed) => `${c.slug}.example`;
+export const companyDomain = (c: CompanySeed) => c.domain;
 
 export const FEMALE_FIRST = [
   "Ava", "Noor", "Elena", "Hana", "Maya", "Ingrid", "Sana", "Leila", "Greta", "Chloe", "Zara", "Mei", "Amara", "Nia",

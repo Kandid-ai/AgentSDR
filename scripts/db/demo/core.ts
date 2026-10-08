@@ -122,7 +122,7 @@ async function seedLeadDatabase(ctx: DemoContext) {
           organizationId: orgId,
           domain: companyDomain(c),
           name: c.name,
-          linkedinUrl: `https://www.linkedin.com/company/${c.slug}-demo`,
+          linkedinUrl: `https://www.linkedin.com/company/${c.slug}`,
           custom: {
             [industry.key]: c.industry,
             [employees.key]: c.employees,
@@ -172,20 +172,21 @@ async function seedLeadDatabase(ctx: DemoContext) {
     };
   });
 
-  // Pools: disjoint slices. LinkedIn first gets most of the portraits.
+  // Pools: disjoint slices of the same people.
   const emailSlice = drafts.slice(0, POOL_SIZES.email);
   const linkedinSlice = drafts.slice(POOL_SIZES.email, POOL_SIZES.email + POOL_SIZES.linkedin);
   const whatsappSlice = drafts.slice(POOL_SIZES.email + POOL_SIZES.linkedin, POOL_SIZES.email + POOL_SIZES.linkedin + POOL_SIZES.whatsapp);
 
-  const portraits = { female: freePortraits("women"), male: freePortraits("men") };
-  const avatarFor = (p: (typeof drafts)[number]) => {
-    const pool = portraits[p.gender];
-    const n = pool.shift();
-    return n === undefined ? null : `https://randomuser.me/api/portraits/${p.gender === "female" ? "women" : "men"}/${n}.jpg`;
-  };
+  // Everyone gets a portrait. There are ~98 per gender, so a face comes back
+  // only after every other one of that gender has been used: ~200 people apart.
+  const portraits = { female: rand.shuffle(freePortraits("women")), male: rand.shuffle(freePortraits("men")) };
+  const used = { female: 0, male: 0 };
   const avatars = new Map<(typeof drafts)[number], string | null>();
-  linkedinSlice.forEach((p, i) => avatars.set(p, i % 10 < 7 ? avatarFor(p) : null));
-  whatsappSlice.forEach((p, i) => avatars.set(p, i % 3 === 0 ? avatarFor(p) : null));
+  for (const p of drafts) {
+    const pool = portraits[p.gender];
+    const n = pool[used[p.gender]++ % pool.length];
+    avatars.set(p, `https://randomuser.me/api/portraits/${p.gender === "female" ? "women" : "men"}/${n}.jpg`);
+  }
 
   let usPhone = 0;
   let ukPhone = 0;

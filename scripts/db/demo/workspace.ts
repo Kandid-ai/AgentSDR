@@ -198,36 +198,21 @@ const WHY_BY_FUNDING: Record<string, ((c: Account, w: string) => string)[]> = {
     (c) => `Running separate SDR teams per segment at ${c.employees} people, a good moment to standardise how those teams prospect.`,
   ],
   Public: [
-    (c) => `Public company with ${c.employees} people; the last earnings call mentioned sales efficiency and a push to lift outbound productivity.`,
-    (c) => `Listed, ${c.employees} people, and new-logo growth is the stated priority for next year, so SDR productivity is under review.`,
+    (c) => `Public company with about ${c.employees.toLocaleString("en-US")} people; at that size several SDR teams usually prospect in parallel, so a shared view of who to contact pays off quickly.`,
+    (c) => `Large, listed and selling ${lcFirst(c.blurb)}; new-logo teams this big tend to measure SDR productivity closely, a natural opening for better prioritisation.`,
+  ],
+  Private: [
+    (c) => `Late-stage private company with about ${c.employees.toLocaleString("en-US")} people; scaling outbound across regions without adding headcount is the usual priority at this stage.`,
+    (c) => `Private and growing, selling ${lcFirst(c.blurb)}; teams like this usually run outbound per segment, which makes consistent account research worth standardising.`,
   ],
   "PE-backed": [
-    (c, w) => `Sponsor-backed and told to improve cost per meeting; changed its operating partner ${w}, a typical trigger for tooling consolidation.`,
-    (c) => `PE-owned with ${c.employees} people and a margin target, so replacing manual prospecting with automation is an easy case to make.`,
+    (c) => `Owned by a private-equity sponsor with about ${c.employees.toLocaleString("en-US")} people; efficiency targets usually make cost per meeting a board-level number.`,
+    (c) => `Sponsor-backed and selling ${lcFirst(c.blurb)}; replacing manual prospecting with automation is typically an easy case to make here.`,
   ],
   Bootstrapped: [
     (c) => `Profitable and bootstrapped for ${new Date().getFullYear() - c.founded} years; referrals have flattened and outbound is the next lever.`,
     (c) => `Self-funded and ${c.employees} people strong; growth has come from word of mouth, but the market for ${lcFirst(c.blurb)} is getting crowded.`,
   ],
-};
-
-const HOOK_BY_INDUSTRY: Record<string, string[]> = {
-  "B2B SaaS": ["Their pricing page now has a usage-based tier, which usually signals a sales-motion change.", "Hiring a RevOps manager right now."],
-  Fintech: ["Just announced a banking partner, so a new wave of enterprise prospects is coming.", "Compliance hiring is up, which tends to precede a push upmarket."],
-  Healthtech: ["A new health-system customer was announced last month and the sales team is asking for referrals.", "Hiring a regional sales director for the Midwest."],
-  Logistics: ["Opened a second distribution hub, so new lanes need new shippers.", "Quote volume is seasonal, so Q4 outbound has to start now."],
-  "E-commerce": ["Wholesale is a new line for them and nobody owns outreach yet.", "Holiday launch is eight weeks out and the wholesale calendar fills early."],
-  Cybersecurity: ["Posted a SOC 2 Type II badge, which unblocks mid-market deals.", "Two new channel-partner announcements this quarter."],
-  "Developer tools": ["Open-source usage is climbing and the paid conversion path has no sales owner yet.", "Launched a team plan last month."],
-  "HR tech": ["Hiring seasonality means demos cluster in January, so pipeline has to be built in Q4.", "New CHRO-level buyers are showing up in their webinar attendee lists."],
-  Martech: ["Moving from product-led to sales-assisted, per their latest job posts.", "A competitor was acquired, so customers are open to a second look."],
-  Edtech: ["District budgets reset in the spring, which makes autumn the window to get on shortlists.", "Added a K-12 partnerships lead."],
-  Proptech: ["Property-manager adoption is picking up with the rate cycle easing.", "Announced a portfolio customer with more than 10k units."],
-  "Climate tech": ["New incentives landed this quarter and commercial installers are asking for quotes.", "Project pipeline is lumpy, so steady outbound smooths it out."],
-  Manufacturing: ["Opened a second plant and is selling the added capacity.", "Trade-show season is over; the follow-up window is now."],
-  Agency: ["Lost a large retainer recently and is rebuilding new-business.", "Added a head of growth to the leadership page."],
-  Insurtech: ["Filed in three new states, which opens carrier conversations.", "Renewal season starts in January and brokers decide in Q4."],
-  "Legal tech": ["General counsel buyers cite the 'do more with less' budget memo.", "Two law-firm pilots were announced this quarter."],
 };
 
 const ANGLE_BY_INDUSTRY: Record<string, string[]> = {
@@ -338,7 +323,7 @@ function icpScore(ctx: DemoContext, c: Account): number {
     Insurtech: 4, Edtech: 2, Proptech: 4, Logistics: 1, "E-commerce": 0, "Climate tech": -2, Manufacturing: -5, Agency: 6,
   };
   const size = c.employees >= 100 && c.employees <= 700 ? 14 : c.employees > 700 ? 5 : c.employees >= 40 ? 6 : -4;
-  const funding: Record<string, number> = { "Series B": 9, "Series A": 7, "Series C": 6, Seed: 2, "PE-backed": 3, Public: 1, Bootstrapped: 0 };
+  const funding: Record<string, number> = { "Series B": 9, "Series A": 7, "Series C": 6, Private: 5, Seed: 2, "PE-backed": 3, Public: 1, Bootstrapped: 0 };
   const raw = 52 + (fit[c.industry] ?? 0) + size + (funding[c.funding] ?? 0) + ctx.rand.int(-9, 13);
   return Math.max(28, Math.min(97, raw));
 }
@@ -356,8 +341,9 @@ function pickAngle(ctx: DemoContext, c: Account): string {
 function whyNow(ctx: DemoContext, c: Account, seen: Set<string>): { why: string; angle: string } {
   const pool = WHY_BY_FUNDING[c.funding] ?? WHY_BY_FUNDING["Series B"];
   for (let attempt = 0; attempt < 40; attempt++) {
-    let why = ctx.rand.pick(pool)(c, ctx.rand.pick(WHEN));
-    if (ctx.rand.chance(0.6)) why += ` ${ctx.rand.pick(HOOK_BY_INDUSTRY[c.industry])}`;
+    const why = ctx.rand.pick(pool)(c, ctx.rand.pick(WHEN));
+    // Industry hooks stated invented facts ("hiring a RevOps manager right now"); the
+    // accounts are real companies now, so the sentence stays general reasoning.
     if (!seen.has(why)) {
       seen.add(why);
       return { why, angle: pickAngle(ctx, c) };
