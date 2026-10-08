@@ -11,12 +11,25 @@ export const dynamic = "force-dynamic";
  * gets a session of their own, so nobody signs anyone else out. The proxy
  * sends every sign-in screen and every visitor without a session here.
  */
+/**
+ * The address the visitor used. Behind a reverse proxy (Dokploy's Traefik)
+ * the request's own origin is the container's, http://0.0.0.0:3000, so it
+ * comes from BETTER_AUTH_URL, else the proxy's forwarded headers.
+ */
+function publicOrigin(request: NextRequest): string {
+  const configured = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  if (configured) return new URL(configured).origin;
+  const host = request.headers.get("x-forwarded-host");
+  if (host) return `${request.headers.get("x-forwarded-proto") ?? "https"}://${host}`;
+  return request.nextUrl.origin;
+}
+
 export async function GET(request: NextRequest) {
   if (!isDemoMode()) return new NextResponse("Not found", { status: 404 });
 
-  const target = new URL(safeFrom(request.nextUrl.searchParams.get("from")) ?? "/analytics", request.nextUrl.origin);
+  const target = new URL(safeFrom(request.nextUrl.searchParams.get("from")) ?? "/analytics", publicOrigin(request));
   // Never loop back into the door itself.
-  if (target.pathname === "/demo") target.pathname = "/analytics";
+  if (target.pathname === "/demo") target.href = new URL("/analytics", target).href;
 
   try {
     const { headers } = await auth.api.signInEmail({
