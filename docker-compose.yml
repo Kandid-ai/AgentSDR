@@ -1,69 +1,119 @@
-# Self-host AgentSDR with Docker Compose.
+# Self-host AgentSDR with Docker Compose. This one file is all you need:
 #
-#   cp .env.example .env      # set the REQUIRED values (see docs/self-hosting.md)
-#   docker compose up -d      # builds the image, creates the schema, starts the app
+#   curl -O https://raw.githubusercontent.com/Kandid-ai/AgentSDR/main/docker-compose.yml
+#   docker compose up -d
 #
-# Then open http://localhost:3000 (or your BETTER_AUTH_URL), sign up and
-# create your organization. Full guide: docs/self-hosting.md.
+# Then open http://localhost:3000: the setup page creates your admin account
+# and organization. No .env file, no repository checkout.
+#
+# On a domain: put APP_URL=https://sdr.example.com in a .env file next to this
+# one (or export it), behind your own HTTPS reverse proxy. PORT changes the
+# host port (default 3000). RESEND_API_KEY (and AUTH_EMAIL_FROM) is needed only
+# to email invitations and password resets; see docs/self-hosting.md.
+#
+# Secrets are generated on the first start and kept in the `secrets` volume.
+# To use your own instead, set any of BETTER_AUTH_SECRET,
+# INTEGRATION_CREDENTIALS_KEY, UNSUBSCRIBE_SECRET, CRON_SECRET,
+# OUTREACH_TICK_SECRET in .env: a value you set always wins. Every other
+# variable in .env.example works the same way (an optional .env is read).
+#
+# !! BACK UP BOTH VOLUMES: `db-data` (the database) AND `secrets`.
+# !! INTEGRATION_CREDENTIALS_KEY lives in `secrets` and decrypts every saved
+# !! integration credential; a database restored without it cannot read them.
+# !! `docker compose down -v` deletes both.
+#
+# Pin a release with AGENTSDR_VERSION=0.1.0. To build from source instead:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# Your own PostgreSQL: see docker-compose.external-db.yml. Needs Compose 2.24+.
 
 name: agentsdr
 
+x-agentsdr: &agentsdr
+  image: ghcr.io/kandid-ai/agentsdr:${AGENTSDR_VERSION:-latest}
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    - secrets:/var/lib/agentsdr
+
 services:
+  # One-shot: generates the secrets file on the first start. Every other
+  # service waits for it, so exactly one writer ever runs.
+  init:
+    <<: *agentsdr
+    command: ["true"]
+    restart: "no"
+
   db:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: agentsdr
       POSTGRES_USER: agentsdr
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD_FILE: /run/agentsdr/postgres-password
     volumes:
       - db-data:/var/lib/postgresql
+      - secrets:/run/agentsdr:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agentsdr -d agentsdr"]
       interval: 5s
       timeout: 5s
       retries: 20
+    depends_on:
+      init:
+        condition: service_completed_successfully
 
   # One-shot: creates the schema in an empty database; a no-op afterwards.
   setup:
-    build: .
-    image: agentsdr:local
+    <<: *agentsdr
     command: ["bun", "scripts/db/setup.ts", "--if-empty"]
-    environment: &db-env
-      DATABASE_URL: postgres://agentsdr:${POSTGRES_PASSWORD}@db:5432/agentsdr
+    restart: "no"
+    environment: &bundled-db
+      # Bundled database: the entrypoint builds DATABASE_URL from the generated
+      # password. Blank here so a DATABASE_URL left in an older .env (copied
+      # from .env.example, pointing at localhost) cannot win.
+      # docker-compose.external-db.yml sets it instead.
+      DATABASE_URL: ""
       DATABASE_SSL: disable
     depends_on:
+      init:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
-    restart: "no"
 
   app:
-    image: agentsdr:local
+    <<: *agentsdr
     restart: unless-stopped
-    env_file: .env
     environment:
-      <<: *db-env
+      <<: *bundled-db
+      APP_URL: ${APP_URL:-http://localhost:${PORT:-3000}}
+      PORT: "3000"
     ports:
       - "${PORT:-3000}:3000"
     depends_on:
+      init:
+        condition: service_completed_successfully
       setup:
         condition: service_completed_successfully
 
-  # Calls the scheduled job endpoints (docker/cron/crontab). The send loop
-  # itself runs inside the app; these are the daily and periodic jobs.
+  # Calls the scheduled job endpoints (docker/cron/crontab, inside the image).
+  # The send loop itself runs inside the app; these are the daily and periodic
+  # jobs. Runs as root because busybox crond must (it only reads the secrets).
   cron:
-    image: alpine:3.22
+    <<: *agentsdr
+    user: root
     restart: unless-stopped
     environment:
-      APP_URL: http://app:3000
-      CRON_SECRET: ${CRON_SECRET:?Set CRON_SECRET in .env}
-      OUTREACH_TICK_SECRET: ${OUTREACH_TICK_SECRET:?Set OUTREACH_TICK_SECRET in .env}
+      INTERNAL_URL: http://app:3000
     volumes:
-      - ./docker/cron/crontab:/etc/agentsdr/crontab:ro
-      - ./docker/cron/entrypoint.sh:/entrypoint.sh:ro
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+      - secrets:/var/lib/agentsdr:ro
+    command: ["sh", "/etc/agentsdr/cron-entrypoint.sh"]
     depends_on:
-      - app
+      init:
+        condition: service_completed_successfully
+      app:
+        condition: service_started
 
 volumes:
   db-data:
+  secrets:

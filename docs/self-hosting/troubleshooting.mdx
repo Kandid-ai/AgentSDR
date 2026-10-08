@@ -24,12 +24,12 @@ Find the message you see, then follow cause and fix. Messages are quoted exactly
   <Accordion title="DATABASE_URL is not set — copy .env.example to .env.local and fill it in">
     **Cause:** The process cannot see `DATABASE_URL`. From source the file is `.env.local` in the repository root, and you must run the command from there. On Dokploy the variable is missing from the Environment tab or the app was not redeployed.
 
-    **Fix:** Set it and restart. With Compose `.env` is used and the URL is built for you from `POSTGRES_PASSWORD`.
+    **Fix:** Set it and restart. With Compose the URL is built for you; this error means you are running outside Compose.
   </Accordion>
-  <Accordion title="Set POSTGRES_PASSWORD / CRON_SECRET / OUTREACH_TICK_SECRET in .env">
-    **Cause:** Compose requires these three and stops with `Set POSTGRES_PASSWORD in .env`, `Set CRON_SECRET in .env` or `Set OUTREACH_TICK_SECRET in .env`.
+  <Accordion title="Set DATABASE_URL in .env to your PostgreSQL">
+    **Cause:** You enabled `docker-compose.external-db.yml` but did not set `DATABASE_URL`.
 
-    **Fix:** Put them in `.env` next to `docker-compose.yml` (generate with `openssl rand -hex 32`). With your own database you also need `Set DATABASE_URL in .env to your PostgreSQL`.
+    **Fix:** Put `DATABASE_URL` (and `DATABASE_SSL`) in `.env` next to `docker-compose.yml`. The secrets themselves need no setup: Compose generates them on first start.
   </Accordion>
   <Accordion title="The app cannot connect: SSL / TLS errors">
     **Cause:** The app connects with TLS unless `DATABASE_SSL=disable`. A database without TLS (a local one, Dokploy's Postgres) fails the handshake.

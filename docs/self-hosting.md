@@ -15,7 +15,7 @@ the step-by-step guides are linked in [Choose your path](#choose-your-path).
 | The app | One Next.js server (Bun in the Docker image), listening on port 3000. It serves the UI, the API and the webhooks. |
 | PostgreSQL | The only datastore. It holds everything, including your integrations' credentials, encrypted. |
 | In-process workers | Started inside the app when it boots (`src/instrumentation.ts`): the email send loop, the WhatsApp campaign sender, the Tables enrichment worker and the CRM worker. Nothing to configure. See [Scheduled jobs](#scheduled-jobs). |
-| The cron sidecar | A tiny Alpine container in `docker-compose.yml` that calls the app's scheduled-job endpoints with `curl`. Without Docker Compose you schedule those calls yourself. |
+| The cron sidecar | The same image running `crond`, started by `docker-compose.yml`, that calls the app's scheduled-job endpoints with `curl`. Without Docker Compose you schedule those calls yourself. |
 
 The app is designed to run as a **single instance**. The outreach sender loop
 has no distributed lock; two instances would each send. Do not scale `app` to
@@ -30,8 +30,8 @@ the outreach scheduler is not.)
   The Docker image and the repository's tooling use Bun.
 - A public HTTPS origin if you want webhooks to reach you (Unipile, Gmail push)
   and email links to work for other people.
-- A [Resend](https://resend.com) account for sign-up, password-reset and
-  invitation email (required in production, see [Email](#email)).
+- A [Resend](https://resend.com) account, only if you will invite people or
+  need password-reset email (see [Email](#email)).
 
 ## Outside accounts you will need
 
@@ -54,7 +54,7 @@ Each feature switches on once the service it needs is connected.
 
 | Path | Best for | Guide |
 |---|---|---|
-| Docker Compose | Most people: one server, one command, database and scheduler included. | [Docker Compose](self-hosting/docker-compose.mdx) |
+| Docker Compose | Most people: copy one file, run one command; database, scheduler and secrets included. No `.env` needed. | [Docker Compose](self-hosting/docker-compose.mdx) |
 | From source | Development, or a host where you manage Node/Bun and Postgres yourself. | [From source](self-hosting/from-source.mdx) |
 | Dokploy on a VPS | A self-hosted platform with domains, HTTPS and deploy-on-push. | [Dokploy](self-hosting/dokploy.mdx) |
 
@@ -74,13 +74,14 @@ variable is in the [configuration reference](configuration.md).
 
 ## First sign-up and the organization
 
-1. Open `/sign-up` and create an account. Email verification is required before
-   password sign-in works, so the verification email must be deliverable (see
-   [Email](#email)). With no `RESEND_API_KEY` the email is written to the
-   server log instead (with a one-time warning in production), so you can copy
-   the link from there (`docker compose logs app`).
-2. A signed-in user with no organization is sent to `/onboarding`, which asks
-   you to create one (a name and a URL slug). You become its owner.
+1. On a fresh install, open the app: the setup page creates the first admin
+   account and your organization (a name and a URL slug), and no email
+   verification is needed. You become the owner. Later accounts sign up at
+   `/sign-up`, and password sign-in for them needs a verified email (see
+   [Email](#email)); with no `RESEND_API_KEY` that email is written to the
+   server log instead, so you can copy the link from there
+   (`docker compose logs app`).
+2. A signed-in user with no organization is sent to `/onboarding`.
 3. Everything in AgentSDR belongs to an organization. Invite teammates from
    Settings, Members; an invitation is sent by email and expires after 7 days.
 4. Connect your services in Settings, Integrations
@@ -92,6 +93,7 @@ Who may sign up (`AUTH_SIGNUP`, the platform operator) is explained in
 ## Email
 
 Sign-up verification, password reset and invitations are sent through Resend.
+You need it only to invite people or reset passwords; the first admin does not.
 Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` (an address on a domain you have
 verified in Resend). Without `RESEND_API_KEY`, they are written to the server
 log instead of sent. This is separate from the email your campaigns send, which

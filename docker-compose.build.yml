@@ -1,0 +1,16 @@
+# Build the image from this checkout instead of pulling the published one:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# (or COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml in .env)
+
+services:
+  init:
+    build: .
+    image: agentsdr:local
+  setup:
+    image: agentsdr:local
+  app:
+    image: agentsdr:local
+  cron:
+    image: agentsdr:local

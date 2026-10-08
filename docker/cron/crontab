@@ -1,18 +1,18 @@
 # AgentSDR scheduled jobs (busybox crond, container time zone = UTC).
-# Each line sources the secrets written by entrypoint.sh and logs to the
+# Each line sources the values written by cron/entrypoint.sh and logs to the
 # container's output. Adjust the schedules to your sending windows.
 #
 # min hour dom mon dow  command
 
 # Email: build each mailbox's send queue for the day (resets daily counters).
-5 0 * * *     . /etc/agentsdr/env && curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP_URL/api/outreach/build-queue" >/proc/1/fd/1 2>&1
+5 0 * * *     . /etc/agentsdr/env && curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$INTERNAL_URL/api/outreach/build-queue" >/proc/1/fd/1 2>&1
 # Email: renew Gmail push notifications (they expire after ~7 days).
-30 3 * * *    . /etc/agentsdr/env && curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP_URL/api/outreach/mailboxes/watch" >/proc/1/fd/1 2>&1
+30 3 * * *    . /etc/agentsdr/env && curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$INTERNAL_URL/api/outreach/mailboxes/watch" >/proc/1/fd/1 2>&1
 # LinkedIn: invitations and follow-ups (each account's limits and working hours apply).
-*/15 * * * *  . /etc/agentsdr/env && curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/linkedin/jobs/run-outreach" >/proc/1/fd/1 2>&1
+*/15 * * * *  . /etc/agentsdr/env && curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$INTERNAL_URL/api/linkedin/jobs/run-outreach" >/proc/1/fd/1 2>&1
 # LinkedIn: work the search queue.
-*/10 * * * *  . /etc/agentsdr/env && curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/linkedin/jobs/run-search-queue" >/proc/1/fd/1 2>&1
+*/10 * * * *  . /etc/agentsdr/env && curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$INTERNAL_URL/api/linkedin/jobs/run-search-queue" >/proc/1/fd/1 2>&1
 # LinkedIn: retry webhook deliveries that failed.
-*/10 * * * *  . /etc/agentsdr/env && curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/linkedin/jobs/replay-webhooks" >/proc/1/fd/1 2>&1
+*/10 * * * *  . /etc/agentsdr/env && curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$INTERNAL_URL/api/linkedin/jobs/replay-webhooks" >/proc/1/fd/1 2>&1
 # LinkedIn: reset daily limits.
-0 0 * * *     . /etc/agentsdr/env && curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/linkedin/jobs/reset-daily-limits" >/proc/1/fd/1 2>&1
+0 0 * * *     . /etc/agentsdr/env && curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$INTERNAL_URL/api/linkedin/jobs/reset-daily-limits" >/proc/1/fd/1 2>&1

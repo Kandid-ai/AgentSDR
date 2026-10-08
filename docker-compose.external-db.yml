@@ -1,13 +1,14 @@
 # Use your own PostgreSQL 16+ (a hosted one, for example) instead of the
-# bundled database. In .env:
+# bundled database. In .env next to docker-compose.yml:
 #
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml
 #   DATABASE_URL=postgres://user:password@your-host:5432/agentsdr
 #   DATABASE_SSL=            # empty: TLS on (what hosted Postgres expects); "disable" only if it has no TLS
 #
 # then `docker compose up -d` as usual. The bundled `db` service is not
-# started, and the schema is created in your database on first start (it
-# must be empty then). Needs Docker Compose 2.24 or newer (for !reset).
+# started (the generated Postgres password goes unused), and the schema is
+# created in your database on first start (it must be empty then). Needs
+# Docker Compose 2.24 or newer (for !reset and !override).
 
 services:
   db:
@@ -15,7 +16,9 @@ services:
     profiles: ["bundled-db"]
 
   setup:
-    depends_on: !reset {}
+    depends_on: !override
+      init:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env to your PostgreSQL}
       DATABASE_SSL: ${DATABASE_SSL:-}

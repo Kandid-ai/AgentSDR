@@ -39,7 +39,19 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/db ./db
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/db/setup.ts ./scripts/db/setup.ts
 
+# Entrypoint: generates the secrets on first start into /var/lib/agentsdr and
+# maps APP_URL, so the image runs with no .env (see docker/entrypoint.sh).
+# The directory is owned by nextjs so a fresh named volume mounted there
+# inherits that and stays writable.
+COPY docker/entrypoint.sh /usr/local/bin/agentsdr-entrypoint
+# The cron sidecar runs from this same image (busybox crond + curl).
+COPY docker/cron/crontab /etc/agentsdr/crontab
+COPY docker/cron/entrypoint.sh /etc/agentsdr/cron-entrypoint.sh
+RUN chmod 755 /usr/local/bin/agentsdr-entrypoint /etc/agentsdr/cron-entrypoint.sh \
+ && mkdir -p /var/lib/agentsdr && chown nextjs:nodejs /var/lib/agentsdr
+
 USER nextjs
 EXPOSE 3000
 
+ENTRYPOINT ["agentsdr-entrypoint"]
 CMD ["bun", "server.js"]

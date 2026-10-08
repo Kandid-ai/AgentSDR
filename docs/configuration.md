@@ -62,12 +62,12 @@ Copy this block into `.env` and fill it in. A line starting with `#` is a
 comment.
 
 ```bash
-# Where PostgreSQL 16+ is. With Docker Compose this is built for you from
-# POSTGRES_PASSWORD, so you can leave it out.
+# Where PostgreSQL 16+ is. With Docker Compose this is built for you (the
+# bundled database), so you can leave it out.
 DATABASE_URL=postgres://agentsdr:CHANGE-ME@db.example.com:5432/agentsdr
 
-# Docker Compose only: the password of the bundled PostgreSQL.
-POSTGRES_PASSWORD=CHANGE-ME
+# Docker Compose generates every secret and the database password on first
+# start (in the `secrets` volume); anything you set here wins.
 
 # Set to "disable" only if your database has no TLS (the Compose database).
 # Leave it out to require TLS, which hosted databases expect.
@@ -144,10 +144,10 @@ PostgreSQL 16 or newer. Create the tables in an empty database with
 
 | | |
 |---|---|
-| **Required?** | Yes, with Docker Compose. Compose refuses to start with `Set POSTGRES_PASSWORD in .env`. |
-| **Default** | None. |
+| **Required?** | No. Compose generates one. |
+| **Default** | A random value, kept in the `secrets` volume. |
 | **What it does** | The password of the bundled PostgreSQL container. Compose also builds the app's `DATABASE_URL` from it. |
-| **How to get it** | Make one up: `openssl rand -hex 24`. Choose it before the first `docker compose up`: the database stores it on first start, and changing the variable later does not change the stored password. |
+| **How to get it** | Optional: `openssl rand -hex 24`. Honoured only when the `secrets` volume is first created: the database stores it on first start, and changing the variable later does not change the stored password. |
 | **Read in** | `docker-compose.yml` |
 
 ### `COMPOSE_FILE` (Docker Compose with your own PostgreSQL)
@@ -352,7 +352,7 @@ integration, [Google Workspace](integrations/google-workspace.mdx).
 Some work runs from a scheduler that calls the app over HTTP. Docker Compose
 includes a `cron` container that does this (`docker/cron/crontab`); on other
 setups use any cron, with `curl`. Each endpoint is protected by one of two
-secrets, and both must be set for Compose to start.
+secrets (Compose generates both).
 
 | Endpoint | Secret | How the caller sends it | What it does |
 |---|---|---|---|
@@ -364,7 +364,7 @@ secrets, and both must be set for Compose to start.
 | `POST /api/linkedin/jobs/replay-webhooks` | `CRON_SECRET` | same | Every 10 minutes: retries failed webhook deliveries. |
 | `POST /api/linkedin/jobs/reset-daily-limits` | `CRON_SECRET` | same | Daily: resets LinkedIn daily limits. |
 
-The times above are the Compose defaults, in UTC. Edit `docker/cron/crontab`
+The times above are the Compose defaults, in UTC. Edit `docker/cron/crontab` (baked into the image: build from source with `docker-compose.build.yml`)
 to match your sending windows.
 
 ### `OUTREACH_TICK_SECRET`
