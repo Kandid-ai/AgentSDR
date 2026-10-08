@@ -20,7 +20,7 @@
 
 <p>
   <a href="https://github.com/Kandid-ai/AgentSDR/actions/workflows/ci.yml"><img src="https://github.com/Kandid-ai/AgentSDR/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
   <a href="https://github.com/Kandid-ai/AgentSDR/stargazers"><img src="https://img.shields.io/github/stars/Kandid-ai/AgentSDR?style=flat&logo=github&label=stars" alt="GitHub stars"></a>
   <a href="https://docs.agentsdr.ai"><img src="https://img.shields.io/badge/docs-docs.agentsdr.ai-335cff" alt="Documentation"></a>
   <a href="https://github.com/Kandid-ai/AgentSDR/discussions"><img src="https://img.shields.io/github/discussions/Kandid-ai/AgentSDR?label=discussions" alt="GitHub Discussions"></a>
@@ -282,7 +282,7 @@ AgentSDR contacts people on your behalf, so how it is used is your responsibilit
 <details>
 <summary><b>Is AgentSDR free?</b></summary>
 
-Yes. It is open source and you host it yourself, so there are no seats, tiers or per-contact fees. You pay for your server, the accounts you connect (Google Workspace, Unipile) and your own AI usage. See [License](#license) for what the AGPL asks of you if you offer a modified version to others.
+Yes. It is open source and you host it yourself, so there are no seats, tiers or per-contact fees. You pay for your server, the accounts you connect (Google Workspace, Unipile) and your own AI usage. It is MIT-licensed, so you can also use, change and build on it commercially.
 </details>
 
 <details>
@@ -336,11 +336,11 @@ Contributions are welcome: bug reports, fixes, enrichment providers, docs. Start
 
 ## License
 
-AgentSDR is open source under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only):
+AgentSDR is open source under the [MIT License](LICENSE):
 
-- **You may** use, copy, modify, self-host and distribute AgentSDR, including for commercial purposes and as a hosted service.
-- **If you modify it** and let others use your version over a network, you must make your modified source code available to those users under the same license.
-- Keep the license and copyright notices.
+- **You may** use, copy, modify, self-host, distribute and sell AgentSDR, including in commercial products and as a hosted service.
+- **You don't have to** publish your changes, though contributions back are always welcome.
+- Keep the copyright and license notice in copies you distribute.
 
 The [LICENSE](LICENSE) file is the binding text.
 

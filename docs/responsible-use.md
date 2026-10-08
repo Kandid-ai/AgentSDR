@@ -54,5 +54,5 @@ longer need it or when they ask.
 
 ## No warranty
 
-AgentSDR is provided under the AGPL-3.0 without warranty of any kind. Its
+AgentSDR is provided under the MIT License without warranty of any kind. Its
 authors are not responsible for how it is used.

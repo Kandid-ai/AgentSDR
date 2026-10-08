@@ -11,6 +11,9 @@ Each release lists the database migrations it needs; see
 
 ### Changed
 
+- **License: MIT** (was AGPL-3.0-only). Anyone may use, modify, self-host,
+  distribute and sell AgentSDR, including in closed-source products and
+  hosted services, as long as the copyright and license notice is kept.
 - **The app is only the app.** The marketing website, blog theme and launch
   film moved to their own repository (agentsdr.ai). `/` now opens the
   workspace (sign-in first), and the app asks search engines not to index it.

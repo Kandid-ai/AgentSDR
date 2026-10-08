@@ -15,6 +15,6 @@ jobs:
       - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
-          # AGPL-3.0 project: flag dependencies whose licences can't be combined with it.
+          # MIT project: refuse source-available licences that would restrict what users of AgentSDR may do.
           deny-licenses: SSPL-1.0, BUSL-1.1, Commons-Clause
           comment-summary-in-pr: on-failure

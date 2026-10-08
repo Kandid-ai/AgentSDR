@@ -41,7 +41,9 @@ pushed.
 
 ## Decisions (made without blocking on the owner; each is easy to revisit)
 
-- **License: AGPL-3.0-only**, as the project had already decided. No
+- **License: AGPL-3.0-only**, as the project had already decided. (Changed to
+  **MIT** on 8 October 2026, while all code was still Kandid's own, so no
+  contributor consent was needed.) No
   enterprise carve-out: nothing in the tree is held back.
 - **No CLA or DCO for now.** Contributions come in under the same license
   (GitHub's inbound = outbound terms); CONTRIBUTING says so. A CLA is a legal

@@ -3,6 +3,8 @@
 The plan for building a Clay-style enrichment grid as a first-class part of this
 app, alongside the outreach, LinkedIn and CRM systems that already exist — and
 then open-sourcing the whole thing under AGPL-3.0 so anyone can self-host it.
+(Licence changed to MIT on 8 October 2026; the AGPL notes below are kept as the
+record of the original decision. No Teable code was ever copied in.)
 
 Read `CLAUDE.md` first. This document assumes its conventions (Drizzle only,
 `scripts/` as migration history, TypeScript everywhere) and does not restate them.

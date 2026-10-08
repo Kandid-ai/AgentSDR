@@ -18,7 +18,7 @@ WORKDIR /app
 LABEL org.opencontainers.image.title="AgentSDR" \
       org.opencontainers.image.description="Open-source AI sales development platform" \
       org.opencontainers.image.source="https://github.com/Kandid-ai/AgentSDR" \
-      org.opencontainers.image.licenses="AGPL-3.0-only"
+      org.opencontainers.image.licenses="MIT"
 
 ENV NODE_ENV=production
 ENV PORT=3000

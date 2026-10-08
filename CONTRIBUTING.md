@@ -94,7 +94,7 @@ in the "Northwind Demo" organization.
 
 ## License of contributions
 
-AgentSDR is licensed under the [GNU AGPL-3.0](LICENSE). By submitting a pull
+AgentSDR is licensed under the [MIT License](LICENSE). By submitting a pull
 request you agree that your contribution is licensed under the same license
 (GitHub's inbound = outbound terms) and that you have the right to submit it.
 
