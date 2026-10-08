@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { setCellValue, setCellValues, type CellValueUpdate } from "@/lib/grid/rows";
 import { listColumns } from "@/lib/grid/columns";
 import { isStaticColumnType } from "@/lib/grid/types";
+import { coerceCellInput } from "@/lib/grid/cell-input";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -46,6 +47,7 @@ export async function PATCH(
         }
         const cells = new Set<string>();
         const rowIds = new Set<string>();
+        const coerced: CellValueUpdate[] = [];
         for (const update of body.updates) {
           if (!update || typeof update.rowId !== "string" || typeof update.columnKey !== "string") {
             return NextResponse.json({ error: "every update needs a rowId and columnKey" }, { status: 400 });
@@ -72,10 +74,15 @@ export async function PATCH(
               { status: 400 },
             );
           }
+          const input = coerceCellInput(update.value, column.type);
+          if (!input.ok) {
+            return NextResponse.json({ error: `"${column.name}": ${input.error}` }, { status: 400 });
+          }
+          coerced.push({ rowId: update.rowId, columnKey: update.columnKey, value: input.value });
         }
 
         try {
-          const result = await setCellValues(tableId, body.updates);
+          const result = await setCellValues(tableId, coerced);
           return NextResponse.json({ updatedCells: body.updates.length, ...result });
         } catch (cause) {
           return NextResponse.json(
@@ -101,7 +108,10 @@ export async function PATCH(
         );
       }
 
-      const row = await setCellValue(tableId, body.rowId, body.columnKey, body.value);
+      const input = coerceCellInput(body.value, column.type);
+      if (!input.ok) return NextResponse.json({ error: `"${column.name}": ${input.error}` }, { status: 400 });
+
+      const row = await setCellValue(tableId, body.rowId, body.columnKey, input.value);
       if (!row) return NextResponse.json({ error: "row not found" }, { status: 404 });
 
       return NextResponse.json({ row });

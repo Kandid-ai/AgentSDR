@@ -188,7 +188,13 @@ export async function duplicateTable(id: string): Promise<GridTable> {
     // any client whose cursor already sits past them.
     await tx.execute(sql`
       INSERT INTO ${gridRows} (table_id, position, cells, cell_meta, version)
-      SELECT ${copy.id}, position, cells, cell_meta, nextval('grid_row_version_seq')
+      SELECT ${copy.id}, position, cells,
+             -- In-flight statuses describe jobs that are not copied, so they
+             -- would spin in the copy forever. Finished and error states stay.
+             (SELECT COALESCE(jsonb_object_agg(m.key, m.value), '{}'::jsonb)
+                FROM jsonb_each(cell_meta) AS m
+               WHERE COALESCE(m.value ->> 'status', '') NOT IN ('queued', 'running', 'processing')),
+             nextval('grid_row_version_seq')
         FROM ${gridRows} WHERE ${gridRows.tableId} = ${source.id}
          AND ${gridRows.tableId} IN (SELECT id FROM ${gridTables} WHERE organization_id = ${currentOrganizationId()})
     `);
@@ -235,13 +241,41 @@ export async function reorderTables(
   return listWorkbookTables(workbookId);
 }
 
+/**
+ * Refusal to delete a workbook's only table (the DELETE route answers 409):
+ * WorkbookPage 404s on a workbook with no tables.
+ */
+export class LastTableError extends Error {
+  constructor() {
+    super("A workbook must keep at least one table — delete the workbook instead");
+    this.name = "LastTableError";
+  }
+}
+
 /** Columns, rows, jobs and cell runs all cascade from the FK. */
 export async function deleteTable(id: string): Promise<boolean> {
-  const deleted = await db
-    .delete(gridTables)
-    .where(and(inOrg(gridTables), eq(gridTables.id, id)))
-    .returning({ id: gridTables.id });
-  return deleted.length > 0;
+  const table = await getTable(id);
+  if (!table) return false;
+
+  return db.transaction(async (tx) => {
+    // Lock the workbook so two tabs deleted at once cannot both see a sibling.
+    await tx
+      .select({ id: gridWorkbooks.id })
+      .from(gridWorkbooks)
+      .where(and(inOrg(gridWorkbooks), eq(gridWorkbooks.id, table.workbookId)))
+      .for("update");
+    const [{ n }] = await tx
+      .select({ n: count() })
+      .from(gridTables)
+      .where(and(inOrg(gridTables), eq(gridTables.workbookId, table.workbookId)));
+    if (Number(n) <= 1) throw new LastTableError();
+
+    const deleted = await tx
+      .delete(gridTables)
+      .where(and(inOrg(gridTables), eq(gridTables.id, id)))
+      .returning({ id: gridTables.id });
+    return deleted.length > 0;
+  });
 }
 
 /**

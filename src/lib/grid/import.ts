@@ -2,10 +2,12 @@ import * as XLSX from "xlsx";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { gridColumns, gridRows } from "./schema";
-import { listColumns, toColumnKey, uniqueColumnKey } from "./columns";
+import { listColumns, toColumnKey, uniqueColumnKey, uniqueColumnName } from "./columns";
+import { coerceClipboardValue } from "./clipboard";
+import { MAX_NAME_LENGTH } from "./validate";
 import { insertRows } from "./rows";
 import { inOrgTables, tableInOrganization } from "./scope";
-import type { CellValues, ColumnType, StaticColumnType } from "./types";
+import { isStaticColumnType, type CellValues, type ColumnType, type StaticColumnType } from "./types";
 
 /**
  * Ceiling on one import. Higher than the outreach importer's 5,000 because an
@@ -112,6 +114,9 @@ export function inferColumnType(samples: string[]): StaticColumnType {
 
   if (values.every((v) => EMAIL_RE.test(v))) return "email";
   if (values.every((v) => URL_RE.test(v))) return "url";
+  // A column of only 0s and 1s is far more often a count or a flag stored as
+  // a number than a yes/no question; numbers also round-trip losslessly.
+  if (values.every((v) => v === "0" || v === "1")) return "number";
   if (values.every((v) => BOOL_VALUES.has(v.toLowerCase()))) return "boolean";
   if (values.every((v) => NUMBER_RE.test(v))) return "number";
   if (values.every((v) => !NUMBER_RE.test(v) && !Number.isNaN(Date.parse(v)))) return "date";
@@ -119,30 +124,18 @@ export function inferColumnType(samples: string[]): StaticColumnType {
   return "text";
 }
 
-/** Coerces a cell string into the shape its column type expects. */
+/**
+ * Coerces a cell string into the shape its column type expects.
+ *
+ * Same rules as a paste (clipboard.ts): a value that does not fit the type —
+ * "N/A" in a number column, "maybe" in a boolean one — is kept as the raw
+ * string rather than turned into null/false and silently lost. Only blank
+ * cells become null.
+ */
 export function coerceValue(raw: string, type: ColumnType): unknown {
   const v = raw.trim();
   if (!v) return null;
-
-  switch (type) {
-    case "number":
-    case "currency": {
-      const n = Number(v.replace(/,/g, ""));
-      return Number.isFinite(n) ? n : null;
-    }
-    case "boolean":
-      return ["true", "yes", "y", "1"].includes(v.toLowerCase());
-    case "json":
-      try {
-        return JSON.parse(v);
-      } catch {
-        return v;
-      }
-    case "multiselect":
-      return v.split(/[;,]/).map((s) => s.trim()).filter(Boolean);
-    default:
-      return v;
-  }
+  return isStaticColumnType(type) ? coerceClipboardValue(v, type) : v;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -186,6 +179,56 @@ export function suggestMapping(
       type: inferColumnType(samples),
     };
   });
+}
+
+/**
+ * Validates a client-supplied mapping and fills in what it left out (a
+ * created column's name defaults to its header). Never throws: the route turns
+ * the message into a 400.
+ */
+export function normalizeMapping(
+  raw: unknown,
+  headers: string[],
+  knownKeys: ReadonlySet<string>,
+): { ok: true; mapping: ColumnMapping[] } | { ok: false; error: string } {
+  if (!Array.isArray(raw)) return { ok: false, error: "mapping must be an array" };
+  const seen = new Set<number>();
+  const mapping: ColumnMapping[] = [];
+  for (const entry of raw as unknown[]) {
+    if (typeof entry !== "object" || entry === null) return { ok: false, error: "every mapping entry must be an object" };
+    const m = entry as Record<string, unknown>;
+    const index = m.headerIndex;
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index >= headers.length) {
+      return { ok: false, error: "headerIndex must point at a column in the file" };
+    }
+    if (seen.has(index)) return { ok: false, error: `file column ${index + 1} is mapped more than once` };
+    seen.add(index);
+
+    if (m.action === "skip") {
+      mapping.push({ headerIndex: index, action: "skip" });
+    } else if (m.action === "map") {
+      if (typeof m.columnKey !== "string" || !knownKeys.has(m.columnKey)) {
+        return { ok: false, error: `mapping targets unknown column "${String(m.columnKey)}"` };
+      }
+      mapping.push({ headerIndex: index, action: "map", columnKey: m.columnKey });
+    } else if (m.action === "create") {
+      if (typeof m.type !== "string" || !isStaticColumnType(m.type as ColumnType)) {
+        return { ok: false, error: `"${String(m.type)}" is not a column type an import can create` };
+      }
+      if (m.name !== undefined && typeof m.name !== "string") {
+        return { ok: false, error: "a new column's name must be text" };
+      }
+      const name = (typeof m.name === "string" ? m.name.trim() : "") || headers[index].trim();
+      if (!name) return { ok: false, error: `name the new column for file column ${index + 1}` };
+      if (name.length > MAX_NAME_LENGTH) {
+        return { ok: false, error: `column names must be ${MAX_NAME_LENGTH} characters or fewer` };
+      }
+      mapping.push({ headerIndex: index, action: "create", name, type: m.type as StaticColumnType });
+    } else {
+      return { ok: false, error: "mapping action must be map, create or skip" };
+    }
+  }
+  return { ok: true, mapping };
 }
 
 export type ImportResult = {
@@ -233,6 +276,7 @@ export async function importRows(
   const placeholderId = isInitialPlaceholderRow(existingRows) ? existingRows[0].id : null;
   const canReuseSeedColumn = Boolean(placeholderId && isInitialSeedColumn(existing));
   const taken = new Set(existing.map((c) => c.key));
+  const takenNames = existing.map((c) => c.name);
 
   // A fresh grid has a placeholder row and a "New Column" column. Reuse that
   // column for the first imported field instead of leaving an empty column in
@@ -264,6 +308,7 @@ export async function importRows(
       .set({ name: nextName || seed.name, type: nextType, updatedAt: new Date() })
       .where(eq(gridColumns.id, seed.id));
     target.set(seedMapping.headerIndex, seed.key);
+    takenNames.splice(0, takenNames.length, nextName || seed.name);
   }
 
   if (creates.length) {
@@ -275,7 +320,11 @@ export async function importRows(
       return {
         tableId,
         key,
-        name: m.name.trim() || key,
+        name: (() => {
+          const name = uniqueColumnName(m.name.trim() || key, takenNames);
+          takenNames.push(name);
+          return name;
+        })(),
         type: m.type as ColumnType,
         config: {},
         dependsOn: [],

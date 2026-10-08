@@ -137,8 +137,13 @@ cron secrets and tuning knobs. Two deliberate exceptions:
 - Prospecting's domain qualification reads `APOLLO_API_KEY` (a master key).
   It is not an integration because that section is slated for removal;
   Apollo for tables is a separate, per-table enrichment connection.
-- The table HTTP column's `authEnvVar` calls an arbitrary API the user
-  names, and reads the secret from an env var the user names.
+- The table HTTP column's `authEnvVar` calls an API the user names, and
+  reads the secret from an env var the user names. The name must start with
+  `GRID_HTTP_SECRET_` (checked when the column is saved and again when it
+  runs), so a member cannot point it at `DATABASE_URL` or
+  `INTEGRATION_CREDENTIALS_KEY`. The call itself refuses loopback, private,
+  link-local and CGNAT addresses (resolved, redirects re-checked) unless
+  `GRID_HTTP_ALLOW_PRIVATE=true`; see `src/lib/grid/runners/http.ts`.
 
 `scripts/migrate-env-to-integrations.ts` copied an existing env setup into
 the store once (verifying each); keep it as the record of that move.

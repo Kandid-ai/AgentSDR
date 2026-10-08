@@ -5,7 +5,7 @@ import { getAiRunner } from "@/lib/ai/server/registry";
 import type { AiRunner } from "@/lib/ai/server/types";
 import type { AiModelDefinition } from "@/lib/ai/types";
 import type { AiConfig, CellResult, CellValues } from "../types";
-import { PermanentRunError, interpolate, type ColumnRunner, type RunSession } from "./types";
+import { PermanentRunError, aiProviderLabel, interpolate, type ColumnRunner, type RunSession } from "./types";
 
 type AiSession = RunSession & {
   credentials: Record<string, string>;
@@ -107,7 +107,7 @@ export const aiRunner: ColumnRunner<AiConfig> = {
     });
 
     const latencyMs = Date.now() - started;
-    const provider = `${config.providerKey}/${config.upstreamProvider ?? "unknown"}/${prepared.model.key}`;
+    const provider = aiProviderLabel(config.providerKey, config.upstreamProvider, prepared.model.key);
 
     // "Fields" fans the returned object out across the sibling columns the
     // dialog created; anything else lands whole in one generated output.

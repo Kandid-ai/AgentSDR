@@ -2,18 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { listColumns, topoSort } from "@/lib/grid/columns";
 import { listRows, listRowsByIds } from "@/lib/grid/rows";
 import { getTable } from "@/lib/grid/tables";
-import { activeJobCount, cancelTableJobs, enqueue } from "@/lib/grid/queue";
+import { activeJobCount, cancelTableJobs, enqueue, type EnqueueTarget } from "@/lib/grid/queue";
 import { getIntegrationConnection, getIntegrationCredentials } from "@/lib/grid/providers";
 import { getIntegrationAction } from "@/lib/integrations/catalog";
-import { isRunnable } from "@/lib/grid/runners";
-import type { EnrichmentConfig } from "@/lib/grid/types";
+import { allReferencedInputsEmpty, columnDelaySeconds, hasCellValue, isRunnable } from "@/lib/grid/runners";
+import { ownCell } from "@/lib/grid/runners/types";
+import { parseRunRequest } from "@/lib/grid/run-request";
+import type { AiOutputConfig, EnrichmentConfig, IntegrationOutputConfig } from "@/lib/grid/types";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
 
 function hasRequiredInputs(
   column: Awaited<ReturnType<typeof listColumns>>[number],
   cells: Record<string, unknown>,
 ): boolean {
-  if (column.type !== "enrichment") return true;
+  // AI, HTTP and formula columns have no declared required inputs, so they are
+  // skipped only when every {{token}} they reference is empty.
+  if (column.type !== "enrichment") return !allReferencedInputsEmpty(column, cells);
   const config = column.config as EnrichmentConfig;
   const action = getIntegrationAction(config.integrationKey, config.actionKey);
   if (!action) return true;
@@ -22,7 +26,7 @@ function hasRequiredInputs(
     if (!input.required) return true;
     const binding = config.inputs[input.key];
     if (!binding) return false;
-    const value = cells[binding.columnKey];
+    const value = ownCell(cells, binding.columnKey);
     return value !== undefined && value !== null && (typeof value !== "string" || value.trim() !== "");
   });
   if (!requiredPresent) return false;
@@ -32,10 +36,7 @@ function hasRequiredInputs(
     if (input.group !== "filter") return false;
     const binding = config.inputs[input.key];
     if (!binding) return false;
-    const value = cells[binding.columnKey];
-    return value !== undefined && value !== null
-      && (!Array.isArray(value) || value.length > 0)
-      && (typeof value !== "string" || value.trim() !== "");
+    return hasCellValue(ownCell(cells, binding.columnKey));
   });
   return populatedFilters.length >= action.filterBuilder.minFilters;
 }
@@ -95,12 +96,10 @@ export async function POST(
         return NextResponse.json({ error: "table not found" }, { status: 404 });
       }
 
-      let body: { columnKey?: string; rowIds?: string[]; onlyEmpty?: boolean };
-      try {
-        body = await req.json();
-      } catch {
-        body = {};
-      }
+      // A present-but-broken body is a 400, not "run everything".
+      const parsed = parseRunRequest(await req.text());
+      if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+      const body = parsed.value;
 
       const columns = await listColumns(tableId);
       const runnable = columns.filter((c) => isRunnable(c.type));
@@ -125,9 +124,18 @@ export async function POST(
       } else {
         // Whole-table run: start only at columns whose dependencies are not
         // themselves being run here. The cascade handles the rest.
+        // A dependency on a generated output column (integration_output /
+        // ai_output) is really a dependency on the column that writes it, which
+        // is what is being run here — otherwise the dependent looks external
+        // and runs at once against blank inputs.
         const runningKeys = new Set(runnable.map((c) => c.key));
+        const sourceOf = new Map<string, string>();
+        for (const c of columns) {
+          if (c.type === "integration_output") sourceOf.set(c.key, (c.config as IntegrationOutputConfig).sourceColumnKey);
+          if (c.type === "ai_output") sourceOf.set(c.key, (c.config as AiOutputConfig).sourceColumnKey);
+        }
         targetColumns = topoSort(runnable).filter(
-          (c) => !c.dependsOn.some((d) => runningKeys.has(d)),
+          (c) => !c.dependsOn.some((d) => runningKeys.has(sourceOf.get(d) ?? d)),
         );
       }
 
@@ -141,7 +149,7 @@ export async function POST(
       }
 
       const queueRows = async (rows: Awaited<ReturnType<typeof listRows>>) => {
-        const targets: { rowId: string; columnKey: string }[] = [];
+        const targets: EnqueueTarget[] = [];
         for (const column of targetColumns) {
           for (const row of rows) {
             // A blank required source cannot produce a useful provider result. Do
@@ -154,15 +162,20 @@ export async function POST(
               const v = row.cells?.[column.key];
               if (v !== undefined && v !== null && v !== "") continue;
             }
-            targets.push({ rowId: row.id, columnKey: column.key });
+            targets.push({ rowId: row.id, columnKey: column.key, delaySeconds: columnDelaySeconds(column) });
           }
         }
         return enqueue(tableId, targets, { priority: body.columnKey ? 10 : 0 });
       };
 
       let queued = 0;
-      if (body.rowIds?.length) {
-        queued = await queueRows(await listRowsByIds(tableId, body.rowIds));
+      if (body.rowIds) {
+        // An explicit selection, even an empty one, never widens to every row.
+        const ids = [...new Set(body.rowIds)];
+        const CHUNK = 5000;
+        for (let i = 0; i < ids.length; i += CHUNK) {
+          queued += await queueRows(await listRowsByIds(tableId, ids.slice(i, i + CHUNK)));
+        }
       } else {
         const PAGE_SIZE = 1000;
         for (let offset = 0; ; offset += PAGE_SIZE) {

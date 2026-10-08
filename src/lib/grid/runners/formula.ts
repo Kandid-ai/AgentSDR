@@ -1,6 +1,6 @@
 import type { CellResult, CellValues, FormulaConfig, FormulaLookupRegistry } from "../types";
 import { createSandbox, type Sandbox } from "./sandbox";
-import { PermanentRunError, tokensIn, type ColumnRunner, type RunSession } from "./types";
+import { PermanentRunError, ownCell, tokensIn, type ColumnRunner, type RunSession } from "./types";
 import { buildFormulaLookupRegistry } from "../formula-lookups";
 
 const TOKEN_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
@@ -15,7 +15,7 @@ const TOKEN_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
  */
 export function substituteTokens(expression: string, row: CellValues): string {
   return expression.replace(TOKEN_RE, (_, key: string) => {
-    const v = row[key];
+    const v = ownCell(row, key);
     return v === undefined ? "null" : JSON.stringify(v);
   });
 }

@@ -474,12 +474,20 @@ environment variable whose **name the user types** in the column settings
 (`authEnvVar`). The secret therefore comes from the server's environment and
 never from the database, so it does not end up in database dumps.
 
-- You choose the names. Set whatever variable names your users reference, for
-  example `ACME_API_TOKEN`, in the same place as the rest of your environment,
+- The name must start with `GRID_HTTP_SECRET_`, for example
+  `GRID_HTTP_SECRET_ACME`. Anything else is refused when the column is saved
+  and again when it runs, so a member cannot send `DATABASE_URL` or
+  `INTEGRATION_CREDENTIALS_KEY` to a URL of their choosing. Set the variables
+  your users reference in the same place as the rest of your environment,
   then restart.
 - The value is sent as `Authorization: Bearer <value>`. If it already starts
   with `Bearer `, it is sent as is.
 - If the variable is not set, the cell fails with `Environment variable <NAME> is not set on this server`.
+
+The HTTP column also refuses to call loopback, private, link-local (including
+cloud metadata) and CGNAT addresses, checked on the resolved address and again
+on every redirect. A self-hosted install that needs internal APIs can set
+`GRID_HTTP_ALLOW_PRIVATE=true`.
 
 Read in `src/lib/grid/runners/http.ts`.
 

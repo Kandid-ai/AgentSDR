@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { columnCoverage, deleteTable, getTable, moveTable, updateTable } from "@/lib/grid/tables";
+import { columnCoverage, deleteTable, getTable, LastTableError, moveTable, updateTable } from "@/lib/grid/tables";
 import { listColumns } from "@/lib/grid/columns";
 import { countRows, currentVersion, listRows } from "@/lib/grid/rows";
 import { activeJobCount } from "@/lib/grid/queue";
-import type { FilterGroup, GridQuery, SortSpec } from "@/lib/grid/query";
+import { sanitizeView, validateView, type GridQuery } from "@/lib/grid/query";
 import type { TableView } from "@/lib/grid/types";
 import { effectiveColumnType } from "@/lib/grid/value-types";
 import { GRID_PAGE_SIZE } from "@/lib/grid/pagination";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { clientMessage, intParam, isRecord, isUuid, nullableUuid, optionalName } from "@/lib/grid/validate";
 
 /**
  * GET /api/grid/tables/[tableId]
@@ -27,9 +28,13 @@ export async function GET(
   try {
     return await withOrgContext(req, async () => {
       const { tableId } = await params;
+      if (!isUuid(tableId)) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-      const limit = Number(req.nextUrl.searchParams.get("limit") ?? GRID_PAGE_SIZE);
-      const offset = Number(req.nextUrl.searchParams.get("offset") ?? 0);
+      const limit = intParam(req.nextUrl.searchParams.get("limit"), GRID_PAGE_SIZE, { min: 1, max: 1000 });
+      const offset = intParam(req.nextUrl.searchParams.get("offset"), 0);
+      if (limit === null || offset === null) {
+        return NextResponse.json({ error: "limit and offset must be whole numbers" }, { status: 400 });
+      }
       const search = req.nextUrl.searchParams.get("search") ?? undefined;
 
       // Fetched together: the column list is keyed off tableId alone, so waiting
@@ -40,10 +45,13 @@ export async function GET(
 
       const refs = columns.map((c) => ({ key: c.key, type: effectiveColumnType(c) }));
 
-      const view = (table.view ?? {}) as TableView;
+      // A saved view outlives the columns it names (or may predate validation
+      // on save): whatever the table can no longer apply is dropped here
+      // instead of failing every read of the table.
+      const view = sanitizeView(table.view, new Set(columns.map((c) => c.key)));
       const query: GridQuery = {
-        filters: view.filters as FilterGroup | undefined,
-        sorts: view.sorts as SortSpec[] | undefined,
+        filters: view.filters as GridQuery["filters"],
+        sorts: view.sorts as GridQuery["sorts"],
         search: search || undefined,
       };
 
@@ -69,9 +77,10 @@ export async function GET(
           view,
         });
       } catch (err) {
-        // assertKnownColumns throws when a saved view names a deleted column.
-        const message = err instanceof Error ? err.message : "could not read rows";
-        return NextResponse.json({ error: message }, { status: 400 });
+        // The saved view is sanitized above, so a failure here is not the
+        // caller's input; keep the database's message out of the response.
+        console.error("grid table read failed", err);
+        return NextResponse.json({ error: "could not read rows" }, { status: 500 });
       }
     });
   } catch (error) {
@@ -93,24 +102,41 @@ export async function PATCH(
   try {
     return await withOrgContext(req, async () => {
       const { tableId } = await params;
+      if (!isUuid(tableId)) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-      let body: {
-        name?: string;
-        description?: string | null;
-        autoRun?: boolean;
-        view?: TableView;
-        workbookId?: string;
-      };
+      let body: Record<string, unknown>;
       try {
-        body = await req.json();
+        const parsed = await req.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
       }
 
-      const { workbookId, ...fields } = body;
+      const badRequest = (error: string) => NextResponse.json({ error }, { status: 400 });
+      const name = optionalName(body.name);
+      if (!name.ok) return badRequest(name.error);
+      const workbook = nullableUuid(body.workbookId, "workbookId");
+      if (!workbook.ok || workbook.value === null) return badRequest(workbook.ok ? "workbookId cannot be null" : workbook.error);
+      if (body.description !== undefined && body.description !== null && typeof body.description !== "string") {
+        return badRequest("description must be text");
+      }
+      if (body.autoRun !== undefined && typeof body.autoRun !== "boolean") return badRequest("autoRun must be true or false");
+
+      const fields: { name?: string; description?: string | null; autoRun?: boolean; view?: TableView } = {};
+      if (name.value !== undefined) fields.name = name.value;
+      if (body.description !== undefined) fields.description = body.description as string | null;
+      if (body.autoRun !== undefined) fields.autoRun = body.autoRun as boolean;
+      if (body.view !== undefined) {
+        if (!(await getTable(tableId))) return NextResponse.json({ error: "not found" }, { status: 404 });
+        const columns = await listColumns(tableId);
+        const problem = validateView(body.view, new Set(columns.map((c) => c.key)));
+        if (problem) return badRequest(problem);
+        fields.view = body.view as TableView;
+      }
 
       try {
-        let table = workbookId ? await moveTable(tableId, workbookId) : null;
+        let table = workbook.value ? await moveTable(tableId, workbook.value) : null;
 
         if (Object.keys(fields).length > 0) {
           table = await updateTable(tableId, fields);
@@ -119,7 +145,7 @@ export async function PATCH(
         return NextResponse.json({ table });
       } catch (cause) {
         // moveTable rejects a dead destination and emptying a workbook.
-        const message = cause instanceof Error ? cause.message : "Could not update that table";
+        const message = clientMessage(cause, "Could not update that table");
         return NextResponse.json({ error: message }, { status: 400 });
       }
     });
@@ -138,7 +164,16 @@ export async function DELETE(
   try {
     return await withOrgContext(_req, async () => {
       const { tableId } = await params;
-      const ok = await deleteTable(tableId);
+      if (!isUuid(tableId)) return NextResponse.json({ error: "not found" }, { status: 404 });
+      let ok: boolean;
+      try {
+        ok = await deleteTable(tableId);
+      } catch (error) {
+        if (error instanceof LastTableError) {
+          return NextResponse.json({ error: error.message }, { status: 409 });
+        }
+        throw error;
+      }
       if (!ok) return NextResponse.json({ error: "not found" }, { status: 404 });
       return NextResponse.json({ ok: true });
     });

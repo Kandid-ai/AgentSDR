@@ -1,5 +1,6 @@
 import "server-only";
-import { PermanentRunError } from "@/lib/grid/runners/types";
+import { PermanentRunError, RetryableRunError, aiProviderLabel } from "@/lib/grid/runners/types";
+import { isTransientOpenRouterError } from "./openrouter-errors";
 import { openRouterTokenLimit, strictImageProviderRouting } from "../openrouter-types";
 import { generateOpenRouterImage } from "./openrouter";
 import { getOpenRouterRuntime } from "./runtime";
@@ -91,11 +92,15 @@ export const runOpenRouter: AiRunner = async ({ config, model, prompt, schema, e
   } catch (error) {
     if (error instanceof PermanentRunError && error.audit) throw error;
     const response = auditError(error);
-    throw new PermanentRunError(response.error, {
-      provider: `openrouter/${config.upstreamProvider ?? "unknown"}/${model.key}`,
+    const audit = {
+      provider: aiProviderLabel("openrouter", config.upstreamProvider, model.key),
       request: auditRequest,
       response,
-    });
+    };
+    // A rate limit, a 5xx or a timeout is the provider's moment, not the
+    // user's config — let the queue back off and retry it.
+    if (isTransientOpenRouterError(error)) throw new RetryableRunError(response.error, audit);
+    throw new PermanentRunError(response.error, audit);
   }
 };
 
@@ -133,10 +138,14 @@ export const runOpenRouterImage: AiRunner = async ({ config, model, prompt, time
   } catch (error) {
     if (error instanceof PermanentRunError && error.audit) throw error;
     const response = auditError(error);
-    throw new PermanentRunError(response.error, {
-      provider: `openrouter/${config.upstreamProvider ?? "unknown"}/${model.key}`,
+    const audit = {
+      provider: aiProviderLabel("openrouter", config.upstreamProvider, model.key),
       request: auditRequest,
       response,
-    });
+    };
+    // A rate limit, a 5xx or a timeout is the provider's moment, not the
+    // user's config — let the queue back off and retry it.
+    if (isTransientOpenRouterError(error)) throw new RetryableRunError(response.error, audit);
+    throw new PermanentRunError(response.error, audit);
   }
 };

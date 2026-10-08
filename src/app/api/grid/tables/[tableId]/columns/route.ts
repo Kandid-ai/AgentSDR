@@ -3,6 +3,7 @@ import { createColumn, listColumns } from "@/lib/grid/columns";
 import { getTable } from "@/lib/grid/tables";
 import { ALL_COLUMN_TYPES, type ColumnConfig, type ColumnType } from "@/lib/grid/types";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { clientMessage, isRecord, isUuid, requireString } from "@/lib/grid/validate";
 
 // GET /api/grid/tables/[tableId]/columns
 export async function GET(
@@ -12,6 +13,9 @@ export async function GET(
   try {
     return await withOrgContext(_req, async () => {
       const { tableId } = await params;
+      if (!isUuid(tableId) || !(await getTable(tableId))) {
+        return NextResponse.json({ error: "table not found" }, { status: 404 });
+      }
       const columns = await listColumns(tableId);
       return NextResponse.json({ columns });
     });
@@ -22,7 +26,13 @@ export async function GET(
   }
 }
 
-// POST /api/grid/tables/[tableId]/columns — { name, type, config?, afterColumnId? }
+// POST /api/grid/tables/[tableId]/columns
+//   { name, type, config?, autoRun?, afterColumnId?, beforeColumnId?, copyValuesFrom? }
+//
+// A name another column already uses (case-insensitive) is suffixed — "Text"
+// becomes "Text 2" — and the column that comes back carries the final name.
+// `copyValuesFrom` is the KEY of a data column whose cell values are copied
+// into the new column (duplicate column); the new type must be a data type.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ tableId: string }> },
@@ -30,50 +40,54 @@ export async function POST(
   try {
     return await withOrgContext(req, async () => {
       const { tableId } = await params;
-      if (!(await getTable(tableId))) {
+      if (!isUuid(tableId) || !(await getTable(tableId))) {
         return NextResponse.json({ error: "table not found" }, { status: 404 });
       }
 
-      let body: {
-        name?: string;
-        type?: ColumnType;
-        config?: ColumnConfig;
-        autoRun?: boolean;
-        afterColumnId?: string;
-        beforeColumnId?: string;
-      };
+      let body: Record<string, unknown>;
       try {
-        body = await req.json();
+        const parsed = await req.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
       }
 
-      if (!body.name?.trim()) {
-        return NextResponse.json({ error: "name is required" }, { status: 400 });
+      const badRequest = (error: string) => NextResponse.json({ error }, { status: 400 });
+      const name = requireString(body.name, "name");
+      if (!name.ok) return badRequest(name.error);
+      if (typeof body.type !== "string" || !ALL_COLUMN_TYPES.includes(body.type as ColumnType)) {
+        return badRequest(`type must be one of: ${ALL_COLUMN_TYPES.join(", ")}`);
       }
-      if (!body.type || !ALL_COLUMN_TYPES.includes(body.type)) {
-        return NextResponse.json(
-          { error: `type must be one of: ${ALL_COLUMN_TYPES.join(", ")}` },
-          { status: 400 },
-        );
+      if (body.config !== undefined && body.config !== null && !isRecord(body.config)) {
+        return badRequest("config must be an object");
+      }
+      if (body.autoRun !== undefined && typeof body.autoRun !== "boolean") {
+        return badRequest("autoRun must be true or false");
+      }
+      for (const field of ["afterColumnId", "beforeColumnId"] as const) {
+        if (body[field] !== undefined && !isUuid(body[field])) return badRequest(`${field} is not a valid id`);
+      }
+      if (body.copyValuesFrom !== undefined && (typeof body.copyValuesFrom !== "string" || !body.copyValuesFrom)) {
+        return badRequest("copyValuesFrom must be a column key");
       }
 
       try {
         const column = await createColumn({
           tableId,
-          name: body.name,
-          type: body.type,
-          config: body.config,
-          autoRun: body.autoRun,
-          afterColumnId: body.afterColumnId,
-          beforeColumnId: body.beforeColumnId,
+          name: name.value,
+          type: body.type as ColumnType,
+          config: (body.config ?? undefined) as ColumnConfig | undefined,
+          autoRun: body.autoRun as boolean | undefined,
+          afterColumnId: body.afterColumnId as string | undefined,
+          beforeColumnId: body.beforeColumnId as string | undefined,
+          copyValuesFrom: body.copyValuesFrom as string | undefined,
         });
         return NextResponse.json({ column }, { status: 201 });
       } catch (err) {
         // assertNoCycle throws here — a 400 rather than a 500, since it's the
         // user's column config that's wrong, not the server.
-        const message = err instanceof Error ? err.message : "could not create column";
-        return NextResponse.json({ error: message }, { status: 400 });
+        return badRequest(clientMessage(err, "could not create column"));
       }
     });
   } catch (error) {

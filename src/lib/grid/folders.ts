@@ -12,6 +12,9 @@ export type FolderSummary = GridFolder & {
 /** One hop of the breadcrumb trail, root-first. */
 export type FolderCrumb = { id: string; name: string };
 
+/** A folder id that is not (or no longer) one of the caller's folders — a 404 at the route. */
+export class FolderNotFoundError extends Error {}
+
 const parentMatches = (parentId: string | null) =>
   parentId === null ? isNull(gridFolders.parentId) : eq(gridFolders.parentId, parentId);
 
@@ -127,6 +130,12 @@ export async function createFolder(input: {
   name: string;
   parentId?: string | null;
 }): Promise<GridFolder> {
+  // The parent must be one of THIS organization's folders: the FK alone would
+  // accept another organization's id (and its delete would then cascade here),
+  // and reject a stale one with a 500.
+  if (input.parentId && !(await getFolder(input.parentId))) {
+    throw new FolderNotFoundError("That parent folder no longer exists");
+  }
   const [folder] = await db
     .insert(gridFolders)
     .values({

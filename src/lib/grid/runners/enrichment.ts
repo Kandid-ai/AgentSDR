@@ -4,7 +4,7 @@ import type { IntegrationActionHandler } from "@/lib/integrations/server/types";
 import type { IntegrationActionDefinition } from "@/lib/integrations/types";
 import { getIntegrationConnection, getIntegrationCredentials } from "../providers";
 import type { CellResult, EnrichmentConfig, PendingCellResult } from "../types";
-import { PermanentRunError, type ColumnRunner, type RunSession } from "./types";
+import { PermanentRunError, ownCell, type ColumnRunner, type RunSession } from "./types";
 
 type EnrichmentSession = RunSession & {
   credentials: Record<string, string>;
@@ -49,7 +49,7 @@ export const enrichmentRunner: ColumnRunner<EnrichmentConfig> = {
     const inputValues: Record<string, unknown> = {};
     for (const input of prepared.action.inputs) {
       const binding = config.inputs[input.key];
-      const value = binding ? row[binding.columnKey] : undefined;
+      const value = binding ? ownCell(row, binding.columnKey) : undefined;
       if (value === undefined || value === null || value === "") {
         if (input.required) throw new PermanentRunError(`${input.name}: A value is required`);
         continue;

@@ -5,10 +5,12 @@ import {
   MAX_IMPORT_ROWS,
   importRows,
   parseSpreadsheet,
+  normalizeMapping,
   suggestMapping,
   type ColumnMapping,
 } from "@/lib/grid/import";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { isUuid } from "@/lib/grid/validate";
 
 /** Refused before parsing — a 60MB spreadsheet is a mistake, not a workload. */
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -34,7 +36,7 @@ export async function POST(
   try {
     return await withOrgContext(req, async () => {
       const { tableId } = await params;
-      if (!(await getTable(tableId))) {
+      if (!isUuid(tableId) || !(await getTable(tableId))) {
         return NextResponse.json({ error: "table not found" }, { status: 404 });
       }
 
@@ -87,25 +89,18 @@ export async function POST(
       }
 
       // ---- import ----
-      let mapping: ColumnMapping[];
+      let rawParsed: unknown;
       try {
-        mapping = JSON.parse(rawMapping);
+        rawParsed = JSON.parse(rawMapping);
       } catch {
         return NextResponse.json({ error: "mapping is not valid JSON" }, { status: 400 });
       }
-      if (!Array.isArray(mapping)) {
-        return NextResponse.json({ error: "mapping must be an array" }, { status: 400 });
-      }
 
-      const knownKeys = new Set(existing.map((c) => c.key));
-      for (const m of mapping) {
-        if (m.action === "map" && !knownKeys.has(m.columnKey)) {
-          return NextResponse.json(
-            { error: `mapping targets unknown column "${m.columnKey}"` },
-            { status: 400 },
-          );
-        }
-      }
+      // Checks every entry (header index, action, a creatable type, a usable
+      // name) and defaults a new column's name to its header.
+      const normalized = normalizeMapping(rawParsed, sheet.headers, new Set(existing.map((c) => c.key)));
+      if (!normalized.ok) return NextResponse.json({ error: normalized.error }, { status: 400 });
+      const mapping: ColumnMapping[] = normalized.mapping;
 
       if (!mapping.some((m) => m.action !== "skip")) {
         return NextResponse.json({ error: "every column is set to skip" }, { status: 400 });

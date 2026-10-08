@@ -3,9 +3,18 @@ import { db } from "@/lib/db";
 import { gridColumns, gridRows, type GridColumn } from "./schema";
 import { inOrgTables } from "./scope";
 import { runInOrganization } from "@/lib/tenancy/scope";
-import { cascade, claim, type ClaimedJob, completeJob, deferJob, failJob, recoverStaleJobs } from "./queue";
+import { cascade, claim, type ClaimedJob, completeJob, deferJob, failJob, recoverStaleJobs, skipJob } from "./queue";
 import { setCellMeta } from "./rows";
-import { getRunner, PermanentRunError, type RunSession } from "./runners";
+import {
+  allReferencedInputsEmpty,
+  columnRunCondition,
+  createSandbox,
+  evaluateCondition,
+  getRunner,
+  PermanentRunError,
+  type RunSession,
+  type Sandbox,
+} from "./runners";
 import type { CellResult, CellValues, PendingCellResult } from "./types";
 import { isMigrationControlPaused } from "@/lib/migration/controls";
 
@@ -22,7 +31,11 @@ import { isMigrationControlPaused } from "@/lib/migration/controls";
 const POLL_INTERVAL_MS = Number(process.env.GRID_WORKER_POLL_MS ?? 1000);
 const CONCURRENCY = Number(process.env.GRID_WORKER_CONCURRENCY ?? 8);
 const CELL_TIMEOUT_MS = Number(process.env.GRID_CELL_TIMEOUT_MS ?? 30_000);
-const STALE_SWEEP_EVERY = 60;
+const STALE_SWEEP_MS = 60_000;
+// A drain ends after this long even with work left (the next tick resumes it),
+// so the stale sweep still runs on a busy queue and sessions — which hold
+// LOOKUP tables loaded at prepare() — never outlive a minute of edits.
+const MAX_DRAIN_MS = 60_000;
 const WORKER_STATE_KEY = Symbol.for("agentsdr.grid-worker-state");
 
 type WorkerState = {
@@ -36,22 +49,56 @@ type WorkerGlobal = typeof globalThis & {
 
 let started = false;
 let draining = false;
-let inFlight = 0;
 // A fresh token is created whenever this module is replaced by dev HMR. The
 // new module clears the prior generation's timer before it begins polling.
 const workerOwner = Symbol("grid-worker-generation");
-// Sweep on the first pass as well as every minute thereafter. This recovers
-// rows left in `running` when a dev server or deployment was restarted.
-let ticks = STALE_SWEEP_EVERY - 1;
+// Sweep on the first pass as well as every minute thereafter (by the clock: a
+// busy drain lasts up to MAX_DRAIN_MS, so counting drains would stretch it to
+// an hour). This recovers rows left in `running` when a dev server or
+// deployment was restarted.
+let lastSweepAt = 0;
 
 /**
- * Sessions live for one drain pass, keyed by column.
+ * Sessions live for one continuous drain, keyed by column.
  *
  * This is what makes formula columns viable: booting a QuickJS isolate and
  * loading lodash/moment/FormulaJS costs ~60ms against ~10µs per evaluation, so
- * one sandbox is shared by every row in the pass and disposed at the end.
+ * one sandbox is shared by every row in the drain and disposed when it ends.
+ *
+ * The cache holds the in-flight prepare() PROMISE, not its result: jobs run
+ * concurrently, and each of them would otherwise miss the cache before the
+ * first prepare() resolved and build (and leak) a sandbox of its own. The key
+ * includes the column's updated_at so an edit mid-drain gets a fresh session.
  */
-type SessionCache = Map<string, RunSession>;
+type SessionCache = Map<string, Promise<RunSession>>;
+
+function sessionFor(
+  sessions: SessionCache,
+  key: string,
+  create: () => Promise<RunSession>,
+): Promise<RunSession> {
+  let session = sessions.get(key);
+  if (!session) {
+    session = create();
+    sessions.set(key, session);
+    // A failed prepare must not poison the rest of the drain.
+    session.catch(() => {
+      if (sessions.get(key) === session) sessions.delete(key);
+    });
+  }
+  return session;
+}
+
+async function disposeSessions(sessions: SessionCache): Promise<void> {
+  for (const pending of sessions.values()) {
+    try {
+      await (await pending).dispose?.();
+    } catch {
+      // A sandbox that fails to dispose must not stall the loop.
+    }
+  }
+  sessions.clear();
+}
 
 function isPendingResult(result: CellResult | PendingCellResult): result is PendingCellResult {
   return "pending" in result && result.pending === true;
@@ -96,23 +143,37 @@ async function runJob(job: ClaimedJob, sessions: SessionCache): Promise<void> {
     return;
   }
 
+  // "Only run if" is checked here, against the row as it stands now, so it
+  // holds for every way a job gets queued. A false condition (or one that
+  // cannot be evaluated) leaves the cell idle instead of spending a call. An
+  // AI, HTTP or formula column whose referenced inputs all went blank since
+  // queuing is skipped the same way.
+  const condition = columnRunCondition(column);
+  const skip = !job.providerState && (allReferencedInputsEmpty(column, cells)
+    || (condition !== undefined && !(await conditionHolds(sessions, column, condition, cells))));
+  if (skip) {
+    await skipJob(job);
+    return;
+  }
+
   // Mark running so the grid shows progress mid-flight. Best-effort: losing
   // this update costs a spinner, whereas losing the terminal write in
   // completeJob() would strand the cell, which is why only that one is
   // transactional.
   await setCellMeta(job.rowId, job.columnKey, { status: "running" }).catch(() => {});
 
+  let changedKeys: string[];
   try {
-    let session = sessions.get(column.id);
-    if (!session && runner.prepare) {
-      session = await runner.prepare(column.config as never, {
-        tableId: job.tableId,
-        rowId: job.rowId,
-        columnKey: job.columnKey,
-        timeoutMs: CELL_TIMEOUT_MS,
-      });
-      sessions.set(column.id, session);
-    }
+    const session = runner.prepare
+      ? await sessionFor(sessions, `${column.id}:${column.updatedAt?.getTime() ?? 0}`, () =>
+          runner.prepare!(column.config as never, {
+            tableId: job.tableId,
+            rowId: job.rowId,
+            columnKey: job.columnKey,
+            timeoutMs: CELL_TIMEOUT_MS,
+          }),
+        )
+      : undefined;
 
     const result = await runner.run(
       column.config as never,
@@ -133,67 +194,108 @@ async function runJob(job: ClaimedJob, sessions: SessionCache): Promise<void> {
     }
 
     await completeJob(job, result);
-
-    // Cascade from the row as it now stands, so a dependent reading two
-    // columns sees the value this job just wrote.
-    const additionalOutputs = result.outputs ?? {};
-    const updated = { ...cells, [job.columnKey]: result.value, ...additionalOutputs };
-    for (const changedKey of [job.columnKey, ...Object.keys(additionalOutputs)]) {
-      await cascade(job.tableId, job.rowId, changedKey, columns, updated);
-    }
+    changedKeys = [job.columnKey, ...Object.keys(result.outputs ?? {})];
   } catch (err) {
     const permanent = err instanceof PermanentRunError;
     const message = err instanceof Error ? err.message : String(err);
-    const audit = err instanceof PermanentRunError ? err.audit : undefined;
+    const audit = (err as { audit?: { provider?: string; request?: unknown; response?: unknown } }).audit;
     const { willRetry } = await failJob(job, message, { permanent, ...audit });
     if (!willRetry) {
       console.warn(`[grid/worker] ${job.columnKey} on row ${job.rowId} failed: ${message}`);
     }
+    return;
+  }
+
+  // The job is done and recorded; nothing below may fail it. Cascade from the
+  // row as the database holds it NOW, not from the snapshot taken when this job
+  // started: a sibling job finishing at the same moment has written its own
+  // value since, and a dependent reading both would otherwise never be queued.
+  try {
+    const fresh = await loadRow(job.tableId, job.rowId);
+    if (!fresh) return;
+    for (const changedKey of changedKeys) {
+      await cascade(job.tableId, job.rowId, changedKey, columns, fresh);
+    }
+  } catch (err) {
+    console.error(`[grid/worker] cascade after ${job.columnKey} on row ${job.rowId} failed:`, err);
   }
 }
 
-/** One drain pass: claim what fits, run it, dispose the sessions. */
+/** Evaluates a column's run condition in a sandbox shared across the drain. */
+async function conditionHolds(
+  sessions: SessionCache,
+  column: GridColumn,
+  condition: string,
+  cells: CellValues,
+): Promise<boolean> {
+  try {
+    const session = await sessionFor(sessions, `condition:${column.id}`, async () => {
+      const sandbox = await createSandbox();
+      return { sandbox, dispose: () => sandbox.dispose() };
+    });
+    return await evaluateCondition(condition, cells, session.sandbox as Sandbox);
+  } catch {
+    // A condition that cannot be evaluated must not authorise a paid call.
+    return false;
+  }
+}
+/**
+ * One continuous drain: claim whenever there is a free slot, run, and keep
+ * going until the queue has nothing ready and nothing is running.
+ *
+ * Refilling instead of claiming a batch and awaiting all of it means one slow
+ * job (a 30 s provider call) no longer holds seven idle slots hostage until the
+ * next tick. Sessions live for the whole drain and are disposed when it ends.
+ */
 async function drain(): Promise<void> {
   if (draining) return;
   if (isMigrationControlPaused("gridWorker")) return;
   draining = true;
 
+  const workerGlobal = globalThis as WorkerGlobal;
   const sessions: SessionCache = new Map();
+  const running = new Set<Promise<void>>();
+  const startedAt = Date.now();
   try {
-    if (++ticks % STALE_SWEEP_EVERY === 0) {
+    if (startedAt - lastSweepAt >= STALE_SWEEP_MS) {
+      lastSweepAt = startedAt;
       const n = await recoverStaleJobs();
       if (n) console.log(`[grid/worker] recovered ${n} stale job(s)`);
     }
 
-    const capacity = CONCURRENCY - inFlight;
-    if (capacity <= 0) return;
+    for (;;) {
+      // Stop claiming when paused, or when dev HMR has handed the worker to a
+      // newer module; what is already running finishes below.
+      if (isMigrationControlPaused("gridWorker")) break;
+      const state = workerGlobal[WORKER_STATE_KEY];
+      if (state && state.owner !== workerOwner) break;
+      if (Date.now() - startedAt > MAX_DRAIN_MS) break;
 
-    const jobs = await claim(capacity);
-    if (!jobs.length) return;
+      const capacity = CONCURRENCY - running.size;
+      const jobs = capacity > 0 ? await claim(capacity) : [];
 
-    inFlight += jobs.length;
-    try {
-      await Promise.all(
-        jobs.map((job) =>
-          // Every job runs as the organization that owns its table.
-          runInOrganization(job.organizationId, () => runJob(job, sessions)).catch((err) => {
+      for (const job of jobs) {
+        // Every job runs as the organization that owns its table.
+        const task: Promise<void> = runInOrganization(job.organizationId, () => runJob(job, sessions))
+          .catch((err) => {
             console.error("[grid/worker] job threw outside its handler:", err);
-          }),
-        ),
-      );
-    } finally {
-      inFlight -= jobs.length;
+          })
+          .finally(() => {
+            running.delete(task);
+          });
+        running.add(task);
+      }
+
+      if (running.size === 0) break;
+      // Nothing more is ready, or every slot is busy: wait for a job to finish
+      // (its cascade may have queued more) before claiming again.
+      if (!jobs.length || running.size >= CONCURRENCY) await Promise.race(running);
     }
   } catch (err) {
     console.error("[grid/worker] drain failed:", err);
   } finally {
-    for (const s of sessions.values()) {
-      try {
-        await s.dispose?.();
-      } catch {
-        // A sandbox that fails to dispose must not stall the loop.
-      }
-    }
+    await Promise.allSettled([...running]);
+    await disposeSessions(sessions);
     draining = false;
   }
 }

@@ -10,8 +10,7 @@ import { folderPath } from "@/lib/grid/folders";
 import { activeJobCount } from "@/lib/grid/queue";
 import { getWorkbook, listWorkbookTables } from "@/lib/grid/workbooks";
 import { GRID_PAGE_SIZE } from "@/lib/grid/pagination";
-import type { FilterGroup, SortSpec } from "@/lib/grid/query";
-import type { TableView } from "@/lib/grid/types";
+import { sanitizeView, type FilterGroup, type SortSpec } from "@/lib/grid/query";
 
 export const dynamic = "force-dynamic";
 
@@ -41,11 +40,13 @@ export default async function WorkbookPage({
     // that no longer exists falls back to the first tab rather than 404ing.
     const active = tables.find((t) => t.id === requestedTableId) ?? tables[0];
 
-    const view = (active.view ?? {}) as TableView;
     const [columns, breadcrumbs] = await Promise.all([
       listColumns(active.id),
       folderPath(workbook.folderId),
     ]);
+    // Drops sorts/filters on columns deleted since the view was saved, as the
+    // table API does, so the grid never starts from a view it cannot save.
+    const view = sanitizeView(active.view, new Set(columns.map((c) => c.key)));
     const refs = columns.map((c) => ({ key: c.key, type: effectiveColumnType(c) }));
     const query = { filters: view.filters as FilterGroup | undefined, sorts: view.sorts as SortSpec[] | undefined };
 

@@ -74,7 +74,12 @@ export async function buildFormulaLookupRegistry(refs: FormulaLookupRef[] = []):
     for (const ref of tableRefs) {
       const values: Record<string, unknown> = {};
       for (const row of rows) {
-        const key = lookupValueKey(row.cells[ref.lookupColumnKey]);
+        const lookupValue = row.cells[ref.lookupColumnKey];
+        // A blank key must match nothing: otherwise LOOKUP(..., blank, ...)
+        // returns whatever the first blank-keyed row holds instead of the
+        // default. With no entry, the sandbox falls through to the default/null.
+        if (isBlankLookupKey(lookupValue)) continue;
+        const key = lookupValueKey(lookupValue);
         if (!Object.prototype.hasOwnProperty.call(values, key)) values[key] = row.cells[ref.returnColumnKey] ?? null;
       }
       registry[formulaLookupSignature(ref.tableToken, ref.lookupColumnToken, ref.returnColumnToken)] = values;
@@ -85,6 +90,10 @@ export async function buildFormulaLookupRegistry(refs: FormulaLookupRef[] = []):
 
 export function formulaLookupSignature(table: string, lookupColumn: string, returnColumn: string): string {
   return JSON.stringify([table.trim().toLowerCase(), lookupColumn.trim().toLowerCase(), returnColumn.trim().toLowerCase()]);
+}
+
+export function isBlankLookupKey(value: unknown): boolean {
+  return value === null || value === undefined || (typeof value === "string" && value.trim() === "");
 }
 
 function lookupValueKey(value: unknown): string {

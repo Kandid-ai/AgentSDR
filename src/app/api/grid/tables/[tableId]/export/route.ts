@@ -4,6 +4,7 @@ import { listColumns } from "@/lib/grid/columns";
 import { listRowsByIds } from "@/lib/grid/rows";
 import { getTable } from "@/lib/grid/tables";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { isUuid } from "@/lib/grid/validate";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,7 @@ export async function POST(
   try {
     return await withOrgContext(req, async () => {
       const { tableId } = await params;
+      if (!isUuid(tableId)) return NextResponse.json({ error: "table not found" }, { status: 404 });
 
       let body: ExportRequest;
       try {

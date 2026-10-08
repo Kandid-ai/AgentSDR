@@ -7,9 +7,11 @@ import {
   ModuleRegistry,
   themeQuartz,
   type CellClickedEvent,
+  type CellFocusedEvent,
   type CellMouseDownEvent,
   type CellValueChangedEvent,
   type ColDef,
+  type ColumnMovedEvent,
   type DisplayedColumnsChangedEvent,
   type IHeaderParams,
   type ICellRendererParams,
@@ -52,9 +54,15 @@ import {
   type CellMetaMap,
   type ColumnType,
   type IntegrationOutputConfig,
+  type SelectConfig,
   type TableView,
 } from "@/lib/grid/types";
-import { isFilterGroup, type FilterGroup, type SortSpec } from "@/lib/grid/query";
+import {
+  isFilterGroup,
+  VALUELESS_OPERATORS,
+  type FilterGroup,
+  type SortSpec,
+} from "@/lib/grid/query";
 import AddColumnMenu from "./AddColumnMenu";
 import CellDetailsPanel, { type CellDetailsSelection } from "./CellDetailsPanel";
 import ColumnConfigDialog from "./ColumnConfigDialog";
@@ -164,6 +172,16 @@ function fillPreviewText(value: unknown): string {
   return String(value);
 }
 
+/**
+ * Delete / Backspace on a focused cell would make AG Grid open the editor
+ * empty. The grid clears the selected cells itself (see onGridKeyDown), so the
+ * built-in handling is switched off outside an open editor.
+ */
+const DEFAULT_COL_DEF: ColDef<RowData> = {
+  suppressKeyboardEvent: (params) =>
+    !params.editing && (params.event.key === "Delete" || params.event.key === "Backspace"),
+};
+
 const theme = themeQuartz.withParams({
   // Colours come from grid-theme.css so the grid follows the light / dark switch.
   accentColor: "var(--grid-accent)",
@@ -182,8 +200,96 @@ const theme = themeQuartz.withParams({
   wrapperBorderRadius: 0,
 });
 
+/**
+ * Editing behaviour per static column type. Every editor result goes through
+ * the same coercion as paste and import, so a typed "42" is the number 42 and
+ * JSON is edited as JSON text instead of "[object Object]".
+ */
+function editorFor(column: GridColumn): Pick<ColDef<RowData>, "cellEditor" | "cellEditorParams" | "valueParser"> {
+  const type = column.type;
+  if (!isStaticColumnType(type)) return {};
+  const base = {
+    valueParser: (params: { newValue: unknown }) =>
+      coerceClipboardValue(params.newValue === undefined || params.newValue === null ? "" : String(params.newValue), type),
+  };
+  if (type === "boolean") return { ...base, cellEditor: "agCheckboxCellEditor" };
+  if (type === "select") {
+    const options = (column.config as Partial<SelectConfig> | null)?.options;
+    if (options?.length) {
+      return { ...base, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...options.map((option) => option.value)] } };
+    }
+  }
+  if (type === "json" || type === "multiselect") return { ...base, cellEditorParams: { useFormatter: true } };
+  return base;
+}
+
 function toRowData(rows: GridRow[]): RowData[] {
   return rows.map((r) => ({ ...(r.cells ?? {}), __id: r.id, __meta: r.cellMeta ?? {} }));
+}
+
+/** Column types whose cells are produced by running something, not typed. */
+const RUNNABLE_SOURCE_TYPES: ReadonlySet<ColumnType> = new Set(["enrichment", "ai", "http", "formula"]);
+
+/** A run column's own result columns, so deleting the source can take them along. */
+function outputColumnsOf(source: GridColumn, columns: GridColumn[]): GridColumn[] {
+  const outputKeys = new Set<string>();
+  if (source.type === "ai") {
+    for (const key of Object.values((source.config as AiConfig).outputColumns ?? {})) outputKeys.add(key);
+  }
+  return columns.filter((candidate) => {
+    if (candidate.id === source.id) return false;
+    if (outputKeys.has(candidate.key)) return true;
+    if (source.type === "enrichment" && candidate.type === "integration_output") {
+      return (candidate.config as IntegrationOutputConfig).sourceColumnKey === source.key;
+    }
+    if (source.type === "ai" && candidate.type === "ai_output") {
+      return (candidate.config as AiOutputConfig).sourceColumnKey === source.key;
+    }
+    return false;
+  });
+}
+
+/** Filters that actually narrow the rows: enabled, and with a value unless the operator needs none. */
+function countActiveFilters(group: FilterGroup): number {
+  let count = 0;
+  for (const condition of group.conditions) {
+    if (isFilterGroup(condition)) {
+      count += countActiveFilters(condition);
+    } else if (!condition.disabled && (VALUELESS_OPERATORS.has(condition.operator) || (condition.value ?? "") !== "")) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/** Pinned columns render first, so the display order must start with them. */
+function displayOrderFor(columns: GridColumn[], pinnedKeys: string[]): string[] {
+  const pinnedSet = new Set(pinnedKeys);
+  return [
+    ...columns.filter((column) => pinnedSet.has(column.key)),
+    ...columns.filter((column) => !pinnedSet.has(column.key)),
+  ].map((column) => column.key);
+}
+
+/** What a cell shows as text. Objects and arrays must never fall through to "[object Object]". */
+function formatCellValue(value: unknown, column: GridColumn, valueType: ColumnType): string {
+  if (value === undefined || value === null) return "";
+  if (valueType === "boolean") return value === true || String(value).toLowerCase() === "true" ? "✓" : "";
+  if (Array.isArray(value)) {
+    return value.map((item) => (typeof item === "object" && item !== null ? JSON.stringify(item) : String(item))).join(", ");
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  if (valueType === "select" && column.type === "select") {
+    const options = (column.config as Partial<SelectConfig> | null)?.options;
+    return options?.find((option) => option.value === value)?.label ?? String(value);
+  }
+  return String(value);
 }
 
 /* ---------- header renderers ---------- */
@@ -321,6 +427,47 @@ function IntegrationActionCell(props: ICellRendererParams<RowData> & { onRun?: (
     content = <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400"><RiCheckboxCircleLine className="size-4" />{String(props.value ?? "Completed")}</span>;
   } else {
     content = <span className="text-text-soft-400">Not run</span>;
+  }
+
+  return (
+    <div className="group/action flex size-full min-w-0 items-center gap-2">
+      <div className="min-w-0 flex-1 truncate">{content}</div>
+      {!inProgress && props.data && props.onRun && (
+        <button
+          type="button"
+          disabled={props.disabled}
+          title="Run this row"
+          aria-label="Run this row"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onRun?.(props.data!.__id);
+          }}
+          className="shrink-0 rounded-md bg-blue-600 p-1 text-white opacity-0 shadow-sm transition hover:bg-blue-700 focus:opacity-100 disabled:cursor-not-allowed disabled:bg-blue-300 group-hover/action:opacity-100"
+        >
+          <RiPlayLine className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Result cell for HTTP and formula columns: the value, or why there isn't one yet. */
+function RunnerValueCell(props: ICellRendererParams<RowData> & { onRun?: (rowId: string) => void; disabled?: boolean }) {
+  if (props.node.rowPinned === "top") return props.valueFormatted ?? props.value ?? "";
+  const meta = props.data?.__meta?.[props.colDef?.field ?? ""] as CellMeta | undefined;
+  const inProgress = meta?.status === "queued" || meta?.status === "running" || meta?.status === "processing";
+  const text = props.valueFormatted ?? (props.value === undefined || props.value === null ? "" : String(props.value));
+
+  let content: React.ReactNode;
+  if (meta?.status === "queued") {
+    content = <span className="flex items-center gap-1.5 text-text-sub-600"><RiTimeLine className="size-4" />Queued…</span>;
+  } else if (meta?.status === "running" || meta?.status === "processing") {
+    content = <span className="flex items-center gap-1.5 text-text-sub-600"><RiLoader4Line className="size-4 animate-spin" />Running…</span>;
+  } else if (meta?.status === "error") {
+    content = <span title={meta.error} className="flex items-center gap-1.5 truncate font-medium text-red-700 dark:text-red-400"><RiCloseCircleLine className="size-4 shrink-0" /><span className="truncate">{meta.error || "Run failed"}</span></span>;
+  } else {
+    content = <span title={text}>{text}</span>;
   }
 
   return (
@@ -503,6 +650,12 @@ export default function GridClient({
 
   const cursorRef = useRef(initialCursor);
   const refetchSequence = useRef(0);
+  // Saved-view bookkeeping: the last view the server confirmed (to roll back a
+  // failed save), the newest save's sequence number, and how many are in flight
+  // (a refetch must not overwrite the optimistic view while one is).
+  const committedViewRef = useRef<TableView>(initialView ?? {});
+  const viewSaveSequence = useRef(0);
+  const viewSavesInFlight = useRef(0);
   const gridRef = useRef<AgGridReact<RowData>>(null);
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const fillHandleElementRef = useRef<HTMLDivElement>(null);
@@ -645,9 +798,7 @@ export default function GridClient({
   const filters = (view.filters as FilterGroup | undefined) ?? EMPTY_FILTERS;
   const sorts = (view.sorts as SortSpec[] | undefined) ?? [];
 
-  const activeFilterCount = filters.conditions.filter(
-    (c) => !("disabled" in c && c.disabled),
-  ).length;
+  const activeFilterCount = useMemo(() => countActiveFilters(filters), [filters]);
 
   const aiOutputSources = useMemo(() => {
     const result = new Map<string, { sourceColumnKey: string; valueType: ColumnType }>();
@@ -674,6 +825,9 @@ export default function GridClient({
   // Re-seed when the active sheet changes.
   useEffect(() => {
     refetchSequence.current += 1;
+    viewSaveSequence.current += 1;
+    viewSavesInFlight.current = 0;
+    committedViewRef.current = initialView ?? {};
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: effect resets/seeds local state when props or open state change; deriving during render would change timing
     setColumns(initialColumns);
     setRowData(toRowData(initialRows));
@@ -696,18 +850,11 @@ export default function GridClient({
     redoStackRef.current = [];
     setHistoryCounts({ undo: 0, redo: 0 });
     cursorRef.current = initialCursor;
-  }, [
-    table.id,
-    table.autoRun,
-    initialColumns,
-    initialRows,
-    initialCoverage,
-    initialActiveJobs,
-    initialUnfiltered,
-    initialView,
-    total,
-    initialCursor,
-  ]);
+    // Keyed on the table only. The initial* props are the page-load payload;
+    // re-seeding when any of them (or table.autoRun) changes would throw away
+    // every edit and column made since, e.g. after toggling Auto-run and renaming.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [table.id]);
 
   const refetch = useCallback(
     async (searchTerm = appliedSearch, pageIndex = page) => {
@@ -745,8 +892,20 @@ export default function GridClient({
       setActiveJobs(d.activeJobs ?? 0);
       setRowCount(d.total);
       setUnfiltered(d.unfilteredTotal ?? d.total);
-      setView(d.view ?? {});
-      setCellRange(null);
+      // A view save still in flight owns the view: its optimistic value is
+      // newer than anything this response saw, and overwriting it would snap a
+      // controlled input back while the person is typing.
+      const serverView: TableView = d.view ?? {};
+      if (viewSavesInFlight.current === 0) {
+        committedViewRef.current = serverView;
+        setView(serverView);
+      }
+      // Newly added or reordered columns take their server position at once
+      // instead of waiting at the far right until a reload.
+      setColumnDisplayOrder(displayOrderFor(d.columns, serverView.pinnedColumns ?? []));
+      // The selection survives a refetch of the same page (a poll finishing,
+      // an edit saving); it only means something while the page is unchanged.
+      if (safePage !== page) setCellRange(null);
       setFillTargetRow(null);
       cursorRef.current = d.cursor;
     },
@@ -760,6 +919,9 @@ export default function GridClient({
    */
   const saveView = useCallback(
     async (next: TableView) => {
+      const sequence = ++viewSaveSequence.current;
+      viewSavesInFlight.current += 1;
+      let saved = false;
       setView(next);
       setBusy(true);
       try {
@@ -770,14 +932,29 @@ export default function GridClient({
         });
         if (!res.ok) {
           const b = await res.json().catch(() => ({}));
-          setError(b.error ?? "Could not save the view");
-          return;
+          throw new Error(b.error ?? "Could not save the view");
         }
-        setPage(0);
-        setSelectedRowIds([]);
-        setAllMatchingSelected(false);
-        setCellRange(null);
-        await refetch(appliedSearch, 0);
+        saved = true;
+        committedViewRef.current = next;
+      } catch (cause) {
+        // Put back what the server still has, unless a newer save has already
+        // replaced the optimistic view (that one decides the final state).
+        if (sequence === viewSaveSequence.current) setView(committedViewRef.current);
+        setError(cause instanceof Error ? cause.message : "Could not save the view");
+      } finally {
+        viewSavesInFlight.current -= 1;
+      }
+      try {
+        // A newer save supersedes this one's refetch; it will load the rows.
+        if (saved && sequence === viewSaveSequence.current) {
+          setPage(0);
+          setSelectedRowIds([]);
+          setAllMatchingSelected(false);
+          setCellRange(null);
+          await refetch(appliedSearch, 0);
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not load rows");
       } finally {
         setBusy(false);
       }
@@ -807,12 +984,24 @@ export default function GridClient({
   useEffect(() => {
     if (activeJobs === 0) return;
     let cancelled = false;
+    // One poll at a time: a slow response must not stack requests behind it.
+    let inFlight = false;
+    let failures = 0;
 
     const id = setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const res = await fetch(`/api/grid/tables/${table.id}/changes?cursor=${cursorRef.current}`);
-        if (!res.ok || cancelled) return;
+        if (cancelled) return;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const d: { rows: GridRow[]; cursor: number; activeJobs: number } = await res.json();
+        if (cancelled) return;
+        failures = 0;
+        // Applying a change replaces row objects under the grid, which can
+        // cancel a cell the person is typing into. The cursor is left where it
+        // was, so the next tick picks the same changes up once they are done.
+        if (gridRef.current?.api?.getEditingCells().length) return;
         cursorRef.current = d.cursor;
         setActiveJobs(d.activeJobs);
         if (d.rows.length) {
@@ -831,8 +1020,18 @@ export default function GridClient({
           clearInterval(id);
           await refetch();
         }
-      } catch {
-        // A failed poll is not worth surfacing — the next tick retries.
+      } catch (cause) {
+        // A blip is retried on the next tick; a poll that keeps failing (signed
+        // out, server down) stops instead of hammering the API every 1.5s.
+        failures += 1;
+        if (failures >= 5 && !cancelled) {
+          clearInterval(id);
+          setError(
+            `Lost contact with the server while checking progress${cause instanceof Error ? ` (${cause.message})` : ""}. Reload the page to see the latest results.`,
+          );
+        }
+      } finally {
+        inFlight = false;
       }
     }, 1500);
 
@@ -887,6 +1086,8 @@ export default function GridClient({
           return;
         }
         await refetch();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not add column");
       } finally {
         setBusy(false);
       }
@@ -920,6 +1121,8 @@ export default function GridClient({
           config: column.config,
           autoRun: column.autoRun,
           afterColumnId: column.id,
+          // A static column holds typed values, so the copy carries them too.
+          ...(isStaticColumnType(column.type) ? { copyValuesFrom: column.key } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -979,6 +1182,7 @@ export default function GridClient({
         }
         setSelectedRowIds([]);
         setAllMatchingSelected(false);
+        setCellRange(null);
         await refetch();
         const deleted = data.deleted ?? 0;
         setNotice(deleted
@@ -993,19 +1197,31 @@ export default function GridClient({
 
   const deleteColumnFromMenu = useCallback(
     async (column: GridColumn) => {
-      const usedIn = columns.filter((candidate) => candidate.dependsOn.includes(column.key));
+      // A source's own result columns go with it; anything else that reads
+      // the source or one of its results must be dealt with first.
+      const outputs = outputColumnsOf(column, columns);
+      const removing = new Set([column.key, ...outputs.map((output) => output.key)]);
+      const usedIn = columns.filter(
+        (candidate) =>
+          !removing.has(candidate.key) && candidate.dependsOn.some((key) => removing.has(key)),
+      );
       if (usedIn.length) {
         setError(`“${column.name}” is used by ${usedIn.map((item) => item.name).join(", ")}. Remove those references first.`);
         return;
       }
       const ok = await dialogs.confirm({
-        title: "Delete column?",
-        description: `“${column.name}” and every value in it will be permanently deleted. This cannot be undone.`,
-        confirmLabel: "Delete column",
+        title: outputs.length ? "Delete column and its outputs?" : "Delete column?",
+        description: outputs.length
+          ? `“${column.name}” will be permanently deleted along with ${outputs.length} output column${outputs.length === 1 ? "" : "s"} (${outputs.map((output) => output.name).join(", ")}) and every value in them. This cannot be undone.`
+          : `“${column.name}” and every value in it will be permanently deleted. This cannot be undone.`,
+        confirmLabel: outputs.length ? `Delete ${outputs.length + 1} columns` : "Delete column",
         variant: "error",
       });
       if (!ok) return;
-      const res = await fetch(`/api/grid/tables/${table.id}/columns/${column.id}`, { method: "DELETE" });
+      const res = await fetch(
+        `/api/grid/tables/${table.id}/columns/${column.id}${outputs.length ? "?withOutputs=1" : ""}`,
+        { method: "DELETE" },
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Could not delete column");
       // Cell history can reference this column, so discard it after a
@@ -1042,6 +1258,8 @@ export default function GridClient({
         return;
       }
       setSelectedRowIds([]);
+      setAllMatchingSelected(false);
+      setCellRange(null);
       setRowActionsRect(null);
       // Deleted row IDs cannot safely participate in later cell undo/redo.
       undoStackRef.current = [];
@@ -1237,6 +1455,7 @@ export default function GridClient({
     async (event: CellValueChangedEvent<RowData>) => {
       const columnKey = event.colDef.field;
       if (!columnKey || !event.data) return;
+      // newValue was already coerced to the column's type by its valueParser.
       const applied = await persistCellUpdates(
         [{ rowId: event.data.__id, columnKey, value: event.newValue ?? null }],
       );
@@ -1538,8 +1757,40 @@ export default function GridClient({
     }
     if (event.key === "Escape") {
       setCellRange(null);
+      return;
     }
-  }, [redoLastCellChange, undoLastCellChange]);
+    // Clear the selected cells, but only when focus is on a grid cell itself
+    // (not the gutter checkbox, a toolbar button or an open editor).
+    if (
+      (event.key === "Delete" || event.key === "Backspace")
+      && !modifier
+      && normalizedCellRange
+      && !busy
+      && event.target instanceof Element
+      && event.target.closest(".ag-cell")
+    ) {
+      event.preventDefault();
+      void clearSelectedCells();
+    }
+  }, [busy, clearSelectedCells, normalizedCellRange, redoLastCellChange, undoLastCellChange]);
+
+  // Keyboard navigation moves the focused cell; mirror it into the range so
+  // copy, paste and clear act on the cell the person is actually on. Mouse
+  // focus is handled by onCellMouseDown (which also does shift-extend).
+  const onCellFocused = useCallback((event: CellFocusedEvent<RowData>) => {
+    if (event.sourceEvent instanceof MouseEvent) return;
+    if (event.rowIndex === null || event.rowIndex === undefined || event.rowPinned) return;
+    const column = event.column;
+    const columnKey = typeof column === "string" ? column : column?.getColId();
+    if (!columnKey || !displayedColumnKeys.includes(columnKey)) return;
+    const coordinate = { rowIndex: event.rowIndex, columnKey };
+    const extend = event.sourceEvent instanceof KeyboardEvent && event.sourceEvent.shiftKey;
+    setCellRange((current) =>
+      extend && current
+        ? { ...current, focus: coordinate }
+        : { anchor: coordinate, focus: coordinate },
+    );
+  }, [displayedColumnKeys]);
 
   const onCellMouseDown = useCallback((event: CellMouseDownEvent<RowData>) => {
     if (event.node.rowPinned === "top" || !event.data || event.node.rowIndex === null) return;
@@ -1694,6 +1945,9 @@ export default function GridClient({
 
   const onCellClicked = useCallback((event: CellClickedEvent<RowData>) => {
     if (event.node.rowPinned === "top" || !event.data) return;
+    // The per-row run button and cell links do their own thing.
+    const target = event.event?.target;
+    if (target instanceof Element && target.closest("a, button")) return;
     const columnKey = event.colDef.field;
     if (!columnKey) return;
     const column = columns.find((candidate) => candidate.key === columnKey);
@@ -1702,17 +1956,33 @@ export default function GridClient({
   }, [aiOutputSources, columns]);
 
   const toggleAutoRun = useCallback(async () => {
-    const next = !autoRun;
+    const previous = autoRun;
+    const next = !previous;
     setAutoRun(next);
-    await fetch(`/api/grid/tables/${table.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ autoRun: next }),
-    });
-    onTableChanged?.();
+    try {
+      const res = await fetch(`/api/grid/tables/${table.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoRun: next }),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.error ?? "Could not change Auto-run");
+      }
+      onTableChanged?.();
+    } catch (cause) {
+      setAutoRun(previous);
+      setError(cause instanceof Error ? cause.message : "Could not change Auto-run");
+    }
   }, [autoRun, table.id, onTableChanged]);
 
   const runColumn = useCallback(async (column: GridColumn, rowIds?: string[]) => {
+    // An empty list means "no rows", never "every row".
+    if (rowIds && rowIds.length === 0) {
+      setRunMenu(null);
+      setNotice("There are no rows to run.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -1815,6 +2085,55 @@ export default function GridClient({
     );
   }, [visibleColumns]);
 
+  /** Persist a finished header drag: PATCH the column to sit right after its new left neighbour. */
+  const onColumnMoved = useCallback((event: ColumnMovedEvent<RowData>) => {
+    if (!event.finished || event.source !== "uiColumnMoved" || !event.column) return;
+    const movedKey = event.column.getColId();
+    const moved = columns.find((column) => column.key === movedKey);
+    if (!moved) return;
+    // Pinned columns are drawn first whatever their stored position, so the
+    // anchor is the neighbour within the moved column's own group (pinned or
+    // not): "after a pinned column" would land somewhere else in stored order.
+    const movedPinned = pinned.includes(movedKey);
+    const sameGroup = (key: string) => pinned.includes(key) === movedPinned;
+    const known = new Set(columns.map((column) => column.key));
+    const shownKeys = event.api
+      .getAllDisplayedColumns()
+      .map((column) => column.getColId())
+      .filter((key) => known.has(key) && sameGroup(key));
+    const index = shownKeys.indexOf(movedKey);
+    if (index < 0) return;
+    const leftKey = index > 0 ? shownKeys[index - 1] : null;
+    const left = leftKey ? columns.find((column) => column.key === leftKey) ?? null : null;
+
+    const withoutMoved = columns.filter((column) => column.id !== moved.id);
+    // Where it sat before the drag, among the columns that were showing.
+    const shownBefore = columns.filter((column) => !hidden.includes(column.key) && sameGroup(column.key));
+    const previousLeft = shownBefore[shownBefore.findIndex((column) => column.id === moved.id) - 1];
+    const insertAt = left ? withoutMoved.findIndex((column) => column.id === left.id) + 1 : 0;
+    // Dropped back where it started: nothing to save.
+    if ((left?.id ?? null) === (previousLeft?.id ?? null)) return;
+    const reordered = [...withoutMoved.slice(0, insertAt), moved, ...withoutMoved.slice(insertAt)];
+    setColumns(reordered);
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/grid/tables/${table.id}/columns/${moved.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ afterColumnId: left?.id ?? null }),
+        });
+        if (!res.ok) {
+          const b = await res.json().catch(() => ({}));
+          throw new Error(b.error ?? "Could not move the column");
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not move the column");
+        await refetch().catch(() => undefined);
+      }
+    })();
+  }, [columns, hidden, pinned, refetch, table.id]);
+
   const selectColumn = useCallback((columnKey: string, extend: boolean) => {
     if (!rowData.length) return;
     setCellRange((current) => {
@@ -1856,7 +2175,7 @@ export default function GridClient({
     const userCols = visibleColumns.map<ColDef<RowData>>((c) => {
       const aiOutput = aiOutputSources.get(c.key);
       const valueType = aiOutput?.valueType ?? effectiveColumnType(c);
-      const runSource = c.type === "enrichment" || c.type === "ai"
+      const runSource = RUNNABLE_SOURCE_TYPES.has(c.type)
         ? c
         : c.type === "integration_output"
           ? columns.find((candidate) =>
@@ -1879,26 +2198,21 @@ export default function GridClient({
               : undefined,
           active: columnMenu?.column.id === c.id,
           onSelect: (extend: boolean) => selectColumn(c.key, extend),
-          onOpen: (rect: DOMRect) => {
-            if (c.type === "enrichment") {
-              setEnrichmentPosition({ column: c });
-              return;
-            }
-            if (c.type === "ai") {
-              setAiPosition({ column: c });
-              return;
-            }
+          // Every column opens the column menu; run columns list their own
+          // "Edit …" entry there, so rename / pin / sort / delete stay reachable.
+          onOpen: (rect: DOMRect) =>
             setColumnMenu((current) =>
               current?.column.id === c.id ? null : { column: c, rect },
-            );
-          },
+            ),
           onRun: runSource
             ? (rect: DOMRect) => setRunMenu({ column: runSource, rect })
             : undefined,
         },
         editable: (p) => p.node.rowPinned !== "top" && isStaticColumnType(c.type) && !aiOutput,
+        ...editorFor(c),
         cellDataType: false,
-        width: COL_W,
+        // initialWidth: a width the person dragged survives column-def updates.
+        initialWidth: COL_W,
         minWidth: 90,
         pinned: pinned.includes(c.key) ? "left" : undefined,
         resizable: true,
@@ -1910,11 +2224,13 @@ export default function GridClient({
         cellRenderer:
           c.type === "enrichment" || c.type === "ai"
             ? IntegrationActionCell
-            : c.type === "integration_output" || Boolean(aiOutput)
-              ? IntegrationOutputCell
-              : undefined,
+            : c.type === "http" || c.type === "formula"
+              ? RunnerValueCell
+              : c.type === "integration_output" || Boolean(aiOutput)
+                ? IntegrationOutputCell
+                : undefined,
         cellRendererParams:
-          c.type === "enrichment" || c.type === "ai"
+          c.type === "enrichment" || c.type === "ai" || c.type === "http" || c.type === "formula"
             ? { onRun: (rowId: string) => void runColumn(c, [rowId]), disabled: busy }
             : c.type === "integration_output"
             ? { sourceColumnKey: (c.config as IntegrationOutputConfig).sourceColumnKey, valueType }
@@ -1926,7 +2242,7 @@ export default function GridClient({
             ? p.value === undefined || p.value === null
               ? ""
               : `${p.value}%`
-            : (p.value ?? ""),
+            : formatCellValue(p.value, c, valueType),
         cellClass: (p) => {
           if (p.node.rowPinned === "top") return "grid-coverage-cell";
           const classes: string[] = [];
@@ -1957,6 +2273,39 @@ export default function GridClient({
     return [gutter, ...userCols, adder];
   }, [aiOutputSources, busy, columnMenu?.column, columns, page, pageSelectionState, pinned, runColumn, selectColumn, selectedRowIdSet, togglePageSelection, toggleRowSelection, visibleColumns]);
 
+  // Stable close handlers: Popover re-subscribes its document listeners
+  // whenever onClose changes identity, and an inline arrow changes every render.
+  const closePanel = useCallback(() => setPanel(null), []);
+  const closeColumnMenu = useCallback(() => setColumnMenu(null), []);
+  const closeRunMenu = useCallback(() => setRunMenu(null), []);
+  const closeRowActions = useCallback(() => setRowActionsRect(null), []);
+  const closeAddMenu = useCallback(() => setAddMenu(null), []);
+
+  // The grid is no longer remounted per page, so bring the new page to the top.
+  useEffect(() => {
+    const api = gridRef.current?.api;
+    if (!api) return;
+    api.clearFocusedCell();
+    api.ensureIndexVisible(0);
+  }, [page]);
+
+  const changeColumnType = useCallback(async (column: GridColumn, type: ColumnType) => {
+    // Formula and HTTP columns keep their whole setup in config, which a type
+    // change to a plain column replaces with {}: that is not undoable.
+    if ((column.type === "formula" || column.type === "http") && isStaticColumnType(type)) {
+      const ok = await dialogs.confirm({
+        title: `Change ${column.name} to a ${columnTypeMeta(type).label} column?`,
+        description: column.type === "formula"
+          ? "The formula will be discarded and the column will become a plain column. Existing values stay, but they will no longer be calculated."
+          : "The HTTP request setup (URL, headers, body and response path) will be discarded and the column will become a plain column. Existing values stay, but they will no longer be fetched.",
+        confirmLabel: "Change type",
+        variant: "error",
+      });
+      if (!ok) return;
+    }
+    await patchColumn(column, { type, config: {} });
+  }, [dialogs, patchColumn]);
+
   const pinnedTop = useMemo<RowData[]>(
     () => [{ __id: "__coverage", __meta: {}, ...coverage }],
     [coverage],
@@ -1964,6 +2313,22 @@ export default function GridClient({
 
   const totalPages = gridPageCount(rowCount);
   const visibleRange = gridPageRange(page, rowCount);
+
+  /** The "Edit …" entry a run column's menu leads with, opening its own dialog. */
+  const configureProps = (column: GridColumn): { configureLabel?: string; onConfigure?: () => void } => {
+    switch (column.type) {
+      case "enrichment":
+        return { configureLabel: "Edit enrichment", onConfigure: () => setEnrichmentPosition({ column }) };
+      case "ai":
+        return { configureLabel: "Edit AI column", onConfigure: () => setAiPosition({ column }) };
+      case "http":
+        return { configureLabel: "Edit HTTP API", onConfigure: () => setConfiguring({ type: "http", column }) };
+      case "formula":
+        return { configureLabel: "Edit formula", onConfigure: () => setConfiguring({ type: "formula", column }) };
+      default:
+        return {};
+    }
+  };
 
   const openPanel = (name: PanelName) => (e: React.MouseEvent<HTMLButtonElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -2162,10 +2527,10 @@ export default function GridClient({
         >
           <AgGridReact<RowData>
             ref={gridRef}
-            key={`${table.id}:${page}`}
+            key={table.id}
             theme={theme}
             columnDefs={colDefs}
-            maintainColumnOrder
+            defaultColDef={DEFAULT_COL_DEF}
             rowData={rowData}
             pinnedTopRowData={pinnedTop}
             getRowId={(p) => p.data.__id}
@@ -2179,6 +2544,8 @@ export default function GridClient({
             onCellValueChanged={onCellValueChanged}
             onCellClicked={onCellClicked}
             onCellMouseDown={onCellMouseDown}
+            onCellFocused={onCellFocused}
+            onColumnMoved={onColumnMoved}
             onDisplayedColumnsChanged={onDisplayedColumnsChanged}
             stopEditingWhenCellsLoseFocus
             animateRows={false}
@@ -2240,7 +2607,7 @@ export default function GridClient({
 
       {/* ---------- popovers ---------- */}
       {runMenu && (
-        <Popover anchorRect={runMenu.rect} onClose={() => setRunMenu(null)} width={260}>
+        <Popover anchorRect={runMenu.rect} onClose={closeRunMenu} width={260}>
           <div className="p-2">
             <p className="truncate px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-text-soft-400">
               Run {runMenu.column.name}
@@ -2255,7 +2622,7 @@ export default function GridClient({
       )}
 
       {panel?.name === "columns" && (
-        <Popover anchorRect={panel.rect} onClose={() => setPanel(null)} width={320}>
+        <Popover anchorRect={panel.rect} onClose={closePanel} width={320}>
           <ColumnsMenu
             columns={columns}
             hidden={hidden}
@@ -2265,7 +2632,7 @@ export default function GridClient({
       )}
 
       {panel?.name === "filter" && (
-        <Popover anchorRect={panel.rect} onClose={() => setPanel(null)} width={720}>
+        <Popover anchorRect={panel.rect} onClose={closePanel} width={720}>
           <FilterPanel
             columns={columns}
             value={filters}
@@ -2275,7 +2642,7 @@ export default function GridClient({
       )}
 
       {panel?.name === "sort" && (
-        <Popover anchorRect={panel.rect} onClose={() => setPanel(null)} width={520}>
+        <Popover anchorRect={panel.rect} onClose={closePanel} width={520}>
           <SortPanel
             columns={columns}
             value={sorts}
@@ -2285,7 +2652,7 @@ export default function GridClient({
       )}
 
       {panel?.name === "search" && (
-        <Popover anchorRect={panel.rect} onClose={() => setPanel(null)} width={380}>
+        <Popover anchorRect={panel.rect} onClose={closePanel} width={380}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -2317,14 +2684,14 @@ export default function GridClient({
       {columnMenu && (
         <Popover
           anchorRect={columnMenu.rect}
-          onClose={() => setColumnMenu(null)}
+          onClose={closeColumnMenu}
           width={300}
         >
           <ColumnMenu
             column={columnMenu.column}
             columns={columns}
             pinned={pinned.includes(columnMenu.column.key)}
-            onClose={() => setColumnMenu(null)}
+            onClose={closeColumnMenu}
             onError={(message) => setError(message)}
             onRename={(name) => patchColumn(columnMenu.column, { name })}
             onInsert={(side, rect) => {
@@ -2336,7 +2703,8 @@ export default function GridClient({
                   : { afterColumnId: columnMenu.column.id }),
               });
             }}
-            onChangeType={(type) => patchColumn(columnMenu.column, { type, config: {} })}
+            onChangeType={(type) => changeColumnType(columnMenu.column, type)}
+            {...configureProps(columnMenu.column)}
             onDuplicate={() => duplicateColumn(columnMenu.column)}
             onSplit={(delimiter) => splitColumn(columnMenu.column, delimiter)}
             onSort={(direction) =>
@@ -2392,7 +2760,7 @@ export default function GridClient({
       {rowActionsRect && (
         <Popover
           anchorRect={rowActionsRect}
-          onClose={() => setRowActionsRect(null)}
+          onClose={closeRowActions}
           width={252}
           align="right"
         >
@@ -2500,7 +2868,7 @@ export default function GridClient({
       <AddColumnMenu
         open={addMenu !== null}
         anchorRect={addMenu?.rect ?? null}
-        onClose={() => setAddMenu(null)}
+        onClose={closeAddMenu}
         onPick={addColumn}
       />
 
@@ -2569,6 +2937,7 @@ export default function GridClient({
           onCreated={({ campaignId, channel, created, failed }) => {
             setCreateCampaignOpen(false);
             setSelectedRowIds([]);
+            setAllMatchingSelected(false);
             setNotice(`Created ${channel === "email" ? "email" : "LinkedIn"} campaign with ${created} person${created === 1 ? "" : "s"}${failed ? `; ${failed} row${failed === 1 ? "" : "s"} skipped` : ""}. Campaign ID: ${campaignId}`);
           }}
         />

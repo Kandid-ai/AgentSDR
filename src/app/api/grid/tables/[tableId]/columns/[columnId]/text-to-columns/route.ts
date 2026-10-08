@@ -5,6 +5,7 @@ import {
   type TextSplitDelimiter,
 } from "@/lib/grid/column-operations";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { clientMessage, isRecord, isUuid } from "@/lib/grid/validate";
 
 export async function POST(
   req: NextRequest,
@@ -13,9 +14,12 @@ export async function POST(
   try {
     return await withOrgContext(req, async () => {
       const { tableId, columnId } = await params;
+      if (!isUuid(tableId) || !isUuid(columnId)) return NextResponse.json({ error: "not found" }, { status: 404 });
       let body: { delimiter?: TextSplitDelimiter };
       try {
-        body = await req.json();
+        const parsed = await req.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
       }
@@ -28,7 +32,7 @@ export async function POST(
         return NextResponse.json({ columnsCreated: result.columns.length, rowsUpdated: result.rowsUpdated });
       } catch (cause) {
         return NextResponse.json(
-          { error: cause instanceof Error ? cause.message : "could not split this column" },
+          { error: clientMessage(cause, "could not split this column") },
           { status: 400 },
         );
       }

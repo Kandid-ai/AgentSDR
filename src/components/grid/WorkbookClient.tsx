@@ -61,6 +61,7 @@ function TableActionsMenu({
   children,
   canMoveLeft,
   canMoveRight,
+  canDelete,
   onRename,
   onSettings,
   onMoveLeft,
@@ -72,6 +73,7 @@ function TableActionsMenu({
   children: ReactNode;
   canMoveLeft: boolean;
   canMoveRight: boolean;
+  canDelete: boolean;
   onRename: () => void;
   onSettings: () => void;
   onMoveLeft: () => void;
@@ -98,7 +100,14 @@ function TableActionsMenu({
         <Dropdown.Item onSelect={onMove}><Dropdown.ItemIcon as={RiDragMove2Line} />Move to workbook…</Dropdown.Item>
         <Dropdown.Item onSelect={onDuplicate}><Dropdown.ItemIcon as={RiFileCopyLine} />Duplicate table</Dropdown.Item>
         <Dropdown.Separator />
-        <Dropdown.Item destructive onSelect={onDelete}><Dropdown.ItemIcon as={RiDeleteBin6Line} />Delete</Dropdown.Item>
+        <Dropdown.Item
+          destructive
+          disabled={!canDelete}
+          title={canDelete ? undefined : "A workbook needs at least one table"}
+          onSelect={onDelete}
+        >
+          <Dropdown.ItemIcon as={RiDeleteBin6Line} />Delete
+        </Dropdown.Item>
       </Dropdown.Content>
     </Dropdown.Root>
   );
@@ -169,6 +178,8 @@ export default function WorkbookClient({
 
   /** Tab order when the drag began, so a drag back to the start saves nothing. */
   const orderAtDragStart = useRef<string[] | null>(null);
+  /** Set by a real drop, so the dragend that follows it is not read as a cancel. */
+  const droppedRef = useRef(false);
 
   /**
    * In-flight and recently-finished sheet fetches, keyed by table id.
@@ -228,7 +239,15 @@ export default function WorkbookClient({
     try {
       const payload = await fetchSheet(tableId);
       if (seq !== loadSeq.current) return;
-      if (payload) setSheet(payload);
+      if (payload) {
+        setSheet(payload);
+      } else {
+        void dialogs.alert({
+          title: "Could not open that table",
+          description: "The table did not load. Check your connection and try again.",
+          variant: "error",
+        });
+      }
     } finally {
       if (seq === loadSeq.current) {
         setPendingId(null);
@@ -236,7 +255,7 @@ export default function WorkbookClient({
         setShowLoadingOverlay(false);
       }
     }
-  }, [activeId, fetchSheet]);
+  }, [activeId, dialogs, fetchSheet]);
 
   // A switch that resolves from the prefetch cache finishes in a frame or two.
   // Showing the overlay only once it has actually taken a moment keeps those
@@ -260,14 +279,21 @@ export default function WorkbookClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ workbookId: workbook.id }),
       });
-      if (!res.ok) return;
-      const { table } = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        void dialogs.alert({
+          title: "Could not add a table",
+          description: data.error,
+          variant: "error",
+        });
+        return;
+      }
       await refreshTabs();
-      await loadSheet(table.id);
+      await loadSheet(data.table.id);
     } finally {
       setSaving(false);
     }
-  }, [workbook.id, refreshTabs, loadSheet]);
+  }, [workbook.id, dialogs, refreshTabs, loadSheet]);
 
   const renameWorkbook = useCallback(async () => {
     const name = (
@@ -356,9 +382,17 @@ export default function WorkbookClient({
       });
       return null;
     }
-    setTables((all) => all.map((item) => item.id === table.id ? data.table : item));
+    // Take only the fields this patch changed (plus the timestamp). The open
+    // grid owns the rest, such as Auto-run, and the server copy may not match
+    // what it shows until its next load.
+    const changed = Object.fromEntries(
+      [...Object.keys(patch), "updatedAt"]
+        .filter((key) => key in data.table)
+        .map((key) => [key, data.table[key]]),
+    );
+    setTables((all) => all.map((item) => item.id === table.id ? { ...item, ...changed } : item));
     if (table.id === activeId) {
-      setSheet((current) => ({ ...current, table: data.table }));
+      setSheet((current) => ({ ...current, table: { ...current.table, ...changed } }));
     }
     return data.table as GridTable;
   }, [activeId, dialogs]);
@@ -479,6 +513,17 @@ export default function WorkbookClient({
     await persistOrder(ordered);
   }, [dragId, persistOrder]);
 
+  const cancelTabDrag = useCallback(() => {
+    const before = orderAtDragStart.current;
+    orderAtDragStart.current = null;
+    setDragId(null);
+    if (!before) return;
+    setTables((current) => {
+      const restored = before.flatMap((id) => current.find((t) => t.id === id) ?? []);
+      return restored.length === current.length ? restored : current;
+    });
+  }, []);
+
   const duplicateTable = useCallback(async (table: GridTable) => {
     setSaving(true);
     try {
@@ -571,6 +616,7 @@ export default function WorkbookClient({
         <TableActionsMenu
           canMoveLeft={tables.findIndex((t) => t.id === activeId) > 0}
           canMoveRight={tables.findIndex((t) => t.id === activeId) < tables.length - 1}
+          canDelete={tables.length > 1}
           onRename={() => void renameTable(sheet.table)}
           onSettings={() => void editTableSettings(sheet.table)}
           onMoveLeft={() => void nudgeTable(sheet.table, -1)}
@@ -629,10 +675,18 @@ export default function WorkbookClient({
                 onDragStart={() => {
                   setDragId(t.id);
                   orderAtDragStart.current = tablesRef.current.map((item) => item.id);
+                  droppedRef.current = false;
                 }}
                 onDragOver={(event) => onTabDragOver(event, t.id)}
-                onDrop={() => void onTabDrop()}
-                onDragEnd={() => void onTabDrop()}
+                onDrop={() => {
+                  droppedRef.current = true;
+                  void onTabDrop();
+                }}
+                onDragEnd={() => {
+                  // Esc or a drop outside any tab ends the drag without a drop:
+                  // put the tabs back instead of saving the live preview.
+                  if (!droppedRef.current) cancelTabDrag();
+                }}
                 title="Drag to reorder"
                 className={`flex shrink-0 cursor-grab items-center border-t-2 text-[13px] font-medium transition active:cursor-grabbing ${
                   active
@@ -656,6 +710,7 @@ export default function WorkbookClient({
                 <TableActionsMenu
                   canMoveLeft={index > 0}
                   canMoveRight={index < tables.length - 1}
+                  canDelete={tables.length > 1}
                   onRename={() => void renameTable(t)}
                   onSettings={() => void editTableSettings(t)}
                   onMoveLeft={() => void nudgeTable(t, -1)}

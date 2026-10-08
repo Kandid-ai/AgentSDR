@@ -12,6 +12,7 @@ import {
   RiGitBranchLine,
   RiPencilLine,
   RiPushpinLine,
+  RiSettings3Line,
   RiSortAsc,
   RiSortDesc,
   RiSplitCellsHorizontal,
@@ -40,6 +41,8 @@ export default function ColumnMenu({
   column,
   columns,
   pinned,
+  configureLabel,
+  onConfigure,
   onClose,
   onError,
   onRename,
@@ -57,6 +60,9 @@ export default function ColumnMenu({
   column: GridColumn;
   columns: GridColumn[];
   pinned: boolean;
+  /** Entry that opens the column's own setup dialog (enrichment, AI, HTTP, formula). */
+  configureLabel?: string;
+  onConfigure?: () => void;
   onClose: () => void;
   onError: (message: string) => void;
   onRename: (name: string) => Promise<void>;
@@ -77,11 +83,39 @@ export default function ColumnMenu({
   const [showUsedIn, setShowUsedIn] = useState(false);
   const [submenu, setSubmenu] = useState<"insert" | "split" | "sort" | null>(null);
   const [busy, setBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   const usedIn = columns.filter((candidate) => candidate.dependsOn.includes(column.key));
   const valueType = effectiveColumnType(column);
-  const canChangeType = column.type !== "integration_output" && column.type !== "ai_output";
-  const canSplit = valueType === "text";
+  // Output columns are shaped by their source; enrichment and AI columns have
+  // no plain-column form to turn into.
+  const isOutput = column.type === "integration_output" || column.type === "ai_output";
+  const isSource = column.type === "enrichment" || column.type === "ai";
+  const canChangeType = !isOutput && !isSource;
+  // A copy of a source would share its output columns, and an output has no
+  // setup of its own to copy.
+  const canDuplicate = !isOutput && !isSource;
+  const canSplit = valueType === "text" && !isSource;
+
+  const trimmedName = name.trim();
+  const nameTaken = columns.some(
+    (candidate) => candidate.id !== column.id && candidate.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+  );
+  const canSaveName = !busy && trimmedName !== "" && trimmedName !== column.name && !nameTaken;
+
+  const submitRename = async () => {
+    if (!canSaveName) return;
+    setBusy(true);
+    setRenameError(null);
+    try {
+      await onRename(trimmedName);
+      onClose();
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : "Could not rename the column");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -101,9 +135,8 @@ export default function ColumnMenu({
         className="p-3"
         onSubmit={(event) => {
           event.preventDefault();
-          const next = name.trim();
-          if (next && next !== column.name) void run(() => onRename(next));
-          else onClose();
+          if (trimmedName === column.name) onClose();
+          else void submitRename();
         }}
       >
         <label className="mb-1.5 block text-[12px] font-medium text-text-sub-600">
@@ -112,15 +145,23 @@ export default function ColumnMenu({
         <input
           autoFocus
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setRenameError(null);
+          }}
           className="w-full rounded-lg border border-blue-500 px-2.5 py-2 text-[13px] text-text-strong-950 outline-none ring-1 ring-blue-500"
           onFocus={(event) => event.currentTarget.select()}
         />
+        {(renameError || nameTaken) && (
+          <p className="mt-1.5 text-[12px] text-red-600 dark:text-red-400">
+            {renameError ?? "Another column already has this name."}
+          </p>
+        )}
         <div className="mt-2 flex justify-end gap-2">
           <button type="button" onClick={() => setRenaming(false)} className="rounded-md px-2.5 py-1.5 text-[12px] text-text-sub-600 hover:bg-bg-weak-50">
             Cancel
           </button>
-          <button type="submit" disabled={busy || !name.trim()} className="rounded-md bg-blue-600 px-2.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-50">
+          <button type="submit" disabled={!canSaveName} className="rounded-md bg-blue-600 px-2.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-50">
             Save
           </button>
         </div>
@@ -130,6 +171,12 @@ export default function ColumnMenu({
 
   return (
     <div className="p-2">
+      {onConfigure && (
+        <>
+          <MenuButton icon={RiSettings3Line} label={configureLabel ?? "Configure…"} onClick={() => void run(async () => onConfigure())} />
+          <Divider />
+        </>
+      )}
       <MenuButton icon={RiPencilLine} label="Rename column" onClick={() => setRenaming(true)} />
       <HoverSubmenu
         icon={RiArrowRightLine}
@@ -160,7 +207,9 @@ export default function ColumnMenu({
           {usedIn.length ? usedIn.map((dependent) => <div key={dependent.id} className="py-1">{dependent.name}</div>) : "No columns depend on this one."}
         </div>
       )}
-      <MenuButton icon={RiFileCopyLine} label="Duplicate" disabled={busy} onClick={() => void run(onDuplicate)} />
+      {canDuplicate && (
+        <MenuButton icon={RiFileCopyLine} label="Duplicate" disabled={busy} onClick={() => void run(onDuplicate)} />
+      )}
       <HoverSubmenu
         icon={RiSplitCellsHorizontal}
         label="Text to columns"

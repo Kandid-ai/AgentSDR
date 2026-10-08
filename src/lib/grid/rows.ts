@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { inOrgTables, tableInOrganization } from "./scope";
 import { gridJobs, gridRows, gridTables, type GridRow } from "./schema";
@@ -271,6 +271,23 @@ export async function deleteRows(tableId: string, rowIds: string[]): Promise<num
 }
 
 /**
+ * The re-read window behind the cursor. A version comes from nextval() when a
+ * statement runs, but its row only becomes visible when the transaction
+ * commits — so version 101 can appear after 102 is already visible, and a
+ * strict `> cursor` would skip it for good.
+ *
+ * So a poll also re-reads rows within VERSION_OVERLAP versions behind the
+ * cursor (versions are one global sequence; this must exceed the largest batch
+ * one transaction writes, a 1,000-row paste), but only those written in the
+ * last OVERLAP_SECONDS: a late commit is always recent, and without that bound
+ * every poll during a run would re-send the last paste or import in full.
+ * Every write that bumps `version` also sets `updated_at`. Rows seen twice are
+ * harmless: the client overwrites by row id.
+ */
+const VERSION_OVERLAP = 2000;
+const OVERLAP_SECONDS = 30;
+
+/**
  * The polling endpoint's query: rows written since `cursor`.
  *
  * `activeJobs` is what tells the client whether to keep polling — when it
@@ -284,9 +301,23 @@ export async function changesSince(
   const rows = await db
     .select()
     .from(gridRows)
-    .where(and(inOrgTables(gridRows.tableId), eq(gridRows.tableId, tableId), gt(gridRows.version, cursor)))
+    .where(
+      and(
+        inOrgTables(gridRows.tableId),
+        eq(gridRows.tableId, tableId),
+        or(
+          gt(gridRows.version, cursor),
+          and(
+            gt(gridRows.version, Math.max(0, cursor - VERSION_OVERLAP)),
+            sql`${gridRows.updatedAt} > now() - make_interval(secs => ${OVERLAP_SECONDS})`,
+          ),
+        ),
+      ),
+    )
     .orderBy(asc(gridRows.version))
-    .limit(limit);
+    // The overlap re-sends up to VERSION_OVERLAP rows already seen; leave room
+    // for `limit` new ones so a busy table's cursor still advances.
+    .limit(limit + VERSION_OVERLAP);
 
   const [jobs] = await db
     .select({ n: count() })
@@ -301,8 +332,8 @@ export async function changesSince(
 
   return {
     rows,
-    // Hold the cursor when nothing changed, so we never skip a write.
-    cursor: rows.length ? Number(rows[rows.length - 1].version) : cursor,
+    // Hold the cursor when nothing changed, and never move it backwards.
+    cursor: rows.length ? Math.max(cursor, Number(rows[rows.length - 1].version)) : cursor,
     activeJobs: jobs?.n ?? 0,
   };
 }

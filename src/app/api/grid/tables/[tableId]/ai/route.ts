@@ -3,19 +3,30 @@ import { createAiColumns, updateAiColumns, type AiColumnInput } from "@/lib/grid
 import { getTable } from "@/lib/grid/tables";
 import type { AiExample, AiOutputField, AiUseCase } from "@/lib/grid/types";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { clientMessage, isRecord, isUuid } from "@/lib/grid/validate";
 
 type Body = Partial<AiColumnInput> & { columnId?: string };
 
 function read(body: Body): Omit<AiColumnInput, "tableId"> | string {
   if (!body.useCase) return "A use case is required";
   if (!body.providerKey || !body.modelKey) return "Select an AI model";
+  if (typeof body.providerKey !== "string" || typeof body.modelKey !== "string") return "Select an AI model";
   if (!body.connectionId) return "Connect a provider account";
+  if (!isUuid(body.connectionId)) return "connectionId is not a valid id";
   if (typeof body.prompt !== "string" || !body.prompt.trim()) return "A prompt is required";
 
   const outputFormat = body.outputFormat === "json_schema" ? "json_schema" : "fields";
   if (outputFormat === "fields" && !Array.isArray(body.outputs)) {
     return "outputs must be an array";
   }
+  if (
+    (body.outputs ?? []).some(
+      (field) => !isRecord(field) || typeof field.key !== "string" || typeof field.name !== "string" || typeof field.type !== "string",
+    )
+  ) {
+    return "every output needs a key, a name and a type";
+  }
+  if (body.examples !== undefined && !Array.isArray(body.examples)) return "examples must be an array";
 
   return {
     useCase: body.useCase as AiUseCase,
@@ -44,13 +55,15 @@ export async function POST(
   try {
     return await withOrgContext(request, async () => {
       const { tableId } = await params;
-      if (!(await getTable(tableId))) {
+      if (!isUuid(tableId) || !(await getTable(tableId))) {
         return NextResponse.json({ error: "table not found" }, { status: 404 });
       }
 
       let body: Body;
       try {
-        body = await request.json();
+        const parsed = await request.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
       }
@@ -63,7 +76,7 @@ export async function POST(
         return NextResponse.json({ columns, primaryColumnKey: columns[0]?.key }, { status: 201 });
       } catch (cause) {
         return NextResponse.json(
-          { error: cause instanceof Error ? cause.message : "Could not add that AI column" },
+          { error: clientMessage(cause, "Could not add that AI column") },
           { status: 400 },
         );
       }
@@ -83,17 +96,19 @@ export async function PATCH(
   try {
     return await withOrgContext(request, async () => {
       const { tableId } = await params;
-      if (!(await getTable(tableId))) {
+      if (!isUuid(tableId) || !(await getTable(tableId))) {
         return NextResponse.json({ error: "table not found" }, { status: 404 });
       }
 
       let body: Body;
       try {
-        body = await request.json();
+        const parsed = await request.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
       }
-      if (!body.columnId) return NextResponse.json({ error: "columnId is required" }, { status: 400 });
+      if (typeof body.columnId !== "string" || !body.columnId) return NextResponse.json({ error: "columnId is required" }, { status: 400 });
 
       const parsed = read(body);
       if (typeof parsed === "string") return NextResponse.json({ error: parsed }, { status: 400 });
@@ -104,7 +119,7 @@ export async function PATCH(
         return NextResponse.json({ columns, primaryColumnKey: primary?.key });
       } catch (cause) {
         return NextResponse.json(
-          { error: cause instanceof Error ? cause.message : "Could not update that AI column" },
+          { error: clientMessage(cause, "Could not update that AI column") },
           { status: 400 },
         );
       }

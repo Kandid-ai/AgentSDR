@@ -63,6 +63,41 @@ export class PermanentRunError extends Error {
   }
 }
 
+/**
+ * A failure the queue should retry with backoff — a rate limit, a 5xx, a
+ * timeout. Carries the same audit fields as PermanentRunError so the run log
+ * still records what was sent and what came back.
+ */
+export class RetryableRunError extends Error {
+  readonly permanent = false;
+  constructor(
+    message: string,
+    readonly audit?: { provider?: string; request?: unknown; response?: unknown },
+  ) {
+    super(message);
+    this.name = "RetryableRunError";
+  }
+}
+
+/**
+ * The label a run is recorded under. OpenRouter model keys already carry
+ * their vendor ("minimax/minimax-m3"), so the upstream slug is only added
+ * when the key does not start with it.
+ */
+export function aiProviderLabel(providerKey: string, upstreamProvider: string | undefined, modelKey: string): string {
+  const base = `${providerKey}/${modelKey}`;
+  return upstreamProvider && !modelKey.startsWith(`${upstreamProvider}/`) ? `${base}@${upstreamProvider}` : base;
+}
+
+/**
+ * A row's own value for `key`. Plain `row[key]` also finds inherited
+ * properties, so a column called "constructor" or "toString" would read as a
+ * function and be written into a prompt.
+ */
+export function ownCell(row: CellValues, key: string): unknown {
+  return Object.hasOwn(row, key) ? row[key] : undefined;
+}
+
 const TOKEN_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
 /** Every distinct {{token}} in a string. */
@@ -82,7 +117,7 @@ export function tokensIn(text: string | undefined | null): string[] {
  */
 export function interpolate(template: string, row: CellValues): string {
   return template.replace(TOKEN_RE, (_, key: string) => {
-    const v = row[key];
+    const v = ownCell(row, key);
     if (v === null || v === undefined) return "";
     return typeof v === "object" ? JSON.stringify(v) : String(v);
   });

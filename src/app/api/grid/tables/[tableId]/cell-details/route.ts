@@ -6,6 +6,7 @@ import { tableInOrganization } from "@/lib/grid/scope";
 import { gridCellRuns, gridColumns, gridRows } from "@/lib/grid/schema";
 import type { AiConfig, AiOutputConfig, IntegrationOutputConfig } from "@/lib/grid/types";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { clientMessage, isRecord, isUuid } from "@/lib/grid/validate";
 
 async function resolveCell(tableId: string, rowId: string, columnKey: string) {
   // Every query below is keyed by table id; another organization's table reads as not found.
@@ -57,6 +58,7 @@ export async function GET(
       const { tableId } = await params;
       const rowId = request.nextUrl.searchParams.get("rowId") ?? "";
       const columnKey = request.nextUrl.searchParams.get("columnKey") ?? "";
+      if (!isUuid(tableId) || !isUuid(rowId)) return NextResponse.json({ error: "Cell not found" }, { status: 404 });
       const resolved = await resolveCell(tableId, rowId, columnKey);
       if (!resolved) return NextResponse.json({ error: "Cell not found" }, { status: 404 });
 
@@ -108,15 +110,24 @@ export async function POST(
   try {
     return await withOrgContext(request, async () => {
       const { tableId } = await params;
+      if (!isUuid(tableId)) return NextResponse.json({ error: "Cell not found" }, { status: 404 });
       let body: { rowId?: string; columnKey?: string; runId?: string; pointer?: string; name?: string };
       try {
-        body = await request.json();
+        const parsed = await request.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
       }
-      if (!body.rowId || !body.columnKey || !body.runId || !body.pointer || !body.name?.trim()) {
+      if (
+        typeof body.rowId !== "string" || typeof body.columnKey !== "string" || typeof body.runId !== "string" ||
+        typeof body.pointer !== "string" || typeof body.name !== "string" ||
+        !body.rowId || !body.columnKey || !body.runId || !body.pointer || !body.name.trim()
+      ) {
         return NextResponse.json({ error: "Row, cell run, response field, and column name are required" }, { status: 400 });
       }
+      if (!isUuid(body.runId)) return NextResponse.json({ error: "runId is not a valid id" }, { status: 400 });
+      if (!isUuid(body.rowId)) return NextResponse.json({ error: "Cell not found" }, { status: 404 });
       if (body.pointer.length > 1000 || body.name.length > 120) {
         return NextResponse.json({ error: "Response field or column name is too long" }, { status: 400 });
       }
@@ -138,7 +149,7 @@ export async function POST(
         return NextResponse.json({ column }, { status: 201 });
       } catch (error) {
         return NextResponse.json({
-          error: error instanceof Error ? error.message : "Could not add response field",
+          error: clientMessage(error, "Could not add response field"),
         }, { status: 400 });
       }
     });

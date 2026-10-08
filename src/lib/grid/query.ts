@@ -1,15 +1,16 @@
 import { sql, type SQL } from "drizzle-orm";
 import { gridRows } from "./schema";
-import type { ColumnType } from "./types";
+import type { ColumnType, TableView } from "./types";
 
 /**
  * Filtering and sorting over the JSONB value plane.
  *
  * Nothing here is string-interpolated into SQL: column keys and user values
  * alike are bound as parameters by drizzle's sql template, so `cells ->> $1`
- * is injection-safe on its own. assertKnownColumns() is defence in depth and
- * a correctness check — it rejects a saved view naming a column that has since
- * been deleted, rather than silently returning no rows.
+ * is injection-safe on its own. assertKnownColumns() is defence in depth: it
+ * drops saved-view entries naming a column that has since been deleted (or
+ * otherwise invalid), so an old view can never make a table unopenable.
+ * validateView() is the strict check run when a view is saved.
  */
 
 /** Matches Clay's operator dropdown, in its order. */
@@ -98,6 +99,18 @@ function boundValue(value: string, type: ColumnType): SQL {
   return sql`${value}`;
 }
 
+/**
+ * Escapes LIKE metacharacters so "50%" or "a_b" match literally. Used with
+ * `ESCAPE '\\'` — without it a bare "%" or "_" matches every row.
+ */
+export function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+function likePattern(value: string): string {
+  return `%${escapeLike(value)}%`;
+}
+
 function conditionSql(
   c: FilterCondition,
   types: Map<string, ColumnType>,
@@ -140,9 +153,9 @@ function conditionSql(
     case "lte":
       return sql`${left} <= ${boundValue(value, type)}`;
     case "contains":
-      return sql`${raw} ILIKE ${"%" + value + "%"}`;
+      return sql`${raw} ILIKE ${likePattern(value)} ESCAPE '\\'`;
     case "notContains":
-      return sql`(${raw} IS NULL OR ${raw} NOT ILIKE ${"%" + value + "%"})`;
+      return sql`(${raw} IS NULL OR ${raw} NOT ILIKE ${likePattern(value)} ESCAPE '\\')`;
     default:
       return null;
   }
@@ -167,7 +180,7 @@ function searchSql(term: string, columnKeys: string[]): SQL | null {
   if (!t || !columnKeys.length) return null;
 
   const parts = columnKeys.map(
-    (k) => sql`${gridRows.cells} ->> ${k} ILIKE ${"%" + t + "%"}`,
+    (k) => sql`${gridRows.cells} ->> ${k} ILIKE ${likePattern(t)} ESCAPE '\\'`,
   );
   return sql`(${sql.join(parts, sql` OR `)})`;
 }
@@ -230,33 +243,131 @@ export function buildOrderBy(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Rejects a query naming a column the table does not have.
+ * Drops filters and sorts a table can no longer apply, in place.
  *
- * This is the check that lets valueExpr() interpolate a key into SQL: by the
- * time a key gets there it has been matched against the table's own columns.
+ * A saved view outlives the columns it names: a column deleted after the view
+ * was saved, or a view written before PATCH validated it, must degrade to "that
+ * filter is ignored" rather than a 400 on every later read of the table. Also
+ * the check that lets valueExpr() trust a key — whatever survives is a column
+ * the table has, with a known operator or direction.
  */
 export function assertKnownColumns(query: GridQuery, known: Set<string>): void {
-  const visit = (c: FilterCondition | FilterGroup): void => {
-    if (isFilterGroup(c)) {
-      c.conditions.forEach(visit);
-      return;
-    }
-    if (!known.has(c.columnKey)) {
-      throw new Error(`Unknown column in filter: "${c.columnKey}"`);
-    }
-    if (!FILTER_OPERATORS.includes(c.operator)) {
-      throw new Error(`Unknown filter operator: "${c.operator}"`);
-    }
-  };
+  if (query.filters) query.filters = pruneFilterGroup(query.filters, known);
+  if (query.sorts) query.sorts = pruneSorts(query.sorts, known);
+}
 
-  if (query.filters) visit(query.filters);
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-  for (const s of query.sorts ?? []) {
-    if (!known.has(s.columnKey)) {
-      throw new Error(`Unknown column in sort: "${s.columnKey}"`);
+function pruneFilterGroup(group: unknown, known: Set<string>): FilterGroup {
+  const raw = isObject(group) && Array.isArray(group.conditions) ? group : { conditions: [] };
+  const conditions: (FilterCondition | FilterGroup)[] = [];
+  for (const c of raw.conditions as unknown[]) {
+    if (!isObject(c)) continue;
+    if (Array.isArray(c.conditions)) {
+      conditions.push(pruneFilterGroup(c, known));
+      continue;
     }
-    if (s.direction !== "asc" && s.direction !== "desc") {
-      throw new Error(`Sort direction must be asc or desc`);
+    if (typeof c.columnKey !== "string" || !known.has(c.columnKey)) continue;
+    if (!FILTER_OPERATORS.includes(c.operator as FilterOperator)) continue;
+    const value =
+      typeof c.value === "string" ? c.value
+      : typeof c.value === "number" || typeof c.value === "boolean" ? String(c.value)
+      : undefined;
+    conditions.push({
+      columnKey: c.columnKey,
+      operator: c.operator as FilterOperator,
+      ...(value !== undefined ? { value } : {}),
+      ...(c.disabled === true ? { disabled: true } : {}),
+    });
+  }
+  return { conjunction: raw.conjunction === "or" ? "or" : "and", conditions };
+}
+
+function pruneSorts(sorts: unknown, known: Set<string>): SortSpec[] {
+  if (!Array.isArray(sorts)) return [];
+  return sorts.filter(
+    (s): s is SortSpec =>
+      isObject(s) &&
+      typeof s.columnKey === "string" &&
+      known.has(s.columnKey) &&
+      (s.direction === "asc" || s.direction === "desc"),
+  ).map((s) => ({ columnKey: s.columnKey, direction: s.direction }));
+}
+
+/**
+ * A copy of a saved view with everything the table cannot apply removed.
+ * Hidden/pinned lists are reduced to known column keys as well.
+ */
+export function sanitizeView(view: unknown, known: Set<string>): TableView {
+  if (!isObject(view)) return {};
+  const keys = (value: unknown) =>
+    Array.isArray(value) ? value.filter((k): k is string => typeof k === "string" && known.has(k)) : undefined;
+  const out: TableView = {};
+  const hidden = keys(view.hiddenColumns);
+  const pinned = keys(view.pinnedColumns);
+  if (hidden) out.hiddenColumns = hidden;
+  if (pinned) out.pinnedColumns = pinned;
+  if (isObject(view.filters)) out.filters = pruneFilterGroup(view.filters, known);
+  if (Array.isArray(view.sorts)) out.sorts = pruneSorts(view.sorts, known);
+  return out;
+}
+
+const MAX_VIEW_DEPTH = 6;
+const MAX_VIEW_CONDITIONS = 200;
+
+/**
+ * Strict check for a view being SAVED: returns a message for the first
+ * problem, or null. Reads stay tolerant (see assertKnownColumns); this keeps
+ * new junk from being stored in the first place.
+ */
+export function validateView(view: unknown, known: Set<string>): string | null {
+  if (!isObject(view)) return "view must be an object";
+
+  for (const field of ["hiddenColumns", "pinnedColumns"] as const) {
+    const list = view[field];
+    if (list === undefined) continue;
+    if (!Array.isArray(list) || list.some((k) => typeof k !== "string")) {
+      return `${field} must be an array of column keys`;
     }
   }
+
+  if (view.sorts !== undefined) {
+    if (!Array.isArray(view.sorts)) return "sorts must be an array";
+    for (const s of view.sorts) {
+      if (!isObject(s) || typeof s.columnKey !== "string") return "Each sort needs a columnKey";
+      if (!known.has(s.columnKey)) return `Unknown column in sort: "${s.columnKey}"`;
+      if (s.direction !== "asc" && s.direction !== "desc") return "Sort direction must be asc or desc";
+    }
+  }
+
+  if (view.filters !== undefined) {
+    let seen = 0;
+    const visit = (group: unknown, depth: number): string | null => {
+      if (!isObject(group) || !Array.isArray(group.conditions)) return "filters must be a group with a conditions array";
+      if (group.conjunction !== "and" && group.conjunction !== "or") return "Filter conjunction must be and or or";
+      if (depth > MAX_VIEW_DEPTH) return "Filters are nested too deeply";
+      for (const c of group.conditions) {
+        if (++seen > MAX_VIEW_CONDITIONS) return "Too many filter conditions";
+        if (!isObject(c)) return "Each filter must be an object";
+        if (Array.isArray(c.conditions)) {
+          const nested = visit(c, depth + 1);
+          if (nested) return nested;
+          continue;
+        }
+        if (typeof c.columnKey !== "string") return "Each filter needs a columnKey";
+        if (!known.has(c.columnKey)) return `Unknown column in filter: "${c.columnKey}"`;
+        if (!FILTER_OPERATORS.includes(c.operator as FilterOperator)) return `Unknown filter operator: "${String(c.operator)}"`;
+        const v = c.value;
+        if (v !== undefined && v !== null && typeof v !== "string" && typeof v !== "number" && typeof v !== "boolean") {
+          return "A filter value must be text";
+        }
+      }
+      return null;
+    };
+    const problem = visit(view.filters, 0);
+    if (problem) return problem;
+  }
+  return null;
 }

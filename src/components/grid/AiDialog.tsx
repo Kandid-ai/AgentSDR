@@ -121,7 +121,7 @@ export default function AiDialog({
   tableId,
   columns,
   firstRowIds,
-  column,
+  column: columnProp,
   afterColumnId,
   beforeColumnId,
   onClose,
@@ -138,7 +138,12 @@ export default function AiDialog({
   onClose: () => void;
   onSaved: (activeJobs?: number) => void | Promise<void>;
 }) {
+  // A column created by this dialog: if the run that follows fails, the dialog
+  // stays open and a second save must update this column, not create another.
+  const [created, setCreated] = useState<GridColumn | null>(null);
+  const column = columnProp ?? created ?? undefined;
   const saved = column?.config as AiConfig | undefined;
+  const savedKeys = new Set(Object.keys(saved?.outputColumns ?? {}));
 
   const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
   const [useCase, setUseCase] = useState<AiUseCase>(saved?.useCase ?? "web-research");
@@ -179,13 +184,24 @@ export default function AiDialog({
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
 
+  // The column's own outputs would make its prompt depend on itself.
+  const ownOutputIds = useMemo(() => new Set(
+    column
+      ? columns
+          .filter((c) => c.type === "ai_output"
+            && (c.config as { sourceColumnKey?: string }).sourceColumnKey === column.key)
+          .map((c) => c.id)
+      : [],
+  ), [columns, column]);
+
   const pickerColumns = useMemo(() => {
     if (!picker) return [];
     const query = picker.query.toLowerCase();
     return columns.filter((c) =>
       c.id !== column?.id
+      && !ownOutputIds.has(c.id)
       && (c.name.toLowerCase().includes(query) || c.key.toLowerCase().includes(query)));
-  }, [picker, columns, column?.id]);
+  }, [picker, columns, column?.id, ownOutputIds]);
 
   // Anchor the picker at its trigger, below the line — or above it when the
   // line sits too near the bottom of the window for the list to fit.
@@ -275,7 +291,8 @@ export default function AiDialog({
         };
       });
       setOpenRouterChoices(next);
-      setConnectionId((current) => current || body.settings?.connectionId || "");
+      // OpenRouter columns must use the connection chosen in AI Settings; a stale saved one would be refused.
+      setConnectionId((current) => body.settings?.connectionId || current);
       setDefaultModel(body.settings?.defaultModel ?? null);
     }).finally(() => setModelsLoading(false));
   }, [open]);
@@ -335,9 +352,11 @@ export default function AiDialog({
       current.map((field, i) => {
         if (i !== index) return field;
         const next = { ...field, ...patch };
-        if (patch.name !== undefined) {
-          const taken = new Set(current.filter((_, j) => j !== i).map((f) => f.key));
-          next.key = fieldKey(patch.name, taken);
+        // A saved field keeps its key: the server matches a renamed output to
+        // its existing column by key. A new field's key follows its name,
+        // because the key is the property name the model is asked to fill.
+        if (patch.name !== undefined && !savedKeys.has(field.key)) {
+          next.key = fieldKey(patch.name || "field", new Set(current.filter((_, j) => j !== i).map((f) => f.key)));
         }
         return next;
       }),
@@ -348,6 +367,16 @@ export default function AiDialog({
     if (!model || !selectedChoice) return setError("Select a model enabled in AI Settings.");
     if (!connectionId) return setError(`Connect a ${provider?.name ?? "provider"} account first.`);
     if (!prompt.trim()) return setError("Write a prompt.");
+    if (outputFormat === "fields" && !model.producesImages) {
+      const names = outputs.map((field) => field.name.trim().toLowerCase());
+      if (names.some((name) => !name)) return setError("Every output needs a name.");
+      if (new Set(names).size !== names.length) return setError("Output names must be different from each other.");
+    }
+    // The grid can hand over its coverage row, which is not a real row.
+    const runRowIds = firstRowIds.filter((id) => id !== "__coverage").slice(0, 10);
+    if (runFirstTen && runRowIds.length === 0) {
+      return setError("There are no rows on this page to run. Use Save, then run once rows are loaded.");
+    }
 
     let jsonSchema: Record<string, unknown> | undefined;
     if (outputFormat === "json_schema") {
@@ -385,20 +414,27 @@ export default function AiDialog({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) return setError(data.error ?? "Could not save this AI column");
+      if (!column && Array.isArray(data.columns) && data.columns[0]) setCreated(data.columns[0] as GridColumn);
 
       let activeJobs: number | undefined;
       if (runFirstTen) {
         const run = await fetch(`/api/grid/tables/${tableId}/run`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ columnKey: data.primaryColumnKey, rowIds: firstRowIds.slice(0, 10) }),
+          body: JSON.stringify({ columnKey: data.primaryColumnKey, rowIds: runRowIds }),
         });
         const runData = await run.json().catch(() => ({}));
-        if (!run.ok) return setError(runData.error ?? "Saved, but the run could not start");
+        if (!run.ok) {
+          // The column exists now: refresh the grid and keep the dialog open on it.
+          await onSaved();
+          return setError(runData.error ?? "Saved, but the run could not start");
+        }
         activeJobs = runData.activeJobs;
       }
       await onSaved(activeJobs);
       onClose();
+    } catch {
+      setError("Could not save this AI column");
     } finally {
       setBusy(false);
     }
@@ -788,11 +824,10 @@ export default function AiDialog({
               </div>
             </div>
           </Section>
-
-          {error && <p className="rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
         </div>
 
         {/* footer */}
+        {error && <p role="alert" className="mx-5 mb-3 mt-3 shrink-0 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
         <div className="flex shrink-0 items-center justify-between gap-3 border-t border-stroke-soft-200 px-5 py-3.5">
           <span className="rounded-full border border-stroke-soft-200 px-2.5 py-1 text-[12px] text-text-sub-600">
             {model ? `${model.creditsPerRun} / row` : "—"}

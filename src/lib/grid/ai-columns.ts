@@ -1,12 +1,12 @@
 import { db } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getAiModel } from "@/lib/ai/catalog";
 import { getByokSettings } from "@/lib/ai/byok";
 import { getAiConnection, getAiCredentials } from "@/lib/ai/connections";
 import { listOpenRouterByokCatalog } from "@/lib/ai/server/openrouter";
 import { gridColumns, type GridColumn } from "./schema";
-import { tableInOrganization } from "./scope";
-import { listColumns, uniqueColumnKey, validateColumnConfig } from "./columns";
+import { inOrgTables, tableInOrganization } from "./scope";
+import { assertNoCycle, listColumns, uniqueColumnKey, uniqueColumnName, validateColumnConfig } from "./columns";
 import { insertionPositions } from "./enrichments";
 import { promptColumnKeys } from "@/lib/ai/catalog";
 import type { AiConfig, AiExample, AiOutputConfig, AiOutputField, AiUseCase } from "./types";
@@ -95,11 +95,18 @@ export async function createAiColumns(input: AiColumnInput): Promise<GridColumn[
   const fields = resultFields(input, Boolean(model.producesImages));
 
   const taken = new Set(existing.map((column) => column.key));
+  const takenNames = existing.map((column) => column.name);
   const outputColumns = new Map<string, string>();
+  const outputNames = new Map<string, string>();
   for (const field of fields) {
     const key = uniqueColumnKey(field.name, taken);
     taken.add(key);
     outputColumns.set(field.key, key);
+    // An output named like an existing column ("Email") must not be
+    // indistinguishable from it in the header.
+    const name = uniqueColumnName(field.name, takenNames);
+    takenNames.push(name);
+    outputNames.set(field.key, name);
   }
 
   const aiColumnKey = uniqueColumnKey(model.name, taken);
@@ -150,7 +157,7 @@ export async function createAiColumns(input: AiColumnInput): Promise<GridColumn[
       return {
         tableId: input.tableId,
         key: outputColumns.get(field.key)!,
-        name: field.name,
+        name: outputNames.get(field.key)!,
         type: "ai_output" as const,
         config: outputConfig,
         dependsOn: [aiColumnKey],
@@ -164,13 +171,67 @@ export async function createAiColumns(input: AiColumnInput): Promise<GridColumn[
   return db.insert(gridColumns).values(values).returning();
 }
 
+/** Output columns this AI column owns: back-referencing ai_output columns plus its stored mapping. */
+function ownOutputColumns(target: GridColumn, existing: GridColumn[]): GridColumn[] {
+  const mapped = new Set(Object.values((target.config as AiConfig).outputColumns ?? {}));
+  return existing.filter(
+    (column) =>
+      column.id !== target.id &&
+      (mapped.has(column.key) ||
+        (column.type === "ai_output" && (column.config as AiOutputConfig).sourceColumnKey === target.key)),
+  );
+}
+
+/**
+ * Pairs each requested output field with the column that should keep holding
+ * its data. In order of trust:
+ *   1. the column the field key already maps to (the dialog keeps a saved
+ *      field's key when it is renamed, so a rename lands here);
+ *   2. an unclaimed output column of this AI column with the same name.
+ * A field with a new key is otherwise a new field: guessing that it replaces
+ * a removed one would hand it the removed field's data.
+ * Columns that are not this AI column's outputs are never candidates, so an
+ * output named "Email" can no longer swallow the user's own "Email" column.
+ */
+export function pairOutputsWithColumns(
+  fields: AiOutputField[],
+  previousFields: AiOutputField[],
+  previousMapping: Record<string, string>,
+  owned: Pick<GridColumn, "key" | "name">[],
+): Map<string, string> {
+  const ownedByKey = new Map(owned.map((column) => [column.key, column]));
+  const paired = new Map<string, string>(); // field key -> column key
+  const claimed = new Set<string>();
+
+  for (const field of fields) {
+    const columnKey = previousMapping[field.key];
+    if (columnKey && ownedByKey.has(columnKey) && !claimed.has(columnKey)) {
+      paired.set(field.key, columnKey);
+      claimed.add(columnKey);
+    }
+  }
+
+  for (const field of fields) {
+    if (paired.has(field.key)) continue;
+    const byName = owned.find(
+      (column) => !claimed.has(column.key) && column.name.trim().toLowerCase() === field.name.trim().toLowerCase(),
+    );
+    if (byName) {
+      paired.set(field.key, byName.key);
+      claimed.add(byName.key);
+    }
+  }
+  return paired;
+}
+
 /**
  * Rewrites an existing AI column in place.
  *
- * Output columns already on the table are reused by name so the data in them
- * survives an edit; only genuinely new fields get a new column. Removing a
- * field leaves its column alone rather than dropping it — silently deleting a
- * populated column because a field was renamed would lose user data.
+ * Output columns this AI column already owns are reused (see
+ * pairOutputsWithColumns) so the data in them survives an edit; only
+ * genuinely new fields get a new column. Removing a field leaves its column
+ * alone rather than dropping it — silently deleting a populated column because
+ * a field was renamed would lose user data.
  */
 export async function updateAiColumns(
   input: AiColumnInput & { columnId: string },
@@ -184,38 +245,44 @@ export async function updateAiColumns(
   const previous = target.config as AiConfig;
   const fields = resultFields(input, Boolean(model.producesImages));
 
-  const byName = new Map(existing.map((column) => [column.name.toLowerCase(), column]));
+  const owned = ownOutputColumns(target, existing);
+  const paired = pairOutputsWithColumns(fields, previous.outputs ?? [], previous.outputColumns ?? {}, owned);
+  const ownedByKey = new Map(owned.map((column) => [column.key, column]));
+
   const taken = new Set(existing.map((column) => column.key));
+  const takenNames = existing.map((column) => column.name);
   const outputColumns = new Map<string, string>();
   const created: typeof gridColumns.$inferInsert[] = [];
-  const reused: Array<{ id: string; config: AiOutputConfig }> = [];
+  const reused: Array<{ id: string; name?: string; config: AiOutputConfig }> = [];
 
   const positions = insertionPositions(existing, fields.length + 1);
   let positionIndex = 1;
 
   for (const field of fields) {
-    const reusable =
-      (previous.outputColumns?.[field.key] &&
-        existing.find((column) => column.key === previous.outputColumns[field.key])) ||
-      byName.get(field.name.toLowerCase());
+    const reusable = ownedByKey.get(paired.get(field.key) ?? "");
+    const config: AiOutputConfig = { sourceColumnKey: target.key, outputKey: field.key, valueType: field.type };
 
-    if (reusable && reusable.id !== target.id) {
+    if (reusable) {
       outputColumns.set(field.key, reusable.key);
-      reused.push({
-        id: reusable.id,
-        config: { sourceColumnKey: target.key, outputKey: field.key, valueType: field.type },
-      });
+      // Follow a renamed field, unless the new name would collide with a column.
+      const rename =
+        reusable.name.trim().toLowerCase() !== field.name.trim().toLowerCase() &&
+        !takenNames.some((name) => name.trim().toLowerCase() === field.name.trim().toLowerCase());
+      if (rename) takenNames.push(field.name.trim());
+      reused.push({ id: reusable.id, name: rename ? field.name.trim() : undefined, config });
       continue;
     }
     const key = uniqueColumnKey(field.name, taken);
     taken.add(key);
     outputColumns.set(field.key, key);
+    const name = uniqueColumnName(field.name, takenNames);
+    takenNames.push(name);
     created.push({
       tableId: input.tableId,
       key,
-      name: field.name,
+      name,
       type: "ai_output",
-      config: { sourceColumnKey: target.key, outputKey: field.key, valueType: field.type },
+      config,
       dependsOn: [target.key],
       position: positions[positionIndex++],
       autoRun: false,
@@ -239,26 +306,37 @@ export async function updateAiColumns(
   };
   validateColumnConfig("ai", config, existing);
 
+  // A prompt that reads this column's own outputs would re-run itself forever,
+  // spending on every pass.
+  const dependsOn = promptColumnKeys(input.prompt);
+  const ownKeys = new Set([target.key, ...owned.map((column) => column.key), ...outputColumns.values()]);
+  const selfReference = dependsOn.find((key) => ownKeys.has(key));
+  if (selfReference) {
+    throw new Error(`The prompt cannot reference this column's own output: {{${selfReference}}}`);
+  }
+  assertNoCycle(existing, { key: target.key, dependsOn });
+
   return db.transaction(async (tx) => {
     await tx
       .update(gridColumns)
       .set({
         config,
-        dependsOn: promptColumnKeys(input.prompt),
+        dependsOn,
         autoRun: input.autoRun,
         updatedAt: new Date(),
       })
-      .where(eq(gridColumns.id, target.id));
+      .where(and(inOrgTables(gridColumns.tableId), eq(gridColumns.id, target.id)));
 
     if (created.length) await tx.insert(gridColumns).values(created);
     for (const output of reused) {
       await tx.update(gridColumns).set({
         type: "ai_output",
+        ...(output.name ? { name: output.name } : {}),
         config: output.config,
         dependsOn: [target.key],
         autoRun: false,
         updatedAt: new Date(),
-      }).where(eq(gridColumns.id, output.id));
+      }).where(and(inOrgTables(gridColumns.tableId), eq(gridColumns.id, output.id)));
     }
     return listColumns(input.tableId);
   });

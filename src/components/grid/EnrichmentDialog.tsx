@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   RiAddLine,
@@ -72,7 +72,7 @@ export default function EnrichmentDialog({
   tableId,
   columns,
   firstRowIds,
-  column,
+  column: columnProp,
   afterColumnId,
   beforeColumnId,
   onClose,
@@ -88,6 +88,11 @@ export default function EnrichmentDialog({
   onClose: () => void;
   onSaved: (activeJobs?: number) => void | Promise<void>;
 }) {
+  // A column created by this dialog: if the run that follows is refused, the
+  // dialog stays open on it and the next save updates it instead of adding another.
+  const [created, setCreated] = useState<GridColumn | null>(null);
+  const column = columnProp ?? created ?? undefined;
+  const seededColumnId = useRef<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [search, setSearch] = useState("");
   const [outputSearch, setOutputSearch] = useState("");
@@ -120,6 +125,7 @@ export default function EnrichmentDialog({
   }, []);
   useEffect(() => {
     if (!open) {
+      seededColumnId.current = null;
       // Closing the dialog resets its draft before the next open.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSearch("");
@@ -142,9 +148,12 @@ export default function EnrichmentDialog({
 
   useEffect(() => {
     if (!open || !column || column.type !== "enrichment") return;
+    // Seed once per column: a grid refresh hands over a new column object
+    // while the form is being edited, and must not reset it.
+    if (seededColumnId.current === column.id) return;
+    seededColumnId.current = column.id;
     const config = column.config as EnrichmentConfig;
     // Synchronize the editable draft when a saved enrichment is opened.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIntegrationKey(config.integrationKey);
     setActionKey(config.actionKey);
     setStep("setup");
@@ -230,6 +239,14 @@ export default function EnrichmentDialog({
     setCredentialValues({});
     setError(null);
   }
+
+  // The column's own outputs (and the column itself) cannot be its inputs: that would be a cycle.
+  const inputColumns = useMemo(() => columns.filter((candidate) =>
+    candidate.id !== column?.id
+    && !(column
+      && candidate.type === "integration_output"
+      && (candidate.config as { sourceColumnKey?: string }).sourceColumnKey === column.key)
+  ), [columns, column]);
 
   const integration = getIntegration(integrationKey);
   const action = actionKey ? getIntegrationAction(integrationKey, actionKey) : null;
@@ -352,6 +369,11 @@ export default function EnrichmentDialog({
   async function save(runFirstTen: boolean) {
     if (!action || !connectionId) return;
     if (!outputs.size) return setError("Select at least one output column.");
+    // The grid can hand over its coverage row, which is not a real row.
+    const runRowIds = firstRowIds.filter((id) => id !== "__coverage").slice(0, 10);
+    if (runFirstTen && action.implemented && runRowIds.length === 0) {
+      return setError("There are no rows on this page to run. Use Save, then run once rows are loaded.");
+    }
     const mappedInputs = Object.fromEntries(
       Object.entries(inputs).filter(([, columnKey]) => Boolean(columnKey)),
     );
@@ -378,16 +400,25 @@ export default function EnrichmentDialog({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) return setError(data.error ?? "Could not add enrichment");
+      if (!column && Array.isArray(data.columns) && data.columns[0]) {
+        // Already seeded from what is on screen; do not re-seed from the saved copy.
+        seededColumnId.current = (data.columns[0] as GridColumn).id;
+        setCreated(data.columns[0] as GridColumn);
+      }
 
       let activeJobs: number | undefined;
       if (runFirstTen && action.implemented) {
         const runResponse = await fetch(`/api/grid/tables/${tableId}/run`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ columnKey: data.primaryColumnKey, rowIds: firstRowIds.slice(0, 10) }),
+          body: JSON.stringify({ columnKey: data.primaryColumnKey, rowIds: runRowIds }),
         });
         const runData = await runResponse.json().catch(() => ({}));
-        if (!runResponse.ok) return setError(runData.error ?? "Columns saved, but the run could not start");
+        if (!runResponse.ok) {
+          // The columns exist now: refresh the grid and keep the dialog open on them.
+          await onSaved();
+          return setError(runData.error ?? "Columns saved, but the run could not start");
+        }
         activeJobs = runData.activeJobs;
       }
 
@@ -520,7 +551,7 @@ export default function EnrichmentDialog({
                           {input.description && <span className="mb-2 block text-[12px] text-text-sub-600">{input.description}</span>}
                           <ColumnMappingSelect
                             input={input}
-                            columns={columns}
+                            columns={inputColumns}
                             value={inputs[input.key] ?? ""}
                             onChange={(columnKey) => setInputColumn(input.key, columnKey)}
                           />
@@ -559,7 +590,7 @@ export default function EnrichmentDialog({
                           <div className="mt-3">
                             <ColumnMappingSelect
                               input={input}
-                              columns={columns}
+                              columns={inputColumns}
                               value={inputs[input.key] ?? ""}
                               onChange={(columnKey) => setInputColumn(input.key, columnKey)}
                             />
@@ -598,7 +629,7 @@ export default function EnrichmentDialog({
                             <span className="mb-1 block text-[11px] font-medium text-text-sub-600">Map values from</span>
                             <ColumnMappingSelect
                               input={input}
-                              columns={columns}
+                              columns={inputColumns}
                               value={inputs[input.key] ?? ""}
                               onChange={(columnKey) => setInputColumn(input.key, columnKey)}
                             />
@@ -644,7 +675,7 @@ export default function EnrichmentDialog({
                             {input.description && <span className="mb-2 block text-[12px] text-text-sub-600">{input.description}</span>}
                             <ColumnMappingSelect
                               input={input}
-                              columns={columns}
+                              columns={inputColumns}
                               value={inputs[input.key] ?? ""}
                               onChange={(columnKey) => setInputColumn(input.key, columnKey)}
                             />
@@ -666,8 +697,8 @@ export default function EnrichmentDialog({
                   <div><p className="font-medium text-text-strong-950">Delay run</p><label className="mt-2 flex items-center gap-2"><input type="radio" checked={!delayEnabled} onChange={() => setDelayEnabled(false)} />Run immediately</label><label className="mt-2 flex items-center gap-2"><input type="radio" checked={delayEnabled} onChange={() => setDelayEnabled(true)} />Run after delay</label>{delayEnabled && <label className="mt-2 flex items-center gap-2 pl-5"><input type="number" min={1} max={600} value={delaySeconds} onChange={(event) => setDelaySeconds(Math.max(1, Math.min(600, Number(event.target.value) || 1)))} className="w-20 rounded-lg border border-stroke-soft-200 px-2 py-1.5" />seconds</label>}</div>
                 </div>
               </section>
-              {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
             </div>
+            {error && <p role="alert" className="mx-5 mb-3 mt-3 shrink-0 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
             <div className="flex shrink-0 items-center justify-between border-t border-stroke-soft-200 bg-bg-white-0 px-5 py-4"><span className="text-[12px] text-text-sub-600">{configuredConnection ? "Account connected" : "API key required"}</span><button type="button" onClick={continueToOutputs} disabled={busy || missingInputs || !configuredConnection} className="rounded-lg bg-blue-600 px-4 py-2.5 text-[13px] font-semibold text-white disabled:bg-blue-300">Continue to add fields</button></div>
           </>
         ) : (
@@ -676,8 +707,8 @@ export default function EnrichmentDialog({
               <div className="flex items-start justify-between gap-3"><div><h3 className="text-[18px] font-semibold text-text-strong-950">Add data as columns to your table</h3><p className="mt-2 text-[13px] leading-5 text-text-sub-600">Select the data points you want added as columns. The integration runs once per row.</p></div><span className="shrink-0 text-[13px] text-text-sub-600">{outputs.size} selected</span></div>
               <label className="mt-5 flex items-center gap-2 rounded-lg border border-stroke-soft-200 px-3 py-2.5"><RiSearchLine className="size-4 text-text-soft-400" /><input value={outputSearch} onChange={(event) => setOutputSearch(event.target.value)} placeholder="Search data columns" className="min-w-0 flex-1 text-[13px] outline-none" /></label>
               <div className="mt-4 space-y-2">{filteredOutputs.map((output) => { const selected = outputs.has(output.key); const alreadyAdded = column ? Object.prototype.hasOwnProperty.call((column.config as EnrichmentConfig).outputs, output.key) : false; return <button key={output.key} type="button" disabled={alreadyAdded} onClick={() => setOutputs((current) => { const next = new Set(current); if (selected) next.delete(output.key); else next.add(output.key); return next; })} className="flex w-full items-center gap-3 rounded-lg bg-bg-weak-50 px-3 py-3 text-left hover:bg-bg-weak-50 disabled:cursor-default">{selected ? <RiCheckboxLine className="size-5 text-blue-600 dark:text-blue-400" /> : <RiCheckboxBlankLine className="size-5 text-text-soft-400" />}<span className="min-w-0 flex-1"><span className="font-medium text-text-strong-950">{output.name}</span>{output.example && <span className="ml-2 text-text-sub-600">{output.example}</span>}<span className="block text-[11px] text-text-soft-400">{output.columnType}{alreadyAdded ? " · already added" : ""}</span></span></button>; })}</div>
-              {error && <p className="mt-4 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
             </div>
+            {error && <p role="alert" className="mx-5 mb-3 mt-3 shrink-0 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-stroke-soft-200 bg-bg-white-0 px-5 py-4"><button type="button" onClick={() => void save(false)} disabled={busy || !outputs.size} className="rounded-lg border border-stroke-soft-200 px-3 py-2.5 text-[13px] font-semibold text-text-strong-950 hover:bg-bg-weak-50 disabled:opacity-50">{column ? "Save changes" : "Save without running"}</button><button type="button" title={action.implemented ? undefined : "The live Apollo handler is not implemented yet"} onClick={() => void save(true)} disabled={busy || !outputs.size || !action.implemented} className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2.5 text-[13px] font-semibold text-white disabled:bg-blue-300">{busy && <RiLoader4Line className="size-4 animate-spin" />}Save &amp; run 10 rows</button></div>
           </>
         )}

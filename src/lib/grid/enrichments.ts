@@ -3,7 +3,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { getIntegrationAction } from "@/lib/integrations/catalog";
 import { gridCellRuns, gridColumns, gridRows, type GridColumn } from "./schema";
 import { inOrgTables, tableInOrganization } from "./scope";
-import { listColumns, uniqueColumnKey, validateColumnConfig } from "./columns";
+import { assertNoCycle, listColumns, uniqueColumnKey, validateColumnConfig } from "./columns";
 import { getIntegrationConnection } from "./providers";
 import { responseOutputKey, valueAtJsonPointer } from "./json-pointer";
 import type { EnrichmentConfig, IntegrationOutputConfig } from "./types";
@@ -167,6 +167,19 @@ export async function updateEnrichmentColumns(input: {
   validateColumnConfig("enrichment", config, existing);
   const dependencies = [...new Set(Object.values(bindings).map((binding) => binding.columnKey))];
 
+  // An input mapped to one of this action's own outputs would feed the run its
+  // own result — a loop that re-queues forever.
+  const ownKeys = new Set([
+    current.key,
+    ...outputKeys.values(),
+    ...existing
+      .filter((column) => (column.config as { sourceColumnKey?: string }).sourceColumnKey === current.key)
+      .map((column) => column.key),
+  ]);
+  const selfReference = dependencies.find((key) => ownKeys.has(key));
+  if (selfReference) throw new Error("An input cannot use this enrichment's own output column");
+  assertNoCycle(existing, { key: current.key, dependsOn: dependencies });
+
   const related = existing
     .filter((column) => column.key === current.key || column.dependsOn.includes(current.key))
     .sort((a, b) => a.position - b.position);
@@ -271,6 +284,7 @@ export async function addEnrichmentResponseColumn(input: {
       rowId: gridCellRuns.rowId,
       response: gridCellRuns.response,
       provider: gridCellRuns.provider,
+      outcome: gridCellRuns.outcome,
       costCents: gridCellRuns.costCents,
       createdAt: gridCellRuns.createdAt,
     })
@@ -303,6 +317,9 @@ export async function addEnrichmentResponseColumn(input: {
 
     const seenRows = new Set<string>();
     for (const run of runs) {
+      // Runs are newest-first. A failed or skipped run has no response to read, and must
+      // not shadow the older successful run that does.
+      if (run.outcome === "error" || run.outcome === "skipped") continue;
       if (seenRows.has(run.rowId)) continue;
       seenRows.add(run.rowId);
       const value = valueAtJsonPointer(run.response, input.pointer);

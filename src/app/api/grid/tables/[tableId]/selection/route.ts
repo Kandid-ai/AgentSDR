@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { listColumns } from "@/lib/grid/columns";
 import { listRowIds } from "@/lib/grid/rows";
 import { getTable } from "@/lib/grid/tables";
-import type { FilterGroup, GridQuery, SortSpec } from "@/lib/grid/query";
-import type { TableView } from "@/lib/grid/types";
+import { sanitizeView, type GridQuery } from "@/lib/grid/query";
 import { effectiveColumnType } from "@/lib/grid/value-types";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { isUuid } from "@/lib/grid/validate";
 
 /**
  * GET /api/grid/tables/[tableId]/selection?search=
@@ -21,14 +21,15 @@ export async function GET(
   try {
     return await withOrgContext(req, async () => {
       const { tableId } = await params;
+      if (!isUuid(tableId)) return NextResponse.json({ error: "not found" }, { status: 404 });
       const search = req.nextUrl.searchParams.get("search") ?? undefined;
       const [table, columns] = await Promise.all([getTable(tableId), listColumns(tableId)]);
       if (!table) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-      const view = (table.view ?? {}) as TableView;
+      const view = sanitizeView(table.view, new Set(columns.map((c) => c.key)));
       const query: GridQuery = {
-        filters: view.filters as FilterGroup | undefined,
-        sorts: view.sorts as SortSpec[] | undefined,
+        filters: view.filters as GridQuery["filters"],
+        sorts: view.sorts as GridQuery["sorts"],
         search: search || undefined,
       };
 
@@ -39,7 +40,8 @@ export async function GET(
         });
         return NextResponse.json({ rowIds });
       } catch (err) {
-        return NextResponse.json({ error: err instanceof Error ? err.message : "could not select rows" }, { status: 400 });
+        console.error("grid selection failed", err);
+        return NextResponse.json({ error: "could not select rows" }, { status: 500 });
       }
     });
   } catch (error) {

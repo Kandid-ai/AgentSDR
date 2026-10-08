@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createEnrichmentColumns, updateEnrichmentColumns } from "@/lib/grid/enrichments";
 import { getTable } from "@/lib/grid/tables";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { clientMessage, isRecord, isUuid } from "@/lib/grid/validate";
 
 export async function POST(
   request: NextRequest,
@@ -10,7 +11,7 @@ export async function POST(
   try {
     return await withOrgContext(request, async () => {
       const { tableId } = await params;
-      if (!(await getTable(tableId))) {
+      if (!isUuid(tableId) || !(await getTable(tableId))) {
         return NextResponse.json({ error: "table not found" }, { status: 404 });
       }
 
@@ -28,7 +29,9 @@ export async function POST(
         beforeColumnId?: string;
       };
       try {
-        body = await request.json();
+        const parsed = await request.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
       }
@@ -38,6 +41,19 @@ export async function POST(
       }
       if (!body.inputs || !body.selectedOutputs || !body.connectionId) {
         return NextResponse.json({ error: "inputs, outputs, and a connection are required" }, { status: 400 });
+      }
+
+      if (typeof body.integrationKey !== "string" || typeof body.actionKey !== "string") {
+        return NextResponse.json({ error: "integrationKey and actionKey must be text" }, { status: 400 });
+      }
+      if (!isRecord(body.inputs) || Object.values(body.inputs).some((v) => typeof v !== "string")) {
+        return NextResponse.json({ error: "inputs must map each input to a column key" }, { status: 400 });
+      }
+      if (!Array.isArray(body.selectedOutputs) || body.selectedOutputs.some((v) => typeof v !== "string")) {
+        return NextResponse.json({ error: "outputs must be a list of output keys" }, { status: 400 });
+      }
+      if (!isUuid(body.connectionId)) {
+        return NextResponse.json({ error: "connectionId is not a valid id" }, { status: 400 });
       }
 
       try {
@@ -58,7 +74,7 @@ export async function POST(
         return NextResponse.json({ columns, primaryColumnKey: columns[0]?.key }, { status: 201 });
       } catch (error) {
         return NextResponse.json(
-          { error: error instanceof Error ? error.message : "Could not add enrichment" },
+          { error: clientMessage(error, "Could not add enrichment") },
           { status: 400 },
         );
       }
@@ -77,7 +93,7 @@ export async function PATCH(
   try {
     return await withOrgContext(request, async () => {
       const { tableId } = await params;
-      if (!(await getTable(tableId))) {
+      if (!isUuid(tableId) || !(await getTable(tableId))) {
         return NextResponse.json({ error: "table not found" }, { status: 404 });
       }
 
@@ -94,12 +110,27 @@ export async function PATCH(
         runInBatches?: boolean;
       };
       try {
-        body = await request.json();
+        const parsed = await request.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
       }
       if (!body.columnId || !body.integrationKey || !body.actionKey || !body.inputs || !body.selectedOutputs || !body.connectionId) {
         return NextResponse.json({ error: "column, action, inputs, outputs, and connection are required" }, { status: 400 });
+      }
+
+      if (typeof body.integrationKey !== "string" || typeof body.actionKey !== "string") {
+        return NextResponse.json({ error: "integrationKey and actionKey must be text" }, { status: 400 });
+      }
+      if (!isRecord(body.inputs) || Object.values(body.inputs).some((v) => typeof v !== "string")) {
+        return NextResponse.json({ error: "inputs must map each input to a column key" }, { status: 400 });
+      }
+      if (!Array.isArray(body.selectedOutputs) || body.selectedOutputs.some((v) => typeof v !== "string")) {
+        return NextResponse.json({ error: "outputs must be a list of output keys" }, { status: 400 });
+      }
+      if (!isUuid(body.connectionId)) {
+        return NextResponse.json({ error: "connectionId is not a valid id" }, { status: 400 });
       }
 
       try {
@@ -120,7 +151,7 @@ export async function PATCH(
         return NextResponse.json({ columns, primaryColumnKey: primary?.key });
       } catch (error) {
         return NextResponse.json(
-          { error: error instanceof Error ? error.message : "Could not update enrichment" },
+          { error: clientMessage(error, "Could not update enrichment") },
           { status: 400 },
         );
       }

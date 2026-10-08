@@ -71,11 +71,11 @@ Use an HTTP column to call an API that has no built-in provider, or your own end
 | Field | What it does |
 | --- | --- |
 | **Method** | GET, POST, PUT or PATCH. |
-| **URL** | Required. Tokens are allowed, for example `https://api.example.com/people/{{email}}`. Must be `http` or `https` after substitution. |
+| **URL** | Required. Tokens are allowed, for example `https://api.example.com/people/{{email}}`. Must be `http` or `https` after substitution. Values taken from a cell are URL-encoded, so a cell holding `a&b` stays one value. |
 | **Headers** | Name and value pairs. Values can use tokens. |
-| **Request body** | Shown for methods other than GET. Tokens are allowed. If you don't set a Content-Type, `application/json` is used. |
+| **Request body** | Shown for methods other than GET. Tokens are allowed. If you don't set a Content-Type, `application/json` is used. With a JSON body, cell values are escaped for you: a quote inside a cell can't break the JSON, and a bare `{{token}}` holding text is sent as a quoted string. |
 | **Response path** | Optional dot path into a JSON response, such as `data.person.email`. Numbers pick array items, for example `results.0.email`. Leave it empty to store the whole response. |
-| **Credential env var** | The name of an environment variable that holds a secret. Only the name is stored. |
+| **Credential env var** | The name of an environment variable that holds a secret. Only the name is stored, and it must start with `GRID_HTTP_SECRET_`. |
 | **Provider key** | An optional label recorded with each result. |
 | **Cost per call (cents)** | An optional flat cost you enter yourself. |
 
@@ -83,18 +83,22 @@ Click **Save**, or **Save & run** to run it.
 
 ### Secrets: Credential env var
 
-Never paste an API key into a header. Put it in an environment variable on the server and type that variable's **name** into **Credential env var**, for example `MY_VENDOR_KEY`. When the column runs, AgentSDR reads the variable and sends it as `Authorization: Bearer <secret>`. If the value already starts with `Bearer ` it is sent as is. If you set your own `Authorization` header, yours is kept.
+Never paste an API key into a header. Put it in an environment variable on the server, named with the `GRID_HTTP_SECRET_` prefix, and type that variable's **name** into **Credential env var**, for example `GRID_HTTP_SECRET_MY_VENDOR`. When the column runs, AgentSDR reads the variable and sends it as `Authorization: Bearer <secret>`. If the value already starts with `Bearer ` it is sent as is. If you set your own `Authorization` header, yours is kept.
 
 If the variable isn't set on the server, the cell fails with "Environment variable ... is not set on this server" and isn't retried.
 
 <Warning>
-The variable is read from the server's environment, not from your organization's saved integrations. On the hosted product you can only use variables the operator has set. When self-hosting, add the variable to your deployment (see [Configuration](/configuration)). Anyone who can create HTTP columns can reference any variable the server has, so only grant that access to people you trust.
+The variable is read from the server's environment, not from your organization's saved integrations. On the hosted product you can only use variables the operator has set. When self-hosting, add the variable to your deployment (see [Configuration](/configuration)). Only variables starting with `GRID_HTTP_SECRET_` can be referenced; any other name, such as `DATABASE_URL`, is refused when you save the column. Still, anyone who can create HTTP columns can send those secrets to a URL they choose, so only set such variables for APIs your whole team may call.
 </Warning>
+
+### Which addresses can be called
+
+An HTTP column can't call private or internal addresses: loopback (`127.0.0.1`, `localhost`), private ranges (`10.x`, `172.16-31.x`, `192.168.x`), link-local and cloud metadata (`169.254.x`), carrier-grade NAT (`100.64-127.x`) and their IPv6 equivalents. The host name is resolved first and every address it returns is checked. Redirects are followed up to 3 times and each one is checked the same way; credentials and the request body are dropped if a redirect leaves the original site. A self-hoster who needs to reach an internal service can set `GRID_HTTP_ALLOW_PRIVATE=true`.
 
 ### How results and errors behave
 
 - A response whose chosen path is empty counts as a miss, not an error.
-- A 4xx response, except 429, is treated as a configuration mistake and is **not** retried. A 5xx or 429 response and timeouts are retried up to 3 attempts in total.
+- A 4xx response, except 429, is treated as a configuration mistake and is **not** retried. For a GET, a 5xx response and timeouts are retried up to 3 attempts in total. POST, PUT and PATCH calls are never retried after a timeout, a 5xx or a network error, because the first attempt may already have taken effect; only a 429 is retried.
 - Response bodies stored for debugging are cut at 16 KB.
 
 ## Related

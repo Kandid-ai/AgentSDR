@@ -1,9 +1,13 @@
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getIntegrationAction } from "@/lib/integrations/catalog";
-import { gridCellRuns, gridJobs, gridRows, gridTables, type GridColumn, type GridJob } from "./schema";
+import { gridCellRuns, gridColumns, gridJobs, gridRows, gridTables, type GridColumn, type GridJob } from "./schema";
+import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import { inOrgTables, tableInOrganization } from "./scope";
 import type { CellResult, CellValues, EnrichmentConfig, PendingCellResult } from "./types";
+import { allReferencedInputsEmpty, columnDelaySeconds, hasCellValue } from "./runners/guards";
+import { ownCell } from "./runners/types";
+import { cleanJson, cleanString } from "./sanitize";
 
 /**
  * The work queue for cell execution — see docs/design/enrichment-plan.md §5.
@@ -17,7 +21,8 @@ import type { CellResult, CellValues, EnrichmentConfig, PendingCellResult } from
 /** A claim older than this is treated as a worker that died mid-run. */
 const STALE_LOCK_MS = 5 * 60 * 1000;
 
-export type EnqueueTarget = { rowId: string; columnKey: string };
+/** `delaySeconds` holds the job back from the claimer — the column's "Delay" setting. */
+export type EnqueueTarget = { rowId: string; columnKey: string; delaySeconds?: number };
 
 /** A claimed job plus the organization of its table — what the worker scopes each run to. */
 export type ClaimedJob = GridJob & { organizationId: string };
@@ -53,7 +58,7 @@ export async function enqueue(
           status: "queued" as const,
           priority: opts.priority ?? 0,
           attempts: 0,
-          runAfter: new Date(),
+          runAfter: new Date(Date.now() + (t.delaySeconds ?? 0) * 1000),
         })),
       )
       .onConflictDoUpdate({
@@ -64,7 +69,7 @@ export async function enqueue(
           error: null,
           providerState: null,
           lockedAt: null,
-          runAfter: new Date(),
+          runAfter: sql`excluded.run_after`,
           updatedAt: new Date(),
         },
         // Leave a job that is mid-flight alone; re-queuing it under the worker
@@ -100,6 +105,7 @@ async function markQueued(tableId: string, targets: EnqueueTarget[]): Promise<vo
         .set({
           cellMeta: sql`${gridRows.cellMeta} || ${patch}::jsonb`,
           version: sql`nextval('grid_row_version_seq')`,
+          updatedAt: new Date(),
         })
         .where(and(inOrgTables(gridRows.tableId), eq(gridRows.tableId, tableId), inArray(gridRows.id, rowIds.slice(i, i + CHUNK))));
     }
@@ -226,21 +232,32 @@ export async function completeJob(
     costCents: result.costCents,
     runAt: new Date().toISOString(),
   };
-  const values = { [job.columnKey]: result.value ?? null, ...(result.outputs ?? {}) };
-  const metadata = Object.fromEntries(Object.keys(values).map((key) => [key, meta]));
+  const produced = cleanJson({ [job.columnKey]: result.value ?? null, ...(result.outputs ?? {}) });
 
   await db.transaction(async (tx) => {
-    await tx
-      .update(gridRows)
-      .set({
-        cells: sql`${gridRows.cells} || ${JSON.stringify(values)}::jsonb`,
-        cellMeta: sql`${gridRows.cellMeta} || ${JSON.stringify(metadata)}::jsonb`,
-        version: sql`nextval('grid_row_version_seq')`,
-        updatedAt: new Date(),
-      })
-      .where(and(inOrgTables(gridRows.tableId), eq(gridRows.tableId, job.tableId), eq(gridRows.id, job.rowId)));
+    // Only keys that are still columns: an output column deleted while the job
+    // ran would otherwise keep receiving values no one can see.
+    const current = await tx
+      .select({ key: gridColumns.key })
+      .from(gridColumns)
+      .where(and(inOrgTables(gridColumns.tableId), eq(gridColumns.tableId, job.tableId)));
+    const live = new Set(current.map((column) => column.key));
+    const values = Object.fromEntries(Object.entries(produced).filter(([key]) => live.has(key)));
+    const metadata = Object.fromEntries(Object.keys(values).map((key) => [key, meta]));
 
-    await tx.insert(gridCellRuns).values({
+    if (Object.keys(values).length) {
+      await tx
+        .update(gridRows)
+        .set({
+          cells: sql`${gridRows.cells} || ${JSON.stringify(values)}::jsonb`,
+          cellMeta: sql`${gridRows.cellMeta} || ${JSON.stringify(metadata)}::jsonb`,
+          version: sql`nextval('grid_row_version_seq')`,
+          updatedAt: new Date(),
+        })
+        .where(and(inOrgTables(gridRows.tableId), eq(gridRows.tableId, job.tableId), eq(gridRows.id, job.rowId)));
+    }
+
+    await recordRun(tx, {
       tableId: job.tableId,
       rowId: job.rowId,
       columnKey: job.columnKey,
@@ -248,11 +265,53 @@ export async function completeJob(
       outcome: result.outcome,
       costCents: String(result.costCents ?? 0),
       latencyMs: result.latencyMs ?? null,
-      request: (result.request ?? null) as never,
-      response: (result.response ?? null) as never,
+      request: result.request ?? null,
+      response: result.response ?? null,
     });
 
     await tx.delete(gridJobs).where(and(inOrgTables(gridJobs.tableId), eq(gridJobs.id, job.id)));
+  });
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Appends the audit row inside a savepoint. The row may have been deleted
+ * while the job ran, which makes the foreign key reject the insert; losing an
+ * audit line must not abort the completion or failure it describes.
+ */
+async function recordRun(
+  tx: Tx,
+  run: Omit<typeof gridCellRuns.$inferInsert, "request" | "response"> & { request: unknown; response: unknown },
+): Promise<void> {
+  try {
+    await tx.transaction(async (savepoint) => {
+      await savepoint.insert(gridCellRuns).values({
+        ...run,
+        request: cleanJson(run.request) as never,
+        response: cleanJson(run.response) as never,
+      });
+    });
+  } catch (err) {
+    console.warn("[grid/queue] could not record the run:", err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * Drops a job without running it and returns its cell to idle — used when the
+ * column's "Only run if" is false or every input went blank after queuing.
+ */
+export async function skipJob(job: GridJob): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.delete(gridJobs).where(and(inOrgTables(gridJobs.tableId), eq(gridJobs.id, job.id)));
+    await tx
+      .update(gridRows)
+      .set({
+        cellMeta: sql`${gridRows.cellMeta} - ${job.columnKey}::text`,
+        version: sql`nextval('grid_row_version_seq')`,
+        updatedAt: new Date(),
+      })
+      .where(and(inOrgTables(gridRows.tableId), eq(gridRows.tableId, job.tableId), eq(gridRows.id, job.rowId)));
   });
 }
 
@@ -268,6 +327,7 @@ export async function failJob(
   error: string,
   opts: { permanent?: boolean; costCents?: number; provider?: string; request?: unknown; response?: unknown } = {},
 ): Promise<{ willRetry: boolean }> {
+  error = cleanString(error);
   const providerState = job.providerState ?? null;
   const pollErrors = providerState ? Number(providerState.pollErrors ?? 0) + 1 : 0;
   const exhausted = providerState ? pollErrors >= job.maxAttempts : job.attempts >= job.maxAttempts;
@@ -313,19 +373,20 @@ export async function failJob(
         .set({
           cellMeta: sql`${gridRows.cellMeta} || ${JSON.stringify({ [job.columnKey]: meta })}::jsonb`,
           version: sql`nextval('grid_row_version_seq')`,
+          updatedAt: new Date(),
         })
         .where(and(inOrgTables(gridRows.tableId), eq(gridRows.tableId, job.tableId), eq(gridRows.id, job.rowId)));
     }
 
-    await tx.insert(gridCellRuns).values({
+    await recordRun(tx, {
       tableId: job.tableId,
       rowId: job.rowId,
       columnKey: job.columnKey,
       provider: opts.provider ?? null,
       outcome: "error",
       costCents: String(opts.costCents ?? 0),
-      request: (opts.request ?? null) as never,
-      response: (opts.response ?? { error }) as never,
+      request: opts.request ?? null,
+      response: opts.response ?? { error },
     });
   });
 
@@ -350,6 +411,14 @@ export async function cascade(
   const dependents = columns.filter((c) => c.autoRun && c.dependsOn.includes(columnKey));
   if (!dependents.length) return 0;
 
+  // The table-level Auto-run switch sits above each column's own.
+  const [table] = await db
+    .select({ autoRun: gridTables.autoRun })
+    .from(gridTables)
+    .where(and(inOrg(gridTables), eq(gridTables.id, tableId)))
+    .limit(1);
+  if (!table?.autoRun) return 0;
+
   const ready = dependents.filter((column) => {
     if (column.type === "enrichment") {
       const config = column.config as EnrichmentConfig;
@@ -358,32 +427,26 @@ export async function cascade(
         const requiredInputsReady = action.inputs.every((input) => {
           if (!input.required) return true;
           const binding = config.inputs[input.key];
-          return binding ? hasCellValue(cells[binding.columnKey]) : false;
+          return binding ? hasCellValue(ownCell(cells, binding.columnKey)) : false;
         });
         if (!requiredInputsReady) return false;
         const populatedFilters = action.inputs.filter((input) => {
           if (input.group !== "filter") return false;
           const binding = config.inputs[input.key];
-          return binding ? hasCellValue(cells[binding.columnKey]) : false;
+          return binding ? hasCellValue(ownCell(cells, binding.columnKey)) : false;
         }).length;
         return populatedFilters >= action.filterBuilder.minFilters;
       }
     }
-    return column.dependsOn.every((dep) => hasCellValue(cells[dep]));
+    return column.dependsOn.every((dep) => hasCellValue(ownCell(cells, dep)))
+      && !allReferencedInputsEmpty(column, cells);
   });
   if (!ready.length) return 0;
 
   return enqueue(
     tableId,
-    ready.map((c) => ({ rowId, columnKey: c.key })),
+    ready.map((c) => ({ rowId, columnKey: c.key, delaySeconds: columnDelaySeconds(c) })),
   );
-}
-
-function hasCellValue(value: unknown): boolean {
-  return value !== undefined
-    && value !== null
-    && (!Array.isArray(value) || value.length > 0)
-    && (typeof value !== "string" || value.trim() !== "");
 }
 
 /** Queued + running jobs for a table, for the toolbar counter. */
@@ -395,11 +458,44 @@ export async function activeJobCount(tableId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** Drops every pending job for a table — the "Stop" button. */
+/**
+ * Drops every pending job for a table — the "Stop" button.
+ *
+ * The cells those jobs had marked queued or processing go back to idle in the
+ * same transaction; otherwise the grid would spin on them forever.
+ */
 export async function cancelTableJobs(tableId: string): Promise<number> {
-  const deleted = await db
-    .delete(gridJobs)
-    .where(and(inOrgTables(gridJobs.tableId), eq(gridJobs.tableId, tableId), inArray(gridJobs.status, ["queued", "waiting"])))
-    .returning({ id: gridJobs.id });
-  return deleted.length;
+  return db.transaction(async (tx) => {
+    const deleted = await tx
+      .delete(gridJobs)
+      .where(and(inOrgTables(gridJobs.tableId), eq(gridJobs.tableId, tableId), inArray(gridJobs.status, ["queued", "waiting"])))
+      .returning({ rowId: gridJobs.rowId, columnKey: gridJobs.columnKey });
+
+    const keysByRow = new Map<string, string[]>();
+    for (const { rowId, columnKey } of deleted) {
+      keysByRow.set(rowId, [...(keysByRow.get(rowId) ?? []), columnKey]);
+    }
+
+    const CHUNK = 250;
+    const rows = [...keysByRow.entries()];
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const values = sql.join(
+        rows
+          .slice(i, i + CHUNK)
+          .map(([rowId, keys]) => sql`(${rowId}::uuid, ARRAY[${sql.join(keys.map((key) => sql`${key}`), sql`, `)}]::text[])`),
+        sql`, `,
+      );
+      await tx.execute(sql`
+        UPDATE ${gridRows}
+        SET cell_meta = ${gridRows.cellMeta} - source.keys,
+            version = nextval('grid_row_version_seq'),
+            updated_at = now()
+        FROM (VALUES ${values}) AS source(id, keys)
+        WHERE ${gridRows.id} = source.id
+          AND ${gridRows.tableId} = ${tableId}::uuid
+          AND ${gridRows.tableId} IN (SELECT id FROM ${gridTables} WHERE organization_id = ${currentOrganizationId()})
+      `);
+    }
+    return deleted.length;
+  });
 }

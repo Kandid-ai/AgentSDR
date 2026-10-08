@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RiAddLine, RiCloseLine, RiEyeLine, RiEyeOffLine, RiMoreLine } from "@remixicon/react";
 import * as Select from "@/components/alignui/select";
 import type { GridColumn } from "@/lib/grid/schema";
@@ -28,6 +28,84 @@ const OPERATORS: FilterOperator[] = [
   "contains",
   "notContains",
 ];
+
+const VALUE_DEBOUNCE_MS = 400;
+
+/**
+ * A filter's value box. Every commit PATCHes the view and refetches the rows,
+ * so typing edits a local draft, which is committed once the person pauses,
+ * presses Enter or leaves the box. While the box has focus the draft wins over
+ * whatever the parent echoes back, so a slow round trip cannot snap it back.
+ */
+function FilterValueInput({
+  value,
+  disabled,
+  placeholder,
+  onCommit,
+}: {
+  value: string;
+  disabled: boolean;
+  placeholder: string;
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [prevValue, setPrevValue] = useState(value);
+  const [focused, setFocused] = useState(false);
+  const timer = useRef<number | null>(null);
+  const commitRef = useRef(onCommit);
+  const draftRef = useRef(value);
+
+  useEffect(() => {
+    commitRef.current = onCommit;
+    draftRef.current = draft;
+  });
+
+  // The condition changed from outside (another row removed, view switched):
+  // take its value unless this box is being typed in.
+  if (value !== prevValue) {
+    setPrevValue(value);
+    if (!focused) {
+      setDraft(value);
+    }
+  }
+
+  const flush = () => {
+    if (timer.current === null) return;
+    window.clearTimeout(timer.current);
+    timer.current = null;
+    commitRef.current(draftRef.current);
+  };
+
+  // Do not lose a value typed just before the panel closes.
+  useEffect(() => () => flush(), []);
+
+  return (
+    <input
+      value={draft}
+      disabled={disabled}
+      placeholder={placeholder}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        flush();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") flush();
+      }}
+      onChange={(e) => {
+        const next = e.target.value;
+        setDraft(next);
+        draftRef.current = next;
+        if (timer.current !== null) window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => {
+          timer.current = null;
+          commitRef.current(draftRef.current);
+        }, VALUE_DEBOUNCE_MS);
+      }}
+      className="w-[150px] shrink-0 rounded-lg border border-stroke-soft-200 px-2 py-1.5 text-[13px] text-text-strong-950 outline-none focus:border-blue-500 disabled:bg-bg-weak-50 disabled:text-text-disabled-300"
+    />
+  );
+}
 
 export const EMPTY_FILTERS: FilterGroup = { conjunction: "and", conditions: [] };
 
@@ -188,12 +266,11 @@ export default function FilterPanel({
                 </Select.Content>
               </Select.Root>
 
-              <input
+              <FilterValueInput
                 value={c.value ?? ""}
                 disabled={!needsValue}
                 placeholder={needsValue ? "" : "—"}
-                onChange={(e) => patchAt(i, { value: e.target.value })}
-                className="w-[150px] shrink-0 rounded-lg border border-stroke-soft-200 px-2 py-1.5 text-[13px] text-text-strong-950 outline-none focus:border-blue-500 disabled:bg-bg-weak-50 disabled:text-text-disabled-300"
+                onCommit={(next) => patchAt(i, { value: next })}
               />
 
               <button

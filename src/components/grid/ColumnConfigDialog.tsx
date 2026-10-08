@@ -17,7 +17,7 @@ export default function ColumnConfigDialog({
   open,
   tableId,
   type,
-  column,
+  column: columnProp,
   columns,
   previewRowId,
   afterColumnId,
@@ -37,6 +37,10 @@ export default function ColumnConfigDialog({
   onSaved: (activeJobs?: number) => void | Promise<void>;
 }) {
   const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
+  // A column created by this dialog: if the run that follows is refused, the
+  // dialog stays open on it and the next save updates it instead of adding another.
+  const [created, setCreated] = useState<GridColumn | null>(null);
+  const column = columnProp ?? created;
   const initialFormula = (column?.config ?? {}) as FormulaConfig;
   const initialHttp = (column?.config ?? {}) as HttpConfig;
   const [name, setName] = useState(column?.name ?? (type === "formula" ? "Formula" : "HTTP API"));
@@ -207,6 +211,7 @@ export default function ColumnConfigDialog({
         setError(data.error ?? "Could not save column");
         return;
       }
+      if (!column && data.column) setCreated(data.column as GridColumn);
       let activeJobs: number | undefined;
       if (runAfterSave) {
         const runRes = await fetch(`/api/grid/tables/${tableId}/run`, {
@@ -216,8 +221,9 @@ export default function ColumnConfigDialog({
         });
         const runData = await runRes.json().catch(() => ({}));
         if (!runRes.ok) {
+          // The column is saved: refresh the grid, but keep the dialog open to show why the run failed.
           await onSaved();
-          onClose();
+          setError(runData.error ?? "Saved, but the run could not start");
           return;
         }
         activeJobs = runData.activeJobs;
@@ -328,7 +334,7 @@ export default function ColumnConfigDialog({
               {method !== "GET" && <Field label="Request body"><textarea value={body} onChange={(event) => setBody(event.target.value)} rows={6} spellCheck={false} placeholder={'{"email":"{{email}}"}'} className={`${inputClass} resize-y font-mono`} /></Field>}
               <Field label="Response path" hint="Optional dot path, for example data.person.email."><input value={responsePath} onChange={(event) => setResponsePath(event.target.value)} placeholder="data.result" className={inputClass} /></Field>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Credential env var" hint="Only the variable name is stored."><input value={authEnvVar} onChange={(event) => setAuthEnvVar(event.target.value)} placeholder="APOLLO_API_KEY" className={inputClass} /></Field>
+                <Field label="Credential env var" hint="Must start with GRID_HTTP_SECRET_. Only the name is stored."><input value={authEnvVar} onChange={(event) => setAuthEnvVar(event.target.value)} placeholder="GRID_HTTP_SECRET_ACME" className={inputClass} /></Field>
                 <Field label="Provider key"><input value={providerKey} onChange={(event) => setProviderKey(event.target.value)} placeholder="apollo" className={inputClass} /></Field>
               </div>
               <Field label="Cost per call (cents)"><input type="number" min="0" step="0.000001" value={costCents} onChange={(event) => setCostCents(event.target.value)} placeholder="0" className={inputClass} /></Field>
@@ -346,10 +352,10 @@ export default function ColumnConfigDialog({
             <input type="checkbox" checked={autoRun} onChange={(event) => setAutoRun(event.target.checked)} className="size-4 rounded border-stroke-sub-300" />
             Auto-run when input columns change
           </label>
-          {error && <p className="rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-stroke-soft-200 px-5 py-4">
+        {error && <p role="alert" className="mx-5 mt-3 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
+        <div className="mt-3 flex justify-end gap-2 border-t border-stroke-soft-200 px-5 py-4">
           <button type="button" onClick={onClose} disabled={busy} className="rounded-lg border border-stroke-soft-200 px-3 py-2 text-[13px] font-medium text-text-strong-950 hover:bg-bg-weak-50">Cancel</button>
           <button type="button" onClick={() => void save()} disabled={busy} className="rounded-lg border border-blue-200 dark:border-blue-500/30 px-3 py-2 text-[13px] font-medium text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 disabled:opacity-50">Save</button>
           <button type="button" onClick={() => void save(true)} disabled={busy} className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-[13px] font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy && <RiLoader4Line className="size-4 animate-spin" />} Save &amp; run</button>

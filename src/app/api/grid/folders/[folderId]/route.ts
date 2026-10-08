@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { deleteFolder, getFolder, listFolders, updateFolder } from "@/lib/grid/folders";
 import { listWorkbooks } from "@/lib/grid/workbooks";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { clientMessage, isRecord, isUuid, nullableUuid, optionalName } from "@/lib/grid/validate";
 
 // GET /api/grid/folders/[folderId] — the folder plus its direct contents.
 export async function GET(
@@ -11,6 +12,7 @@ export async function GET(
   try {
     return await withOrgContext(_req, async () => {
       const { folderId } = await params;
+      if (!isUuid(folderId)) return NextResponse.json({ error: "not found" }, { status: 404 });
       const folder = await getFolder(folderId);
       if (!folder) return NextResponse.json({ error: "not found" }, { status: 404 });
 
@@ -35,22 +37,30 @@ export async function PATCH(
   try {
     return await withOrgContext(req, async () => {
       const { folderId } = await params;
+      if (!isUuid(folderId)) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-      let body: { name?: string; parentId?: string | null };
+      let body: Record<string, unknown>;
       try {
-        body = await req.json();
+        const parsed = await req.json();
+        if (!isRecord(parsed)) throw new Error("not an object");
+        body = parsed;
       } catch {
         return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
       }
 
+      const name = optionalName(body.name);
+      if (!name.ok) return NextResponse.json({ error: name.error }, { status: 400 });
+      const parent = nullableUuid(body.parentId, "parentId");
+      if (!parent.ok) return NextResponse.json({ error: parent.error }, { status: 400 });
+
       try {
-        const folder = await updateFolder(folderId, body);
+        const folder = await updateFolder(folderId, { name: name.value, parentId: parent.value });
         if (!folder) return NextResponse.json({ error: "not found" }, { status: 404 });
         return NextResponse.json({ folder });
       } catch (cause) {
         // updateFolder rejects cycles and dead destinations — both are the
         // caller's fault, not a server fault.
-        const message = cause instanceof Error ? cause.message : "Could not move that folder";
+        const message = clientMessage(cause, "Could not move that folder");
         return NextResponse.json({ error: message }, { status: 400 });
       }
     });
@@ -70,6 +80,7 @@ export async function DELETE(
   try {
     return await withOrgContext(_req, async () => {
       const { folderId } = await params;
+      if (!isUuid(folderId)) return NextResponse.json({ error: "not found" }, { status: 404 });
       const { deleted, released } = await deleteFolder(folderId);
       if (!deleted) return NextResponse.json({ error: "not found" }, { status: 404 });
       return NextResponse.json({ ok: true, released });
