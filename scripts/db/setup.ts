@@ -82,5 +82,16 @@ async function main() {
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
+  // 28P01: the bundled database keeps the password it was FIRST created with;
+  // changing POSTGRES_PASSWORD later does not change it.
+  const code = (error as { code?: string; errno?: string }).errno ?? (error as { code?: string }).code;
+  if (code === "28P01" || /password authentication failed/i.test(String(error))) {
+    console.error(
+      "The database rejected the password. With Docker Compose's bundled database this usually means its volume\n" +
+        "was created with a different POSTGRES_PASSWORD (it is only read on the volume's first start). Either set\n" +
+        "POSTGRES_PASSWORD back to the original value, or, on a new install with nothing to keep, delete the\n" +
+        "database volume (docker compose down -v) and start again.",
+    );
+  }
   process.exit(1);
 });
