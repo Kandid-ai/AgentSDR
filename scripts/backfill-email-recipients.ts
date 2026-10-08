@@ -6,9 +6,12 @@
  * bare commas, so a lead who replied "To: her manager, us" lost the manager:
  * the thread showed "to <our mailbox>" and a reply could not include her.
  * This re-reads the headers from Gmail and merges `to`, `cc`, `replyTo`,
- * `toEmail` and `ccEmails` into `raw` on both the Master Inbox row
- * (crm_messages) and its CRM twin (crm_conversation_messages, matched by the
- * same gmail:<mailbox>:<id> key). Nothing else in `raw` changes.
+ * `toEmail` and `ccEmails` into `raw` on the Master Inbox row (crm_messages),
+ * which is what the thread view reads. Nothing else in `raw` changes.
+ *
+ * The CRM twin (crm_conversation_messages) is left alone: that table is
+ * append-only by trigger, on purpose. Its old rows keep `toEmail`/`ccEmails`,
+ * which recipientsFromRaw still reads.
  *
  * Dry run by default; pass --apply to write. Idempotent: rows whose `raw`
  * already has `to` are skipped.
@@ -20,9 +23,7 @@ import { runScriptInOrganization } from "./lib/organization";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { inboxContacts, inboxMessages } from "@/lib/inbox/schema";
-import { crmConversationMessages, crmConversations } from "@/lib/crm/schema";
 import { fetchMessageRecipients } from "@/lib/outreach/gmail";
-import { gmailInboundEventKey } from "@/lib/outreach/inboundIdentity";
 import { inOrg } from "@/lib/tenancy/scope";
 
 const apply = process.argv.includes("--apply");
@@ -81,13 +82,6 @@ async function main() {
       await db.update(inboxMessages)
         .set({ raw: sql`coalesce(${inboxMessages.raw}, '{}'::jsonb) || ${json}::jsonb` })
         .where(eq(inboxMessages.id, row.id));
-      const key = gmailInboundEventKey(row.mailbox, row.gmailMessageId);
-      await db.update(crmConversationMessages)
-        .set({ raw: sql`coalesce(${crmConversationMessages.raw}, '{}'::jsonb) || ${json}::jsonb` })
-        .where(and(
-          eq(crmConversationMessages.idempotencyKey, key),
-          sql`${crmConversationMessages.conversationId} IN (SELECT ${crmConversations.id} FROM ${crmConversations} WHERE ${inOrg(crmConversations)})`,
-        ));
     }
     repaired += 1;
   }
