@@ -6,14 +6,12 @@
  * distributed lock. If that ever changes, revert to external cron
  * per-instance or add a DB-based "only one instance runs this" claim.
  *
- * Started once from instrumentation.ts at process boot. Only the send tick
- * runs in-process (every TICK_INTERVAL_MS, default 1 min) — the daily queue
- * rebuild deliberately stays on an EXTERNAL cron hitting
- * /api/outreach/build-queue at a fixed wall-clock time instead. An
- * in-process "every 24h since boot" timer was tried and rejected: a
- * container restart resets that clock, so the rebuild time silently drifts
- * with every deploy — an external cron pinned to a fixed time doesn't have
- * that problem, and gives you a place to see whether it actually ran today.
+ * Started once from instrumentation.ts at process boot. This is only the send
+ * tick (every TICK_INTERVAL_MS, default 1 min). The daily queue rebuild is
+ * each organization's daily rollover in src/lib/scheduler/ — at a fixed
+ * wall-clock time claimed in scheduled_job_runs, not an "every 24h since
+ * boot" timer (that was tried and rejected: a restart resets the clock, so
+ * the rebuild time drifted with every deploy).
  *
  * Guards against overlapping tick runs and swallows/logs errors so one bad
  * tick can't kill the loop or crash the process.

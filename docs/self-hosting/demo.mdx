@@ -16,7 +16,7 @@ A demo is its **own deployment with its own database**. Never set `DEMO_MODE` on
 |---|---|
 | **Sign-in** | Anyone without a session is signed in as the demo user at `/demo` and sent where they were going. Each visitor gets a session of their own. The sign-in, sign-up and onboarding screens lead to `/demo` too. |
 | **Read-only** | Every write is refused with `403 DEMO_READ_ONLY`, and the page shows a short "read-only demo" notice. A few writes the UI makes on its own when something opens (marking a thread or chat read) answer success without doing anything, so nothing looks broken. |
-| **No background work** | The send loops, the enrichment worker and the CRM's AI worker do not start. Requests that would call a model or restart a job (`/api/qualify`, `/api/campaigns/:id/stream`, the OpenRouter model list) are refused. No cron is needed. |
+| **No background work** | The send loops, the enrichment worker and the CRM's AI worker do not start. Requests that would call a model or restart a job (`/api/qualify`, `/api/campaigns/:id/stream`, the OpenRouter model list) are refused. The scheduled jobs do not run either, and no cron is needed. |
 | **Banner** | A strip across the top says the people and conversations are made up and links to GitHub and these docs. Sign out and Create organization are hidden. |
 | **Clock** | Once at boot and every hour, the demo moves every date in the database forward by the whole days since it was seeded, so "replied 2 days ago" stays true and the last-30-days charts stay full. |
 
@@ -36,7 +36,7 @@ The LinkedIn, WhatsApp, email and R2 integrations are stored with placeholder cr
     AUTH_SIGNUP=invite-only
     ```
 
-    Leave every integration and AI key unset. Do not run the cron service or Dokploy schedule jobs for this deployment.
+    Leave every integration and AI key unset. Do not set up an external cron or Dokploy schedule jobs for this deployment.
   </Step>
   <Step title="Create the schema and seed it">
     The seed is not in the Docker image, so it runs from a checkout of the repository on your machine. Give the demo database a temporary **External Port** (on Dokploy: the database's page), then, with the deployment's own values:
@@ -50,7 +50,7 @@ The LinkedIn, WhatsApp, email and R2 integrations are stored with placeholder cr
     DEMO_MODE=true bun run db:seed:demo
     ```
 
-    Variables you export win over the repository's `.env.local`. The key must match the deployment's, because the seed encrypts the placeholder integrations with it. `DEMO_MODE=true` lets the seed write to a database that is not on localhost; it prints the host it writes to, and refuses a database that already holds a real organization. The seed takes a few seconds. Remove the external port afterwards.
+    If the deployment has already started, it created the schema itself; then `bun run db:setup` refuses (the database has tables) and you can skip it. Variables you export win over the repository's `.env.local`. The key must match the deployment's, because the seed encrypts the placeholder integrations with it. `DEMO_MODE=true` lets the seed write to a database that is not on localhost; it prints the host it writes to, and refuses a database that already holds a real organization. The seed takes a few seconds. Remove the external port afterwards.
   </Step>
   <Step title="Open it">
     Open the deployment's address. You land on Analytics, signed in, with the banner at the top.

@@ -30,7 +30,7 @@ flowchart LR
   F --> G[CRM conversation, sequence stops]
 ```
 
-A Gmail watch expires after about seven days. Google's documentation says to call `watch` at least every 7 days and recommends once a day. AgentSDR does this when you call its renewal endpoint, so you schedule that endpoint daily (step 5).
+A Gmail watch expires after about seven days. Google's documentation says to call `watch` at least every 7 days and recommends once a day. AgentSDR does this as part of its daily rollover, which runs inside the app, so there is nothing to schedule (step 5).
 
 <Steps>
   <Step title="Create a topic">
@@ -73,14 +73,14 @@ A Gmail watch expires after about seven days. Google's documentation says to cal
       <img src="/assets/screenshots/google/pubsub-push-subscription.jpg" alt="Create subscription form with Push delivery and the AgentSDR endpoint URL" />
     </Frame>
   </Step>
-  <Step title="Schedule the daily watch renewal and run it once">
-    AgentSDR registers the watches when this endpoint is called, not when you add a mailbox. Call it once now, then every day:
+  <Step title="Register the watch now">
+    AgentSDR renews the watches in its daily rollover (at the start of each organization's day, see Settings, Organization, Defaults), not when you add a mailbox. To register yours right away instead of waiting, call the renewal endpoint once. It needs `OUTREACH_TICK_SECRET` set in the app environment (optional otherwise):
 
     ```bash
     curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "https://<your-domain>/api/outreach/mailboxes/watch"
     ```
 
-    The secret is your `OUTREACH_TICK_SECRET` (sent as the `x-tick-secret` header or `?secret=`). Without it the endpoint answers 401. The reply lists each mailbox with `ok: true`, or an `error`. Organizations that have no topic saved are listed under `skipped` with `gmail_watch_topic_not_configured`. How to schedule it with cron or your host's scheduler is in [Production setup](/self-hosting/production).
+    The secret is your `OUTREACH_TICK_SECRET` (sent as the `x-tick-secret` header or `?secret=`). Without it the endpoint answers 401; add `?force=1` to run it even if today's rollover already did. The reply lists each mailbox with `ok: true`, or an `error`. Organizations that have no topic saved are listed under `skipped` with `gmail_watch_topic_not_configured`. Calling it from an external cron instead is covered in [Production setup](/self-hosting/production#scheduled-jobs).
   </Step>
 </Steps>
 
@@ -112,10 +112,10 @@ A local install (`localhost`) cannot receive pushes, because Google's servers ca
     Google Workspace is not connected for that organization. See [Google Workspace](/integrations/google-workspace).
   </Accordion>
   <Accordion title="401 unauthorized from the watch endpoint">
-    `OUTREACH_TICK_SECRET` is unset, or the value you sent differs. It is set in your environment, see [Configuration](/configuration).
+    `OUTREACH_TICK_SECRET` is unset in the app, or the value you sent differs. It is optional and only needed for this manual call; set it in your environment, see [Configuration](/configuration).
   </Accordion>
   <Accordion title="Replies worked, then stopped after about a week">
-    The watch expired because the daily job is not running. Schedule step 5 and run it once by hand.
+    The watch expired because the daily rollover is not running. Check the app log for `[scheduler]` lines (see [Troubleshooting](/self-hosting/troubleshooting)), and run step 5 once by hand.
   </Accordion>
   <Accordion title="Pub/Sub shows delivery errors or a growing backlog">
     The endpoint is not reachable over HTTPS, the certificate is invalid, or a firewall blocks Google. Open the URL path from outside your network; a `POST` should answer 200. Note that AgentSDR answers 200 even for pushes it ignores, so only unreachable endpoints cause retries.

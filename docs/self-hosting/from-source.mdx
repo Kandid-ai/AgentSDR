@@ -17,7 +17,7 @@ Use this path for development, or when you manage the runtime and the database y
 
 ## Overview
 
-You run one process (`next start`) against one database. Background workers start inside it. The periodic jobs that must be called over HTTP are scheduled with your host's cron: see [Scheduled jobs without the sidecar](#scheduled-jobs-without-the-sidecar).
+You run one process (`next start`) against one database. Background workers and the [scheduled jobs](/self-hosting/production#scheduled-jobs) start inside it, so no cron is needed. If you would rather drive the jobs from your host's cron, see [Scheduled jobs from outside](#scheduled-jobs-from-outside).
 
 <Steps>
   <Step title="Clone and install">
@@ -46,9 +46,9 @@ You run one process (`next start`) against one database. Background workers star
     BETTER_AUTH_SECRET=PASTE
     INTEGRATION_CREDENTIALS_KEY=PASTE
     UNSUBSCRIBE_SECRET=PASTE
-    CRON_SECRET=PASTE
-    OUTREACH_TICK_SECRET=PASTE
     ```
+
+    `CRON_SECRET` and `OUTREACH_TICK_SECRET` are optional: set them only to call the job endpoints from outside (see below).
 
     `POSTGRES_PASSWORD` and `PORT` in `.env.example` are for Docker Compose only. See [Docker Compose](/self-hosting/docker-compose) (the "Set your secrets" step) for what each secret does and the warning about `INTEGRATION_CREDENTIALS_KEY`. Every variable: [configuration reference](/configuration).
   </Step>
@@ -65,7 +65,7 @@ You run one process (`next start`) against one database. Background workers star
     bun run build
     bun run start        # serves on http://localhost:3000
     ```
-    For development use `bun run dev` instead of build and start. `next start` reads `.env.local` as well. The in-process outreach and WhatsApp campaign senders run only when `NODE_ENV=production`, which `next start` sets; they do not run under `bun run dev`.
+    For development use `bun run dev` instead of build and start. `next start` reads `.env.local` as well. The in-process outreach and WhatsApp campaign senders and the scheduled jobs run only when `NODE_ENV=production`, which `next start` sets; they do not run under `bun run dev`.
   </Step>
   <Step title="Sign up">
     Open `/sign-up`, create the first account and your organization. See [first sign-up](/self-hosting/production#who-may-sign-up).
@@ -93,18 +93,12 @@ WantedBy=multi-user.target
 
 Run one instance only. The outreach sender loop has no distributed lock; two instances would each send.
 
-## Scheduled jobs without the sidecar
+## Scheduled jobs from outside
 
-Docker Compose runs the `cron` sidecar for you. From source, schedule the same calls with the host's cron. Every request is `POST`. Replace `$APP` with your public origin. The meaning of each job is in the [jobs table](/self-hosting/production#scheduled-jobs).
+Under `bun run start` the app runs its own scheduled jobs (daily rollover, LinkedIn outreach, webhook replay, pruning). To drive them from the host's cron instead, set `INTERNAL_SCHEDULER=false` and set the secrets you need in `.env.local`. Every request is `POST`. Replace `$APP` with your public origin. The meaning of each job, and how the endpoints avoid repeating the scheduler's work (`?force=1` to skip that), is in the [jobs section](/self-hosting/production#scheduled-jobs).
 
 - `OUTREACH_TICK_SECRET` endpoints take the secret as `?secret=...` or the `x-tick-secret` header. The endpoint answers 401 when the variable is unset.
 - `CRON_SECRET` endpoints take `Authorization: Bearer $CRON_SECRET`. With the secret the call serves every organization; a signed-in member calling the same route only runs their own organization.
-
-```sh
-curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP/api/outreach/build-queue"
-curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP/api/outreach/mailboxes/watch"
-curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET"   "$APP/api/linkedin/jobs/run-outreach"
-```
 
 Example crontab (UTC). Cron does not read your `.env.local`, so define the variables at the top of the crontab (`crontab -e`):
 
@@ -115,27 +109,22 @@ CRON_SECRET=paste-the-value
 
 0 5 * * *    curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP/api/outreach/build-queue"
 15 5 * * *   curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP/api/outreach/mailboxes/watch"
-*/10 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP/api/linkedin/jobs/run-outreach"
-*/10 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP/api/linkedin/jobs/run-search-queue"
+*/30 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP/api/linkedin/jobs/run-outreach"
 */10 * * * * curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP/api/linkedin/jobs/replay-webhooks"
 0 0 * * *    curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP/api/linkedin/jobs/reset-daily-limits"
 ```
 
-If you do not use LinkedIn, the `CRON_SECRET` jobs are not needed. If you do not use email outreach, the `OUTREACH_TICK_SECRET` jobs are not needed. The schedules for the four LinkedIn jobs are suggestions. Any reasonable frequency works: each run respects working hours and daily limits, and the search queue never runs twice at once.
+The LinkedIn search queue (`/api/linkedin/jobs/run-search-queue`) is not part of the schedule; it runs when someone clicks Run, and can be called the same way if you want it on a timer. If you do not use LinkedIn, the `CRON_SECRET` jobs are not needed. If you do not use email outreach, the `OUTREACH_TICK_SECRET` jobs are not needed.
 
 Do not schedule `/api/outreach/tick`: the in-process scheduler already does it, and scheduling it as well double-ticks.
 
 ## Check that it works
 
-Run one job by hand and look for JSON back, not `unauthorized`:
-
-```sh
-curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP/api/outreach/build-queue"
-```
-
 <Check>
-The call returns a JSON result (an `unauthorized` 401 means the secret does not match the app's `OUTREACH_TICK_SECRET`), and `/sign-in` loads.
+`/sign-in` loads, and the app log shows `[scheduler] ...` lines as jobs run (the first LinkedIn outreach run comes at the next :00 or :30 UTC).
 </Check>
+
+If the log shows `[scheduler] Table scheduled_job_runs is missing`, see [Troubleshooting](/self-hosting/troubleshooting).
 
 ## Next
 

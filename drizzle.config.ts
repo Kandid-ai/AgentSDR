@@ -101,6 +101,7 @@ const OWNED_TABLES = [
   "outreach_mailboxes",
   "outreach_suppression_list",
   "qualification_jobs",
+  "scheduled_job_runs",
   "targeted_domains",
   "whatsapp_accounts",
   "whatsapp_campaign_accounts",

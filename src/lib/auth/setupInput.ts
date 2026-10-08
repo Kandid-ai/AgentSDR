@@ -3,10 +3,24 @@
  * route share it, so the same rules apply before and after the request.
  */
 
+import { isTimeZone } from "@/lib/channels/rules";
+import { resolveTimeZone } from "@/lib/timeZone";
+
 export const MIN_PASSWORD_LENGTH = 8; // keep equal to emailAndPassword.minPasswordLength in server.ts
 const MAX_PASSWORD_LENGTH = 128; // Better Auth's own default maximum
 
-export type SetupInput = { name: string; organizationName: string; email: string; password: string };
+export type SetupInput = {
+  name: string;
+  organizationName: string;
+  email: string;
+  password: string;
+  /**
+   * The browser's time zone (Intl), sent invisibly with the form: becomes the
+   * organization's time zone. Absent when missing or not a zone this runtime
+   * knows — never a reason to refuse the form.
+   */
+  timeZone?: string;
+};
 
 export type SetupValidation = { ok: true; value: SetupInput } | { ok: false; error: string };
 
@@ -26,5 +40,7 @@ export function validateSetupInput(raw: unknown): SetupValidation {
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "Enter a valid email address." };
   if (password.length < MIN_PASSWORD_LENGTH) return { ok: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
   if (password.length > MAX_PASSWORD_LENGTH) return { ok: false, error: `Password must be at most ${MAX_PASSWORD_LENGTH} characters.` };
-  return { ok: true, value: { name, organizationName, email, password } };
+  const zone = str("timeZone").trim();
+  const timeZone = zone && zone.length <= 64 && isTimeZone(zone) ? resolveTimeZone(zone) : undefined;
+  return { ok: true, value: { name, organizationName, email, password, ...(timeZone ? { timeZone } : {}) } };
 }

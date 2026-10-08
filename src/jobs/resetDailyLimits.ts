@@ -21,7 +21,7 @@ const retentionCutoff = (): Date =>
  * crashed job leaves its status RUNNING forever, so filtering on finishedAt alone would
  * keep those rows (and their logs) indefinitely.
  */
-const pruneJobHistory = async (): Promise<void> => {
+export const pruneJobHistory = async (): Promise<void> => {
   const staleCutoff = new Date(Date.now() - (HISTORY_RETENTION_DAYS + 1) * 24 * 60 * 60 * 1000);
 
   const deleted = await db
@@ -62,6 +62,11 @@ const pruneWebhookEvents = async (): Promise<void> => {
 export type ResetDailyLimitsOptions = {
   /** Restrict the reset to one organization (a signed-in caller); omitted by cron, which serves every organization. */
   organizationId?: string;
+  /**
+   * Cron only: reset just these organizations (the rest already rolled over
+   * today, src/lib/scheduler/dailyRollover.ts). Shared history is still pruned.
+   */
+  organizationIds?: string[];
 };
 
 export const resetDailyLimits = async (options: ResetDailyLimitsOptions = {}): Promise<void> => {
@@ -71,7 +76,7 @@ export const resetDailyLimits = async (options: ResetDailyLimitsOptions = {}): P
   // events are not, so each organization's are reset and pruned in its own scope.
   const organizationIds = options.organizationId
     ? [options.organizationId]
-    : (await db.select({ id: organizations.id }).from(organizations)).map((org) => org.id);
+    : options.organizationIds ?? (await db.select({ id: organizations.id }).from(organizations)).map((org) => org.id);
   for (const organizationId of organizationIds) {
     await runInOrganization(organizationId, async () => {
       const updated = await db

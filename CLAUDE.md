@@ -43,6 +43,8 @@ Drizzle table definitions live in domain-scoped files, not one central schema:
 - `src/lib/inbox/schema.ts` — Master Inbox and inbound-delivery diagnostics
 - `src/lib/qualification/schema.ts` — domain qualification
 - `src/lib/calls/schema.ts` — WhatsApp calls placed from the app (`call_sessions`)
+- `src/lib/scheduler/schema.ts` — the in-process scheduler's slot claims
+  (`scheduled_job_runs`, platform-wide; see `src/lib/scheduler/`)
 - `src/lib/auth/schema.ts` — Better Auth: users, sessions, accounts,
   verifications, organizations, members, invitations, teams, team_members
 

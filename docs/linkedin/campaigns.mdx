@@ -81,7 +81,7 @@ Click a field in the editor to insert it. Fields look like `{{firstName}}` and c
 
 ## How sending works
 
-A scheduled job runs the engine for every connected account. Each pass, for an account that is allowed to run, does this in order:
+A scheduled job (every 30 minutes) runs the engine for every connected account. Each pass, for an account that is allowed to run, does this in order:
 
 1. **Looks up profiles.** Leads imported from a search or sheet are matched to their LinkedIn profile first, a few at a time.
 2. **Sends connection requests.** A small batch, within the account's daily limit.

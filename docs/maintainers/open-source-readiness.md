@@ -34,7 +34,7 @@ pushed.
 | README is the create-next-app boilerplate | P0 | Product README with demo-data screenshots — done |
 | No way to create a database from scratch (schema history is one-shot migrations against an existing database) | P0 | `db/schema.sql` + `db/seed.sql` + `db:setup` — done |
 | No CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, issue/PR templates, CI | P0 | Added — done |
-| Self-host path undocumented; Docker image exists, no compose, no setup step in the image | P0 | Compose + setup service + cron sidecar + docs — done |
+| Self-host path undocumented; Docker image exists, no compose, no setup step in the image | P0 | Compose + docs — done (originally with a setup service and a cron sidecar; both are now in the app, Compose is `db` + `app`) |
 | Lint has 38 pre-existing errors, so CI could not be green | P1 | Fixed or justified with scoped disables; legacy CommonJS migrations and the separate `video/` project scoped out — done |
 | Product docs mixed with internal migration plans in `docs/` | P1 | User/maintainer docs; historical design notes moved to `docs/design/` — done |
 | No demo data: contributors face an empty app, screenshots would show real data | P1 | `bun run db:seed:demo` — done |
@@ -100,8 +100,9 @@ Each phase ends with the checks listed under it; nothing is pushed.
   demo user in a browser; typecheck, lint, tests, production build.
 
 ### 6. Self-hosting — done
-- `docker-compose.yml` (Postgres + one-shot schema setup + app), the image
-  carrying `db/` and the setup script, a cron sidecar for scheduled jobs.
+- `docker-compose.yml` (Postgres + app), the image carrying `db/` and the setup
+  script (run on start against an empty database). Originally a one-shot setup
+  service and a cron sidecar; both are now in the app.
 - Check: run the image's exact entrypoint (standalone server) and the setup
   script outside Docker against a fresh database (Docker is not available on
   the build machine); validate compose syntax.

@@ -81,7 +81,7 @@ Sending is deliberately slow and spread out.
 - **Limits come from your rules.** Daily limits, gaps and hours are set in [Sending rules](/workspace/sending-rules).
 
 <Note>
-Because the queue is built once a day, a campaign launched mid-day may not send until the next build. The build runs from a scheduled job on the server. On a self-hosted install, see [Self-hosting](/self-hosting) to confirm it is scheduled.
+Because the queue is built once a day, a campaign launched mid-day may not send until the next build. The build runs from a scheduled job inside the app, at the start of your organization's day (Settings, Organization, Defaults: Time zone and New day starts at).
 </Note>
 
 A step is sent at most once per lead. If sending fails, the email is marked **Failed** instead of being retried automatically, and the campaign's analytics show it under **Failed sends** with a hint to check the mailbox.

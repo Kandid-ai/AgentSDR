@@ -143,7 +143,7 @@ You need a machine with Docker.
 ```sh
 mkdir agentsdr && cd agentsdr
 curl -O https://raw.githubusercontent.com/Kandid-ai/AgentSDR/main/docker-compose.yml
-docker compose up -d          # PostgreSQL, schema, the app on :3000, the scheduler
+docker compose up -d          # PostgreSQL, the app on :3000 (it creates the schema and runs the scheduled jobs)
 ```
 
 Open http://localhost:3000: the setup page creates your admin account and organization. Then connect your services in **Settings**. For a server, replace the `# CHANGEME` values in `docker-compose.yml` (or a `.env` beside it) first; `openssl rand -hex 32` makes a secret.
@@ -182,7 +182,7 @@ Environment variables cover only what the app needs before it can read its datab
 | `BETTER_AUTH_URL` | yes | Public URL, read at runtime |
 | `INTEGRATION_CREDENTIALS_KEY` | yes | Encrypts integration credentials (AES-256-GCM) |
 | `UNSUBSCRIBE_SECRET` | for email | Signs unsubscribe links |
-| `CRON_SECRET`, `OUTREACH_TICK_SECRET` | for jobs | Authenticate scheduled-job calls |
+| `CRON_SECRET`, `OUTREACH_TICK_SECRET` | no | Only to call the job endpoints from an external cron |
 | `RESEND_API_KEY`, `AUTH_EMAIL_FROM` | in production | Auth email through Resend |
 | `AUTH_SIGNUP` | no | `invite-only` (default) or `open` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | no | "Continue with Google" |
@@ -217,13 +217,11 @@ One Next.js app and one PostgreSQL database: pages, API routes and background wo
 ```mermaid
 flowchart TB
     subgraph You["Your infrastructure"]
-        App["AgentSDR (Next.js)<br/>pages, API, in-process workers"]
+        App["AgentSDR (Next.js)<br/>pages, API, in-process workers and scheduled jobs"]
         DB[("PostgreSQL 16+")]
-        Cron["Scheduler<br/>(Compose cron sidecar)"]
         Ext["Call Recorder<br/>Chrome extension"]
     end
     App <--> DB
-    Cron -- "scheduled jobs" --> App
     Ext -- "recordings" --> App
     App <--> Unipile["Unipile<br/>LinkedIn, WhatsApp"]
     App <--> Gmail["Google Workspace<br/>Gmail"]
@@ -243,7 +241,7 @@ flowchart TB
 src/app/                 Pages (App Router) and API routes
 src/lib/<domain>/        Business logic, schema and queries per domain
 src/components/          React components, one folder per domain
-src/jobs, src/functions  LinkedIn sending engine (run by scheduled jobs)
+src/jobs, src/functions  LinkedIn sending engine (run by the in-app scheduled jobs)
 src/services/            Unipile API clients
 db/                      schema.sql (generated snapshot) and seed.sql
 scripts/                 Migration history, audits, database tooling, e2e checks

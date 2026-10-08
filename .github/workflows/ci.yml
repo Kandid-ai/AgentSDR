@@ -111,17 +111,15 @@ jobs:
       - name: Bundled PostgreSQL (the default)
         run: |
           cp .env.example .env
-          sed -i 's/^CRON_SECRET=.*/CRON_SECRET=ci/; s/^OUTREACH_TICK_SECRET=.*/OUTREACH_TICK_SECRET=ci/' .env
           docker compose config --quiet
-          test "$(docker compose config --services | sort | tr '\n' ' ')" = "app cron db setup "
+          test "$(docker compose config --services | sort | tr '\n' ' ')" = "app db "
       - name: Your own PostgreSQL (docker-compose.external-db.yml)
         run: |
           cp .env.example .env
-          sed -i 's/^CRON_SECRET=.*/CRON_SECRET=ci/; s/^OUTREACH_TICK_SECRET=.*/OUTREACH_TICK_SECRET=ci/' .env
           printf 'COMPOSE_FILE=docker-compose.yml:docker-compose.external-db.yml\n' >> .env
           sed -i 's#^DATABASE_URL=.*#DATABASE_URL=postgres://u:p@db.example.com:5432/agentsdr#' .env
           docker compose config --quiet
-          test "$(docker compose config --services | sort | tr '\n' ' ')" = "app cron setup "
+          test "$(docker compose config --services | sort | tr '\n' ' ')" = "app "
 
   secrets:
     name: Secret scan

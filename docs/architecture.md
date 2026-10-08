@@ -24,7 +24,7 @@ with a master inbox, and analytics. Every piece of business data belongs to one
         +------------------------+         OpenRouter (all LLM calls)
         |  src/proxy.ts          |         Cloudflare R2 (recordings)
         |  cookie present? public|<------  Resend (auth email)
-        |  paths, cron secrets   |         Enrichment providers
+        |  paths, job secrets   |         Enrichment providers
         +-----------+------------+                 ^        |
                     |                              |        | webhooks
         pages (src/app/**)   API routes (src/app/api/**) <---+
@@ -40,7 +40,9 @@ with a master inbox, and analytics. Every piece of business data belongs to one
 
    Started at boot by src/instrumentation.ts (same process):
      outreach scheduler (prod) | enrichment worker | CRM worker
-   Called by an external scheduler (curl):
+     scheduled jobs (prod): daily rollover per organization, LinkedIn
+     outreach, webhook replay, pruning (src/lib/scheduler)
+   Also callable by hand or an external cron (optional secrets):
      /api/outreach/{build-queue,mailboxes/watch}, /api/linkedin/jobs/*
 ```
 
@@ -55,7 +57,7 @@ src/app/                 Pages (App Router) and API routes
   unsubscribe/           Public unsubscribe page
 src/lib/<domain>/        Business logic, schema and queries per domain
 src/components/          React components, mostly one folder per domain
-src/jobs/                LinkedIn jobs run by the cron endpoints
+src/jobs/                LinkedIn jobs run by the scheduler and the job endpoints
 src/functions/           LinkedIn sending steps used by the jobs
 src/services/            Unipile API clients (LinkedIn and WhatsApp)
 src/proxy.ts             Request gate (Next.js middleware)

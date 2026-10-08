@@ -24,6 +24,9 @@ export * from "./whatsapp/schema";
 // Sending rules per organization and channel (src/lib/channels/rules.ts).
 export * from "./channels/schema";
 
+// The in-process scheduler's slot claims (src/lib/scheduler/), platform-wide.
+export * from "./scheduler/schema";
+
 // Better Auth: users, sessions, accounts, verifications, organizations,
 // members, invitations, teams, team_members.
 export * from "./auth/schema";

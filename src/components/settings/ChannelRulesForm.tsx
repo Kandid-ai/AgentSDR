@@ -36,6 +36,9 @@ function describeDefault(rule: Rule): string {
       return rule.default ? hoursSummary(rule.default) : "any time";
     case "country":
       return rule.default ? countryName(rule.default) : "none";
+    case "timezone":
+    case "time":
+      return rule.default;
   }
 }
 
@@ -70,13 +73,33 @@ function NumberInput({ id, value, onChange, disabled, label }: { id: string; val
   );
 }
 
+/** Every zone the browser knows, with `current` and the common ones first. */
+function useTimeZones(current: string | undefined): string[] {
+  return useMemo(() => {
+    const all = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
+    return [...new Set([...(current ? [current] : []), ...COMMON_TIMEZONES, ...all])];
+  }, [current]);
+}
+
+function TimeZoneInput({ id, value, onChange, disabled }: { id: string; value: string; onChange: (v: string) => void; disabled: boolean }) {
+  const zones = useTimeZones(value);
+  return (
+    <Select.Root size="small" value={value} onValueChange={onChange} disabled={disabled}>
+      <Select.Trigger id={id} aria-label="Time zone">
+        <Select.Value />
+      </Select.Trigger>
+      <Select.Content>
+        {zones.map((zone) => (
+          <Select.Item key={zone} value={zone}>{zone}</Select.Item>
+        ))}
+      </Select.Content>
+    </Select.Root>
+  );
+}
+
 function HoursInput({ id, rule, value, onChange, disabled }: { id: string; rule: Rule & { kind: "hours" }; value: WeeklyHours | null; onChange: (v: WeeklyHours | null) => void; disabled: boolean }) {
   const fallback: WeeklyHours = { timezone: "Asia/Kolkata", days: [1, 2, 3, 4, 5], start: "09:00", end: "18:00" };
-  const zones = useMemo(() => {
-    const all = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
-    const current = value?.timezone;
-    return [...new Set([...(current ? [current] : []), ...COMMON_TIMEZONES, ...all])];
-  }, [value?.timezone]);
+  const zones = useTimeZones(value?.timezone);
 
   if (rule.optional && value === null) {
     return (
@@ -240,6 +263,21 @@ export function ChannelRulesForm({
                     <div className="w-full text-left">
                       <HoursInput id={id} rule={rule} value={value as WeeklyHours | null} onChange={(v) => set(rule.key, v)} disabled={!canEdit} />
                     </div>
+                  )}
+                  {rule.kind === "timezone" && (
+                    <div className="w-full text-left">
+                      <TimeZoneInput id={id} value={value as string} onChange={(v) => set(rule.key, v)} disabled={!canEdit} />
+                    </div>
+                  )}
+                  {rule.kind === "time" && (
+                    <input
+                      id={id}
+                      type="time"
+                      value={value as string}
+                      disabled={!canEdit}
+                      onChange={(e) => set(rule.key, e.target.value)}
+                      className={cn(timeInputClass, "w-28", error && "ring-error-base")}
+                    />
                   )}
                   {rule.kind === "country" && (
                     <div className="w-full text-left">

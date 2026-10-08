@@ -9,6 +9,58 @@ Each release lists the database migrations it needs; see
 
 ## [Unreleased]
 
+### Changed
+
+- **Scheduled jobs run inside the app.** There is no cron container any more:
+  Docker Compose is two containers, `db` and `app`. The jobs run in
+  production only (never in `DEMO_MODE`); `INTERNAL_SCHEDULER=false` turns
+  them off for an external cron, which calls the endpoints as before.
+- **Database schema is created when the app starts.** The image creates it in
+  an empty database before the server starts (there is no setup container). An
+  existing database is only read, never changed. If this step fails the app
+  does not start; `AGENTSDR_SKIP_DB_SETUP=true` skips it.
+- **The daily rollover is per organization.** Each organization's email send
+  queues, Gmail push watch renewal and LinkedIn daily-limit reset run at the
+  start of its own day, set in Settings, Organization, Defaults (**Time zone**,
+  default `UTC`, and **New day starts at**, default `00:00`). The first-run
+  setup page stores the browser's time zone for the first organization.
+- LinkedIn outreach now runs every 30 minutes, and the LinkedIn webhook replay
+  every 10. The LinkedIn search queue is no longer scheduled: it runs when
+  someone clicks Run.
+- `CRON_SECRET` and `OUTREACH_TICK_SECRET` are optional: they are only needed
+  to call the job endpoints from outside, and are no longer in
+  `docker-compose.yml`. Unset, the endpoints refuse every secret call.
+- The job endpoints skip work the in-app scheduler already did (organizations
+  whose rollover ran today; a slot that already ran). `?force=1` skips that
+  check.
+
+### Fixed
+
+- LinkedIn job logs: concurrent jobs no longer leave the console patched, so
+  later lines landed in an old run's log. Log capture is now per run
+  (`AsyncLocalStorage`).
+
+### Migrations
+
+- `bun scripts/create-scheduled-job-runs.ts` creates `scheduled_job_runs`,
+  where each scheduled run is claimed. With Docker Compose:
+  `docker compose exec app agentsdr-entrypoint bun scripts/create-scheduled-job-runs.ts`.
+  A fresh install gets the table automatically. **Until the migration runs, no
+  scheduled jobs run in-process** (the app logs a
+  `[scheduler] Table scheduled_job_runs is missing` warning); the endpoints
+  keep working.
+
+**Upgrading a Docker Compose install from 0.2.0:**
+
+1. Replace `docker-compose.yml` with the new one.
+2. `docker compose up -d --remove-orphans` (removes the old `setup` and `cron`
+   containers).
+3. Run the migration above.
+
+On Dokploy, nothing needs creating or scheduling any more; existing Schedule
+Jobs are harmless and can be deleted. Keep `CRON_SECRET` and
+`OUTREACH_TICK_SECRET` only if you keep calling the endpoints.
+
 ## [0.2.0] - 2026-10-08
 
 **Upgrading a Docker Compose install from 0.1.0** (breaking): the new

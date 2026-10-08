@@ -124,6 +124,9 @@ export const GLOBAL: readonly string[] = [
   "crm_status_config",
   "JobRun",
   "JobLog",
+  // The scheduler's slot claims; a per-organization job names its
+  // organization in `job` (src/lib/scheduler/schema.ts).
+  "scheduled_job_runs",
 ];
 
 /**

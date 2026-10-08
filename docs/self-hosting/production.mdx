@@ -60,9 +60,28 @@ Optional: set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` to add "Continue wit
 
 ## Scheduled jobs
 
-Some work runs inside the app process; the rest must be triggered by something calling an HTTP endpoint. In Compose the `cron` sidecar does this. On Dokploy use Schedule Jobs. Otherwise use the host's cron with `curl` ([examples](/self-hosting/from-source#scheduled-jobs-without-the-sidecar)).
+The scheduled jobs run inside the app, so there is nothing to set up: no cron container, no Dokploy Schedule Jobs, no secrets. They run only in production (`bun run start`, or the Docker image), never in a demo deployment, and `INTERNAL_SCHEDULER=false` turns them off if you would rather call the endpoints from an external cron ([examples](/self-hosting/from-source#scheduled-jobs-from-outside)).
 
-### In-process (nothing to configure)
+### The jobs
+
+| Job | When | What it does |
+|---|---|---|
+| Daily rollover | Once a day per organization, at the start of that organization's day | Builds the organization's email send queues, renews its Gmail push watches (only needed for [Gmail reply sync](/integrations/gmail-reply-sync)) and resets its LinkedIn accounts' daily limits. **Without it nothing is sent.** |
+| LinkedIn outreach | Every 30 minutes (:00 and :30, UTC) | Syncs accounts, resolves profiles, sends invitations and follow-ups. Each account's working hours and daily limits still apply. |
+| LinkedIn webhook replay | Every 10 minutes | Re-processes failed or abandoned webhook deliveries. |
+| History pruning | Daily at 00:00 UTC | Deletes LinkedIn job history older than 1 day and scheduler records older than 30 days. |
+
+The LinkedIn search queue is not scheduled: it runs when someone clicks Run.
+
+The daily rollover follows each organization's clock. Set it in **Settings, Organization, Defaults**: **Time zone** (an IANA name such as `Europe/Berlin`, default `UTC`) and **New day starts at** (`HH:MM`, default `00:00`). Daylight saving is handled. The first-run setup page stores the browser's time zone for the first organization. Changing the zone or time never repeats the same day's rollover, except that moving the start of the day later can give a second rollover within 24 hours, because it is a new day under the new setting.
+
+Each run is claimed in the database (table `scheduled_job_runs`), so a scheduled slot runs once however many times the app restarts, even while two instances overlap during a deploy. After downtime only the latest missed slot runs. After upgrading, a job with no recorded run waits for its next slot, so the daily work an old cron already did today is not repeated. The app logs one line per run, for example `[scheduler] linkedin-run-outreach @ 2026-10-08T09:30:00.000Z ok in 1.2s`, or `FAILED` with the error.
+
+<Warning>
+Until the `scheduled_job_runs` table exists, the app runs **no** scheduled jobs and logs a `[scheduler] Table scheduled_job_runs is missing` warning. A fresh install creates it automatically; an upgraded one needs the migration under [Upgrading](#upgrading).
+</Warning>
+
+### Also in the app
 
 Started from `src/instrumentation.ts` when the server boots:
 
@@ -73,28 +92,32 @@ Started from `src/instrumentation.ts` when the server boots:
 | Enrichment (grid) worker | Runs queued cells of Tables. | Safe with several instances (`FOR UPDATE SKIP LOCKED`). Also runs in development. |
 | CRM worker | Classifies replies and drafts responses from the durable job queue. | Safe with several instances. |
 
-### External (you must schedule these)
+### Running a job by hand, or from outside
 
-Every request is `POST`. Replace `$APP` with your public origin.
+The same work is available as endpoints, for a manual run or an external cron (needed only with `INTERNAL_SCHEDULER=false`). Every request is `POST`; replace `$APP` with your public origin. `CRON_SECRET` and `OUTREACH_TICK_SECRET` are optional: set one only to call its endpoints from outside. Unset, the endpoints refuse every secret call. In Docker Compose, add them to the `environment` block of `docker-compose.yml`.
 
-| Endpoint | Auth | Suggested schedule | Purpose and what breaks without it |
-|---|---|---|---|
-| `/api/outreach/build-queue` | `OUTREACH_TICK_SECRET` | Once a day at a fixed time, early morning | Rebuilds each mailbox's send queue for the day and resets daily send counters. Safe to call more than once. **Without it nothing is sent.** |
-| `/api/outreach/mailboxes/watch` | `OUTREACH_TICK_SECRET` | Once a day | Renews Gmail push watches, which expire after about 7 days. Needed only if you use the Gmail Pub/Sub reply sync; without it replies stop arriving after the watch expires. |
-| `/api/linkedin/jobs/run-outreach` | `CRON_SECRET` | Every few minutes (it checks each account's working hours and daily limits itself) | LinkedIn: syncs accounts, resolves profiles, sends invitations and follow-ups. Without it LinkedIn campaigns do not advance. |
-| `/api/linkedin/jobs/run-search-queue` | `CRON_SECRET` | Every few minutes | LinkedIn: works queued lead searches. Skips if a previous run is still going. Without it searches stay queued. |
-| `/api/linkedin/jobs/reset-daily-limits` | `CRON_SECRET` | Once a day, at midnight in the timezone you want | LinkedIn: resets per-account daily counters and prunes old job and webhook history. Without it daily limits are never reset and history grows. |
-| `/api/linkedin/jobs/replay-webhooks` | `CRON_SECRET` | Every few minutes | LinkedIn: re-processes failed or abandoned webhook deliveries. Without it a missed webhook stays missed. |
-| `/api/outreach/tick` | `OUTREACH_TICK_SECRET` | **Do not schedule.** | Manual or backup trigger for one send tick. The in-process scheduler already does this; scheduling it as well double-ticks. |
+| Endpoint | Auth | Runs |
+|---|---|---|
+| `/api/outreach/build-queue` | `OUTREACH_TICK_SECRET` | Rebuilds each mailbox's send queue and resets daily send counters. |
+| `/api/outreach/mailboxes/watch` | `OUTREACH_TICK_SECRET` | Renews Gmail push watches, which expire after about 7 days. |
+| `/api/linkedin/jobs/reset-daily-limits` | `CRON_SECRET` | Resets LinkedIn daily counters and prunes old history. |
+| `/api/linkedin/jobs/run-outreach` | `CRON_SECRET` | The LinkedIn outreach run. |
+| `/api/linkedin/jobs/replay-webhooks` | `CRON_SECRET` | The LinkedIn webhook replay. |
+| `/api/linkedin/jobs/run-search-queue` | `CRON_SECRET` | Works queued lead searches. Skips if a previous run is still going. |
+| `/api/outreach/tick` | `OUTREACH_TICK_SECRET` | **Do not schedule.** One send tick; the in-app scheduler already does this, and scheduling it as well double-ticks. |
 
-The schedules for the four LinkedIn jobs are suggestions. Any reasonable frequency works: each run respects working hours and daily limits, and the search queue never runs twice at once. The Compose sidecar uses `docker/cron/crontab`: build-queue 00:05, watch 03:30, run-outreach every 15 minutes, run-search-queue and replay-webhooks every 10 minutes, reset-daily-limits 00:00 (UTC).
+With the in-app scheduler on, these calls do not repeat its work:
+
+- `run-outreach` and `replay-webhooks` share the scheduler's slot. If it already ran, they answer `{ "ok": true, "skipped": "already ran for slot ..." }`.
+- `build-queue`, `mailboxes/watch` and `reset-daily-limits` skip organizations whose daily rollover already ran today (the JSON lists them under `alreadyRolledOver`) and do the rest.
+- Add `?force=1` to any of them to skip this check.
+
+With the scheduler off, or on a development server, they behave as plain endpoints.
 
 Authentication:
 
 - `OUTREACH_TICK_SECRET` endpoints take the secret as `?secret=...` or the `x-tick-secret` header. The endpoint answers 401 (`{"error":"unauthorized"}`) when the variable is unset or does not match.
 - `CRON_SECRET` endpoints take `Authorization: Bearer $CRON_SECRET`. With the secret the call serves every organization; a signed-in member calling the same route only runs their own organization.
-
-If you do not use LinkedIn, the `CRON_SECRET` jobs are not needed. If you do not use email outreach, the `OUTREACH_TICK_SECRET` jobs are not needed.
 
 ## Webhooks
 
@@ -114,7 +137,7 @@ Do not expose `/api/webhooks/[id]` publicly; it is behind sign-in on purpose.
 
 **Unipile registers itself.** Saving the Unipile integration registers the two webhooks (`connection-accepted` and `unipile-message`) in your Unipile workspace, each URL carrying `org=<organization id>` and each delivery the generated secret as `x-unipile-secret`. Registration is skipped when the origin is `localhost`, so save the integration again after the app runs at its public address. See [Unipile](/integrations/unipile). A single `/api/webhooks/unipile-message` receives every Unipile messaging event and routes by account type; the two paths above stay live for hand-made registrations and the LinkedIn replay job.
 
-**Gmail push** is optional and set up in Google Cloud: a Pub/Sub subscription pushing to `/api/outreach/webhooks/gmail-watch`. Follow [Gmail reply sync](/integrations/gmail-reply-sync), and schedule `mailboxes/watch` so the watch is renewed.
+**Gmail push** is optional and set up in Google Cloud: a Pub/Sub subscription pushing to `/api/outreach/webhooks/gmail-watch`. Follow [Gmail reply sync](/integrations/gmail-reply-sync), the daily rollover renews the watch.
 
 ### WhatsApp call recorder extension
 
@@ -148,7 +171,7 @@ Call recordings live in R2, not in the database; back that bucket up separately.
 
 ## Upgrading
 
-Upgrading an existing install is **not** done with `db:setup`. That script only initialises an empty database and refuses to run otherwise.
+Upgrading an existing install is **not** done with `db:setup`, and the app's start-up setup does not do it either: both only initialise an empty database. On an existing one the app prints `Database already initialised — nothing to do.` and changes nothing.
 
 1. Back up the database ([above](#backups-and-restore)).
 2. `git pull` (or pull the new image tag).
@@ -159,7 +182,13 @@ Upgrading an existing install is **not** done with `db:setup`. That script only 
    ```
 
    The release notes in [CHANGELOG.md](https://github.com/Kandid-ai/AgentSDR/blob/main/CHANGELOG.md) name any migration you must run.
-4. Run each new migration against your database, for example `bun scripts/<name>.ts` (older ones are plain JavaScript, run with `node scripts/<name>.js`). They load `.env.local` and connect with `DATABASE_URL`, are guarded with `IF NOT EXISTS` / `IF EXISTS`, and are safe to re-run. The Docker image contains only `scripts/db/setup.ts`, so run migrations from a checkout of the repository that can reach your database.
+4. Run each new migration against your database, for example `bun scripts/<name>.ts` (older ones are plain JavaScript, run with `node scripts/<name>.js`). They load `.env.local` and connect with `DATABASE_URL`, are guarded with `IF NOT EXISTS` / `IF EXISTS`, and are safe to re-run. The Docker image contains only `scripts/db/setup.ts` and `scripts/create-scheduled-job-runs.ts`, so run other migrations from a checkout of the repository that can reach your database. For the scheduler's migration on Docker Compose:
+
+   ```sh
+   docker compose exec app agentsdr-entrypoint bun scripts/create-scheduled-job-runs.ts
+   ```
+
+   The entrypoint supplies `DATABASE_URL` for the bundled database.
 5. Rebuild and restart: `bun run build && bun run start`, or `docker compose up -d --build` (or `docker compose pull && docker compose up -d` if you use a prebuilt image).
 6. Optionally verify: `bun run db:check` audits the database against the tenancy registry.
 
@@ -181,7 +210,7 @@ Operational kill switches, off by default. A value of `1`, `true`, `yes` or `on`
 | `PAUSE_GRID_WORKER` | Stops the enrichment worker. |
 
 <Warning>
-`PEOPLE_MIGRATION_MODE` and `PAUSE_CAMPAIGN_MUTATIONS` also return 503 for `POST` calls to `/api/linkedin/jobs/*` and `/api/outreach/mailboxes/*`, which includes your scheduled jobs. Leave them off in normal operation.
+`PEOPLE_MIGRATION_MODE` and `PAUSE_CAMPAIGN_MUTATIONS` also return 503 for `POST` calls to `/api/linkedin/jobs/*` and `/api/outreach/mailboxes/*`, which an external cron would call. They also stop the in-app LinkedIn jobs and the rollover's Gmail-watch and LinkedIn-reset parts. `PAUSE_EMAIL_OUTBOUND` and the other switches still apply inside the jobs. Leave them off in normal operation.
 </Warning>
 
 ## Next

@@ -15,7 +15,7 @@ the step-by-step guides are linked in [Choose your path](#choose-your-path).
 | The app | One Next.js server (Bun in the Docker image), listening on port 3000. It serves the UI, the API and the webhooks. |
 | PostgreSQL | The only datastore. It holds everything, including your integrations' credentials, encrypted. |
 | In-process workers | Started inside the app when it boots (`src/instrumentation.ts`): the email send loop, the WhatsApp campaign sender, the Tables enrichment worker and the CRM worker. Nothing to configure. See [Scheduled jobs](#scheduled-jobs). |
-| The cron sidecar | The same image running `crond`, started by `docker-compose.yml`, that calls the app's scheduled-job endpoints with `curl`. Without Docker Compose you schedule those calls yourself. |
+| Scheduled jobs | Also inside the app in production: the daily rollover, LinkedIn outreach and webhook replay. No cron container. |
 
 The app is designed to run as a **single instance**. The outreach sender loop
 has no distributed lock; two instances would each send. Do not scale `app` to
@@ -54,7 +54,7 @@ Each feature switches on once the service it needs is connected.
 
 | Path | Best for | Guide |
 |---|---|---|
-| Docker Compose | Most people: download one file, set your secrets, run one command; database and scheduler included. | [Docker Compose](self-hosting/docker-compose.mdx) |
+| Docker Compose | Most people: download one file, set your secrets, run one command; database, schema and scheduled jobs included. | [Docker Compose](self-hosting/docker-compose.mdx) |
 | From source | Development, or a host where you manage Node/Bun and Postgres yourself. | [From source](self-hosting/from-source.mdx) |
 | Dokploy on a VPS | A self-hosted platform with domains, HTTPS and deploy-on-push. | [Dokploy](self-hosting/dokploy.mdx) |
 
@@ -68,7 +68,7 @@ variable is in the [configuration reference](configuration.md).
 2. **First sign-up:** create the first account and your organization
    ([below](#first-sign-up-and-the-organization)).
 3. **Connect integrations** in Settings, one per feature you want.
-4. **Scheduled jobs:** make sure the periodic calls run
+4. **Scheduled jobs:** nothing to set up; set each organization's time zone
    ([below](#scheduled-jobs)).
 5. **Go live:** domain, HTTPS, Resend, backups ([production](self-hosting/production.mdx)).
 
@@ -102,12 +102,14 @@ goes out through the Gmail accounts you connect. Details:
 
 ## Scheduled jobs
 
-Some work runs inside the app process; the rest must be triggered by something
-calling an HTTP endpoint. In Compose the `cron` sidecar does this. Otherwise use
-your platform's scheduler or the host's cron with `curl`. The full table
-(endpoints, secrets, schedules, what breaks without each) is in
+The scheduled jobs run inside the app in production, so there is no cron
+container and nothing to schedule: the daily rollover (email send queues, Gmail
+watch renewal, LinkedIn daily limits), LinkedIn outreach every 30 minutes,
+LinkedIn webhook replay every 10 minutes, and history pruning. The rollover
+happens at the start of each organization's day, set in Settings, Organization,
+Defaults (**Time zone** and **New day starts at**; UTC and 00:00 by default).
+`INTERNAL_SCHEDULER=false` turns the jobs off if you prefer an external cron
+calling the endpoints. The full table, the endpoints and their secrets (now
+optional) are in
 [Going to production](self-hosting/production.mdx#scheduled-jobs); crontab
-examples are in [From source](self-hosting/from-source.mdx#scheduled-jobs-without-the-sidecar).
-In short, you must schedule `/api/outreach/build-queue` daily (without it
-nothing is sent), `/api/outreach/mailboxes/watch` daily if you use Gmail push,
-and four `/api/linkedin/jobs/*` endpoints if you use LinkedIn.
+examples are in [From source](self-hosting/from-source.mdx#scheduled-jobs-from-outside).

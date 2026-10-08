@@ -10,8 +10,9 @@
  * in scripts/, never by re-applying the snapshot.
  *
  * `--if-empty` makes an already-initialised database a no-op success instead
- * of an error — what the Docker Compose `setup` service uses, so it can run
- * on every `docker compose up`.
+ * of an error — what the Docker image's entrypoint runs before every start
+ * of the app (docker/entrypoint.sh). On an existing install it only reads
+ * the catalog: no version check, no writes.
  *
  * It uses Bun's built-in PostgreSQL client and no packages, so it also runs
  * inside the Docker image, where the app's own driver is bundled into the
@@ -38,11 +39,6 @@ async function main() {
     tls: process.env.DATABASE_SSL === "disable" ? false : { rejectUnauthorized: false },
   });
   try {
-    const [{ version }] = await sql`select current_setting('server_version_num')::int as version`;
-    if (Number(version) < 160000) {
-      throw new Error(`PostgreSQL 16 or newer is required (this server is ${Math.floor(Number(version) / 10000)})`);
-    }
-
     const existing: { name: string }[] = await sql`
       select c.relname as name from pg_class c join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and c.relkind in ('r', 'p') limit 5`;
@@ -50,6 +46,12 @@ async function main() {
       console.log("Database already initialised — nothing to do.");
       return;
     }
+
+    const [{ version }] = await sql`select current_setting('server_version_num')::int as version`;
+    if (Number(version) < 160000) {
+      throw new Error(`PostgreSQL 16 or newer is required (this server is ${Math.floor(Number(version) / 10000)})`);
+    }
+
     if (existing.length) {
       throw new Error(
         `This database already has tables (${existing.map((r) => r.name).join(", ")}…). ` +

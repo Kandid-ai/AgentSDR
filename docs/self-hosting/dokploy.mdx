@@ -17,20 +17,19 @@ icon: "server-cog"
 
 ## Overview
 
-Dokploy builds the repository's `Dockerfile` into an image and runs it as one **Application**. It does not run `docker-compose.yml`, so three things Compose gave you are set up by hand here:
+Dokploy builds the repository's `Dockerfile` into an image and runs it as one **Application**. It does not run `docker-compose.yml`, so the database is set up by hand here. The schema and the scheduled jobs need nothing from you: the image creates the schema on start and runs the jobs itself.
 
 | Compose gave you | On Dokploy |
 |---|---|
 | `db` service | A Dokploy **Postgres** database service, or an external PostgreSQL 16+. |
-| `setup` service (creates the schema) | You run `bun scripts/db/setup.ts --if-empty` once inside the app container. |
-| `cron` service | Dokploy **Schedule Jobs**, or an external cron. |
+| Schema creation | Automatic: the app creates it in an empty database when it starts. |
+| Scheduled jobs | Automatic: the app runs them itself. |
 
 ```mermaid
 flowchart LR
   gh[GitHub push] --> dok[Dokploy builds the Dockerfile]
   dok --> app[AgentSDR app container]
   app --> pg[(Postgres service)]
-  sched[Schedule Jobs] --> app
   traefik[Traefik + Let's Encrypt] --> app
 ```
 
@@ -76,13 +75,11 @@ Run exactly one replica of the app. The outreach sender loop has no distributed 
     BETTER_AUTH_SECRET=PASTE
     INTEGRATION_CREDENTIALS_KEY=PASTE
     UNSUBSCRIBE_SECRET=PASTE
-    CRON_SECRET=PASTE
-    OUTREACH_TICK_SECRET=PASTE
     RESEND_API_KEY=PASTE
     AUTH_EMAIL_FROM="AgentSDR <auth@yourdomain.com>"
     ```
 
-    `DATABASE_SSL=disable` is for Dokploy's own Postgres, which does not use TLS inside the network. For a hosted external database leave `DATABASE_SSL` out so TLS stays on. `BETTER_AUTH_URL` must be the final public https origin with no trailing slash. Store a copy of `INTEGRATION_CREDENTIALS_KEY` outside Dokploy.
+    `DATABASE_SSL=disable` is for Dokploy's own Postgres, which does not use TLS inside the network. For a hosted external database leave `DATABASE_SSL` out so TLS stays on. `BETTER_AUTH_URL` must be the final public https origin with no trailing slash. Store a copy of `INTEGRATION_CREDENTIALS_KEY` outside Dokploy. `CRON_SECRET` and `OUTREACH_TICK_SECRET` are optional: add them only if you call the job endpoints from outside.
   </Step>
   <Step title="Add the domain">
     First create a DNS `A` record for your host (for example `sdr.example.com`) pointing at the VPS IP. Then open the **Domains** tab and add a domain with:
@@ -100,31 +97,10 @@ Run exactly one replica of the app. The outreach sender loop has no distributed 
   <Step title="Deploy">
     Click **Deploy** and watch the build in the **Deployments** tab and the **Logs** tab. The first build takes several minutes. Next.js builds use a lot of memory; if the build is killed on a small VPS, add swap or build the image elsewhere (Dokploy recommends building in a CI pipeline and deploying a registry image for production).
   </Step>
-  <Step title="Create the schema">
-    The app starts but the database is empty until you create the schema, once. The image contains the setup script. Run this inside the app container, from the server's shell:
+  <Step title="Check the first start">
+    On its first start the app creates the database schema (the **Logs** tab shows `Database ready: N tables.`) and starts the [scheduled jobs](/self-hosting/production#scheduled-jobs) inside the container, so there is nothing to schedule in Dokploy. If the schema step fails the app does not start; see [Troubleshooting](/self-hosting/troubleshooting).
 
-    ```sh
-    docker ps --format '{{.Names}}' | grep -i agentsdr      # find the container name
-    docker exec -it CONTAINER_NAME bun scripts/db/setup.ts --if-empty
-    ```
-
-    It prints `Database ready: N tables.` (or `Database already initialised — nothing to do.` on a later run). Alternatively create a one-off Application **Schedule Job** with that command (see the next step) and run it once. Then restart the app from the dashboard.
-  </Step>
-  <Step title="Schedule the periodic jobs">
-    Dokploy **Schedule Jobs** can run a command inside the application container on a cron schedule ([schedule jobs docs](https://docs.dokploy.com/docs/core/schedule-jobs)). The target container must be running. Create an **Application** job per row, with the schedule in standard cron syntax. The container already has `curl` and your environment variables, and the app listens on `127.0.0.1:3000` inside it:
-
-    | Schedule | Command |
-    |---|---|
-    | `5 0 * * *` | `curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" http://127.0.0.1:3000/api/outreach/build-queue` |
-    | `30 3 * * *` | `curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" http://127.0.0.1:3000/api/outreach/mailboxes/watch` |
-    | `*/15 * * * *` | `curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/linkedin/jobs/run-outreach` |
-    | `*/10 * * * *` | `curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/linkedin/jobs/run-search-queue` |
-    | `*/10 * * * *` | `curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/linkedin/jobs/replay-webhooks` |
-    | `0 0 * * *` | `curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/linkedin/jobs/reset-daily-limits` |
-
-    If a job's shell does not expand `$OUTREACH_TICK_SECRET`, wrap the command as `sh -c '...'` with single quotes. Skip the `CRON_SECRET` rows if you do not use LinkedIn, and the `OUTREACH_TICK_SECRET` rows if you do not send email. What each job does: [jobs table](/self-hosting/production#scheduled-jobs). You can instead call the same endpoints with the public URL from any external cron ([From source](/self-hosting/from-source#scheduled-jobs-without-the-sidecar)).
-
-    {/* SCREENSHOT: the Schedule Jobs list with the six jobs | Dokploy dashboard, Application, Schedules | each job's cron expression and command */}
+    Upgrading from a version that used Schedule Jobs? Create the scheduler's table once, inside the app container: `docker exec -it CONTAINER_NAME bun scripts/create-scheduled-job-runs.ts` (until then the app runs no scheduled jobs and says so in its log). The existing Schedule Jobs are harmless (the app skips work it already did, see [Scheduled jobs](/self-hosting/production#scheduled-jobs)), so you can delete them. Keep `CRON_SECRET` and `OUTREACH_TICK_SECRET` only if you keep calling the endpoints.
   </Step>
   <Step title="Turn on deploy on push">
     In the application's settings enable **Auto Deploy**. With the GitHub provider Dokploy deploys when you push; for other Git providers copy the generated webhook URL into your repository's webhooks. The branch configured in Dokploy must match the branch you push to, otherwise Dokploy reports "Branch Not Match" ([auto deploy docs](https://docs.dokploy.com/docs/core/auto-deploy)).
@@ -136,7 +112,7 @@ Run exactly one replica of the app. The outreach sender loop has no distributed 
 ## Check that it works
 
 <Check>
-`https://sdr.example.com/sign-in` loads over HTTPS, the **Logs** tab shows no database errors, and the manual `build-queue` call from the schedule step returns JSON instead of `unauthorized`. Sign up, create your organization, then continue with [Going to production](/self-hosting/production).
+`https://sdr.example.com/sign-in` loads over HTTPS, the **Logs** tab shows no database errors, and the logs show `[scheduler] ...` lines as jobs run. Sign up, create your organization, then continue with [Going to production](/self-hosting/production).
 </Check>
 
 ## Backups
@@ -150,7 +126,7 @@ Dokploy can back up its Postgres service to an S3 destination from the database'
     The environment was not saved or the app was not redeployed after saving it. Check the **Environment** tab and redeploy.
   </Accordion>
   <Accordion title="This database already has tables">
-    The setup script only runs on an empty database. With `--if-empty` it exits successfully instead. See [Troubleshooting](/self-hosting/troubleshooting).
+    The start-up setup only runs on an empty database; on an existing one it prints `Database already initialised — nothing to do.` and continues. See [Troubleshooting](/self-hosting/troubleshooting).
   </Accordion>
   <Accordion title="Bad gateway or the certificate is not issued">
     Check that the DNS record points at the server, the **Container Port** is `3000`, and ports 80 and 443 are open on the VPS.

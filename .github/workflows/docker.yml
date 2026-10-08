@@ -2,7 +2,7 @@ name: Docker image
 
 on:
   pull_request:
-    paths: ["Dockerfile", ".dockerignore", "package.json", "bun.lock", "next.config.ts", "db/**", "scripts/db/setup.ts", "docker/**"]
+    paths: ["Dockerfile", ".dockerignore", "package.json", "bun.lock", "next.config.ts", "db/**", "scripts/db/setup.ts", "scripts/create-scheduled-job-runs.ts", "docker/**"]
   push:
     tags: ["v*.*.*"]
 

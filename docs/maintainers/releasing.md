@@ -42,7 +42,7 @@ produces the matching image tag.
    is in `.env.example` and [../configuration.md](../configuration.md), and
    called out in the notes.
 6. **Upgrade notes.** Anything an operator must do besides pulling and
-   rebuilding (new cron endpoint, new webhook, key rotation) is written down
+   rebuilding (new scheduled job or endpoint, new webhook, key rotation) is written down
    in the release notes and in [../self-hosting.md](../self-hosting.md) if it is
    permanent.
 7. **Changelog and version.** Update `CHANGELOG.md`; set `version` in

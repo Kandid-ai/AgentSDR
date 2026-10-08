@@ -17,8 +17,8 @@ only four kinds of thing:
    connection, the sign-in secret and the encryption key.
 2. **Shared platform services**: the email service that sends sign-in mail
    (Resend) and the optional Google sign-in button.
-3. **Public URLs and cron secrets**: where people reach the app, and the
-   passwords your scheduler uses to call the job endpoints.
+3. **Public URLs**: where people reach the app. (Optionally, passwords for
+   calling the job endpoints from outside.)
 4. **Tuning knobs and pause switches**: optional, with working defaults.
 
 Everything else is set **per organization, inside the app**, and stored
@@ -86,13 +86,6 @@ INTEGRATION_CREDENTIALS_KEY=<openssl rand -hex 32>
 # Signs the one-click unsubscribe link in every email you send.
 UNSUBSCRIBE_SECRET=<openssl rand -hex 32>
 
-# Password for the email cron endpoints (daily queue build, Gmail renewal).
-OUTREACH_TICK_SECRET=<openssl rand -hex 32>
-
-# Password for the LinkedIn cron endpoints. Needed only if you use LinkedIn.
-# (Docker Compose requires it to be set either way.)
-CRON_SECRET=<openssl rand -hex 32>
-
 # Sends sign-up verification, password reset and invitation email.
 # Needed before you invite anyone. Without it these emails go to the log.
 RESEND_API_KEY=re_xxxxxxxxxxxx
@@ -106,7 +99,8 @@ Optional additions: `AUTH_SIGNUP=open` if anyone may sign up, and
 ## Database
 
 PostgreSQL 16 or newer. Create the tables in an empty database with
-`bun run db:setup` (Docker Compose does this for you on first start).
+`bun run db:setup` (the Docker image does this for you on first start, see
+[`AGENTSDR_SKIP_DB_SETUP`](#agentsdr_skip_db_setup)).
 
 ### `DATABASE_URL`
 
@@ -350,31 +344,60 @@ integration, [Google Workspace](integrations/google-workspace.mdx).
 
 ## Scheduled jobs
 
-Some work runs from a scheduler that calls the app over HTTP. Docker Compose
-includes a `cron` container that does this (`docker/cron/crontab`); on other
-setups use any cron, with `curl`. Each endpoint is protected by one of two
-secrets (Compose generates both).
+The scheduled jobs run inside the app when `NODE_ENV=production` (`bun run
+start` or the Docker image), never in a demo deployment: the daily rollover,
+LinkedIn outreach every 30 minutes, LinkedIn webhook replay every 10 minutes
+and history pruning. Nothing to schedule and no secrets to set. The daily
+rollover (email send queues, Gmail watch renewal, LinkedIn daily limits) runs
+at the start of each organization's day, set in Settings, Organization,
+Defaults: **Time zone** (default `UTC`) and **New day starts at** (default
+`00:00`). Details: [Going to production](self-hosting/production.mdx#scheduled-jobs).
+
+The same work is also available as endpoints, for a manual run or an external
+cron. Each is protected by one of two optional secrets.
 
 | Endpoint | Secret | How the caller sends it | What it does |
 |---|---|---|---|
-| `POST /api/outreach/build-queue` | `OUTREACH_TICK_SECRET` | header `x-tick-secret: <secret>` | Once a day: builds each mailbox's send queue and resets daily counters. |
-| `POST /api/outreach/mailboxes/watch` | `OUTREACH_TICK_SECRET` | header `x-tick-secret: <secret>` | Daily: renews Gmail push notifications, which expire after about 7 days. |
+| `POST /api/outreach/build-queue` | `OUTREACH_TICK_SECRET` | header `x-tick-secret: <secret>` | Builds each mailbox's send queue and resets daily counters. |
+| `POST /api/outreach/mailboxes/watch` | `OUTREACH_TICK_SECRET` | header `x-tick-secret: <secret>` | Renews Gmail push notifications, which expire after about 7 days. |
 | `POST /api/outreach/tick` | `OUTREACH_TICK_SECRET` | header `x-tick-secret` (or `?secret=`) | One send tick. The app already ticks itself every minute in production: call it only to force one while debugging, and do not schedule it. |
-| `POST /api/linkedin/jobs/run-outreach` | `CRON_SECRET` | header `Authorization: Bearer <secret>` | Every 15 minutes: LinkedIn invitations and follow-ups. |
-| `POST /api/linkedin/jobs/run-search-queue` | `CRON_SECRET` | same | Every 10 minutes: the LinkedIn search queue. |
-| `POST /api/linkedin/jobs/replay-webhooks` | `CRON_SECRET` | same | Every 10 minutes: retries failed webhook deliveries. |
-| `POST /api/linkedin/jobs/reset-daily-limits` | `CRON_SECRET` | same | Daily: resets LinkedIn daily limits. |
+| `POST /api/linkedin/jobs/run-outreach` | `CRON_SECRET` | header `Authorization: Bearer <secret>` | LinkedIn invitations and follow-ups. |
+| `POST /api/linkedin/jobs/run-search-queue` | `CRON_SECRET` | same | The LinkedIn search queue (not scheduled: it runs when someone clicks Run). |
+| `POST /api/linkedin/jobs/replay-webhooks` | `CRON_SECRET` | same | Retries failed webhook deliveries. |
+| `POST /api/linkedin/jobs/reset-daily-limits` | `CRON_SECRET` | same | Resets LinkedIn daily limits. |
 
-The times above are the Compose defaults, in UTC. Edit `docker/cron/crontab` (baked into the image: build from source with `docker-compose.build.yml`)
-to match your sending windows.
+While the in-app scheduler is on, `run-outreach` and `replay-webhooks` answer
+`{ "ok": true, "skipped": "already ran for slot ..." }` if it already ran that
+slot, and the other three skip organizations whose daily rollover already ran
+today. Add `?force=1` to skip this check.
+
+### `INTERNAL_SCHEDULER`
+
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | On in production, off otherwise. |
+| **What it does** | `false` turns the in-app scheduled jobs off, so an external cron calls the endpoints above instead (set the two secrets below). |
+| **Example** | `INTERNAL_SCHEDULER=false` |
+| **Read in** | `src/lib/scheduler/internalScheduler.ts` |
+
+### `AGENTSDR_SKIP_DB_SETUP`
+
+| | |
+|---|---|
+| **Required?** | No. |
+| **Default** | Unset: on start, the Docker image creates the schema if the database is empty. |
+| **What it does** | `true` skips that step (for example when you manage the schema yourself). An existing database is never changed by it either way. If the step fails the app does not start. |
+| **Example** | `AGENTSDR_SKIP_DB_SETUP=true` |
+| **Read in** | `docker/entrypoint.sh` |
 
 ### `OUTREACH_TICK_SECRET`
 
 | | |
 |---|---|
-| **Required?** | Yes for email outreach. Without it the endpoints answer `401 unauthorized`, so queues are never built and Gmail notifications lapse after about a week. Compose refuses to start without it. |
-| **Default** | None. |
-| **What it does** | Authenticates the email cron endpoints. |
+| **Required?** | No. Only to call the email job endpoints from outside. Unset, they answer `401 unauthorized` to every secret call. |
+| **Default** | None. Not in `docker-compose.yml`: add it to the `environment` block to use it. |
+| **What it does** | Authenticates the email job endpoints. |
 | **How to get it** | `openssl rand -hex 32` |
 | **Read in** | `src/app/api/outreach/build-queue/route.ts`, `src/app/api/outreach/mailboxes/watch/route.ts`, `src/app/api/outreach/tick/route.ts` |
 
@@ -382,15 +405,15 @@ to match your sending windows.
 
 | | |
 |---|---|
-| **Required?** | Yes to run the LinkedIn jobs from a scheduler. Compose refuses to start without it (`Set CRON_SECRET in .env`), so set it even if you do not use LinkedIn. |
-| **Default** | None. |
+| **Required?** | No. Only to call the LinkedIn job endpoints from outside. Unset, they refuse every secret call. |
+| **Default** | None. Not in `docker-compose.yml`. |
 | **What it does** | The bearer secret for `/api/linkedin/jobs/*`. A caller with it works across every organization. A signed-in member calling the same routes only affects their own organization. |
 | **How to get it** | `openssl rand -hex 32` |
 | **Read in** | `src/proxy.ts`, `src/lib/linkedin/organizations.server.ts` |
 
 ## Workers and tuning
 
-Four workers start with the server. They need no scheduler:
+Four workers start with the server, beside the scheduled jobs above:
 
 | Worker | Runs | Does |
 |---|---|---|

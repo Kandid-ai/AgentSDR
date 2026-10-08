@@ -20,6 +20,17 @@ describe("validateSetupInput", () => {
     expect(validateSetupInput(null).ok).toBe(false);
     expect(validateSetupInput({ ...good, email: 5 }).ok).toBe(false);
   });
+  test("keeps a valid browser time zone (current IANA name) and ignores anything else", () => {
+    const zone = (timeZone: unknown) => {
+      const parsed = validateSetupInput({ ...good, timeZone });
+      return parsed.ok ? parsed.value.timeZone : "refused";
+    };
+    expect(zone("America/New_York")).toBe("America/New_York");
+    expect(zone("Asia/Calcutta")).toBe("Asia/Kolkata");
+    expect(zone("Not/AZone")).toBeUndefined();
+    expect(zone(42)).toBeUndefined();
+    expect(zone(undefined)).toBeUndefined();
+  });
 });
 
 describe("slugify", () => {

@@ -16,7 +16,9 @@ export function SetupForm() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError("");
-    const parsed = validateSetupInput({ name, organizationName, email, password });
+    // The organization's time zone starts as the browser's (Settings → Organization changes it).
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const parsed = validateSetupInput({ name, organizationName, email, password, timeZone });
     if (!parsed.ok) return setError(parsed.error);
     setLoading(true);
     try {

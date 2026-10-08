@@ -2328,6 +2328,18 @@ CREATE TABLE public.qualification_jobs (
 );
 
 --
+-- Name: scheduled_job_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scheduled_job_runs (
+    job text NOT NULL,
+    slot timestamp with time zone NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    error text
+);
+
+--
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3310,6 +3322,13 @@ ALTER TABLE ONLY public.people
 
 ALTER TABLE ONLY public.qualification_jobs
     ADD CONSTRAINT qualification_jobs_pkey PRIMARY KEY (id);
+
+--
+-- Name: scheduled_job_runs scheduled_job_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_job_runs
+    ADD CONSTRAINT scheduled_job_runs_pkey PRIMARY KEY (job, slot);
 
 --
 -- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -

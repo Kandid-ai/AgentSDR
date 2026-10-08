@@ -24,8 +24,9 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# curl is needed for the external cron jobs (build-queue, mailboxes/watch)
-# that run via `docker exec ... curl ...` against this container.
+# The scheduled jobs run inside the app. curl stays for an external cron that
+# calls their endpoints from inside this container (Dokploy Schedule Jobs,
+# `docker exec ... curl ...`).
 RUN apk add --no-cache curl
 
 RUN addgroup -S -g 1001 nodejs && adduser -S -u 1001 -G nodejs nextjs
@@ -33,19 +34,19 @@ RUN addgroup -S -g 1001 nodejs && adduser -S -u 1001 -G nodejs nextjs
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
-# Fresh-install schema and its setup script (`bun scripts/db/setup.ts`,
-# run by the Compose `setup` service). `postgres` is already in the
-# standalone node_modules, which is all the script imports.
+# Fresh-install schema and its setup script (`bun scripts/db/setup.ts
+# --if-empty`, run by the entrypoint before the app starts), and the
+# scheduler's migration for installs upgrading to it. Both use Bun's built-in
+# PostgreSQL client, so they need no packages.
 COPY --from=builder --chown=nextjs:nodejs /app/db ./db
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/db/setup.ts ./scripts/db/setup.ts
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/create-scheduled-job-runs.ts ./scripts/create-scheduled-job-runs.ts
 
-# Entrypoint: maps APP_URL, builds DATABASE_URL for the bundled database and
-# refuses placeholder secrets on a public address (see docker/entrypoint.sh).
+# Entrypoint: maps APP_URL, builds DATABASE_URL for the bundled database,
+# refuses placeholder secrets on a public address and creates the schema in an
+# empty database (see docker/entrypoint.sh).
 COPY docker/entrypoint.sh /usr/local/bin/agentsdr-entrypoint
-# The cron sidecar runs from this same image (busybox crond + curl).
-COPY docker/cron/crontab /etc/agentsdr/crontab
-COPY docker/cron/entrypoint.sh /etc/agentsdr/cron-entrypoint.sh
-RUN chmod 755 /usr/local/bin/agentsdr-entrypoint /etc/agentsdr/cron-entrypoint.sh
+RUN chmod 755 /usr/local/bin/agentsdr-entrypoint
 
 USER nextjs
 EXPOSE 3000

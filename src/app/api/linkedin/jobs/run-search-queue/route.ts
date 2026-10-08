@@ -8,6 +8,7 @@ import { runSearchQueue } from "@/jobs/runSearchQueue";
 import { withJobTracking } from "@/lib/linkedin/jobTracker";
 import { db } from "@/lib/db";
 import { jobRuns } from "@/lib/linkedin/schema";
+import { runPlatformJobForCron } from "@/lib/scheduler/endpoint";
 
 const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((id) => typeof id === "string" && id);
 
@@ -38,6 +39,10 @@ async function handle(req: NextRequest, scoped: boolean) {
   if (accountIds?.length && (!scoped || (await unknownAccountIds(accountIds)).length > 0)) {
     return NextResponse.json({ ok: false, error: "Unknown account" }, { status: 400 });
   }
+
+  // The cron: the same run the in-process scheduler would start (deduped
+  // against its slot once that job is enabled in src/lib/scheduler/schedules.ts).
+  if (!scoped) return runPlatformJobForCron("linkedin-run-search-queue", req);
 
   // runSearchQueue itself refuses to run alongside another active run, but checking here
   // too avoids spamming Job History with a no-op JobRun on every extra click.

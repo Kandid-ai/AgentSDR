@@ -32,7 +32,7 @@ describe("validation", () => {
   const limit = CHANNEL_RULES.linkedin.find((r) => r.key === "invitesPerDayPremium")!;
   const gap = CHANNEL_RULES.email.find((r) => r.key === "sendGapMinutes")!;
   const hours = CHANNEL_RULES.email.find((r) => r.key === "sendingHours")!;
-  const country = CHANNEL_RULES.general[0];
+  const country = CHANNEL_RULES.general.find((rule) => rule.key === "defaultPhoneCountry")!;
 
   test("hard ceilings refuse a typo", () => {
     expect(ruleError(limit, 3000)).toContain("between 1 and 100");
@@ -104,5 +104,25 @@ test("WhatsApp's contract constants (shown by the recorder and the website, kept
     warmupHours: contract.WHATSAPP_NEW_CHAT_WARMUP_HOURS,
     newChatsPerDay: contract.WHATSAPP_NEW_CHATS_PER_DAY,
     secondsBetweenSends: contract.WHATSAPP_MIN_SECONDS_BETWEEN_SENDS,
+  });
+});
+
+describe("organization day (general.timeZone, general.dayStartsAt)", () => {
+  test("defaults to UTC midnight", () => {
+    expect(defaultValues("general")).toEqual({ timeZone: "UTC", dayStartsAt: "00:00", defaultPhoneCountry: "" });
+  });
+
+  test("validates the zone and the time", () => {
+    expect(validateValues("general", { timeZone: "Asia/Kolkata", dayStartsAt: "05:30" })).toEqual({ ok: true, values: { timeZone: "Asia/Kolkata", dayStartsAt: "05:30" } });
+    expect(validateValues("general", { timeZone: "Mars/Olympus" }).ok).toBe(false);
+    expect(validateValues("general", { timeZone: "" }).ok).toBe(false);
+    expect(validateValues("general", { dayStartsAt: "24:00" }).ok).toBe(false);
+    expect(validateValues("general", { dayStartsAt: "7:00" }).ok).toBe(false);
+  });
+
+  test("stores and reads legacy zone names under their current IANA name", () => {
+    expect(validateValues("general", { timeZone: "Asia/Calcutta" })).toEqual({ ok: true, values: { timeZone: "Asia/Kolkata" } });
+    expect(resolveValues("general", { timeZone: "Europe/Kiev" }).timeZone).toBe("Europe/Kyiv");
+    expect(resolveValues("general", { timeZone: "Nowhere/Land", dayStartsAt: "nope" })).toMatchObject({ timeZone: "UTC", dayStartsAt: "00:00" });
   });
 });

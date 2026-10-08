@@ -15,7 +15,7 @@ Each channel has a **Sending rules** tab under **Settings**:
 - **Email**, then **Sending rules**
 - **LinkedIn**, then **Sending rules**
 - **WhatsApp**, then **Sending rules**
-- **General**, under **Organization**, holds the default phone country
+- **General**, under **Organization**, holds the default phone country, the time zone and when a new day starts
 
 Edit the values and choose **Save changes**. **Discard** drops your edits, and **Use default** next to a changed rule puts that rule back. Sending follows the new rules within a minute. Only owners and admins can edit; members see the page read-only.
 
@@ -104,8 +104,12 @@ Whatever the rules say, AgentSDR never sends WhatsApp messages to someone marked
 | Rule | Default |
 |---|---|
 | Default phone country | None |
+| Time zone | `UTC` |
+| New day starts at | `00:00` |
 
 The country assumed for phone numbers typed or imported without a `+` and country code. Enter a two-letter country code, such as `IN` or `US`, or leave it unset.
+
+**Time zone** (an IANA name such as `Europe/Berlin`) and **New day starts at** (`HH:MM`) set when your organization's day begins. Daily limits reset and the day's email queue is built at that time. The first-run setup page stores the browser's time zone for the first organization.
 
 ## Related
 

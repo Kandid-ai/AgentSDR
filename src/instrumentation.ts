@@ -1,10 +1,10 @@
 // Next.js calls register() exactly once when the server process boots.
-// Used to start the in-process outreach send-tick loop in place of external
-// cron — safe because this app always runs as a single instance (see
-// internalScheduler.ts for why that matters). The daily queue rebuild is
-// NOT started here — that stays on an external cron (see build-queue's
-// route comment) so it runs at a fixed wall-clock time instead of drifting
-// with every container restart.
+// Starts the background loops: the outreach send tick and WhatsApp campaign
+// sender (single-instance, see their internalScheduler.ts), and the
+// scheduled jobs (src/lib/scheduler/internalScheduler.ts: each organization's
+// daily rollover at its own new-day time, LinkedIn outreach, webhook replay,
+// history pruning). Those run on fixed clock slots claimed in the database,
+// so restarts do not shift them and overlapping instances run each slot once.
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return; // skip edge runtime invocations
 
@@ -25,6 +25,13 @@ export async function register() {
     startInternalOutreachScheduler();
     const { startInternalWhatsappCampaignScheduler } = await import("./lib/whatsapp/campaigns/internalScheduler");
     startInternalWhatsappCampaignScheduler();
+  }
+
+  // Scheduled jobs; INTERNAL_SCHEDULER=false leaves them to an external cron.
+  const { internalSchedulerEnabled } = await import("./lib/scheduler/config");
+  if (internalSchedulerEnabled()) {
+    const { startInternalScheduler } = await import("./lib/scheduler/internalScheduler");
+    startInternalScheduler();
   }
 
   // Enrichment cell worker. Unlike the outreach tick above, this one claims

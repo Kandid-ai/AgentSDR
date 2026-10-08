@@ -2,9 +2,10 @@
  * Daily queue build — Phase 1 of AgentSDR-app's two-phase send model, ported
  * from make-mailbox-queue-for-team.ts line-for-line (minus the team/domain
  * layer v2 doesn't have, and Redis lists swapped for the outreach_mailbox_queue
- * table). Meant to run once a day via an external cron hitting
- * /api/outreach/build-queue, before the frequent /api/outreach/tick send loop
- * starts draining it.
+ * table). Runs once a day per organization, at the start of that
+ * organization's day (the daily rollover, src/lib/scheduler/dailyRollover.ts;
+ * /api/outreach/build-queue triggers it by hand or from an external cron),
+ * before the frequent send tick starts draining it.
  *
  * Two-pass fill per mailbox, in this order:
  *   Pass A — leads already mid-sequence and due today get queued first,
@@ -35,16 +36,22 @@ export type BuildQueueResult = {
   newLeadsQueued: number;
 };
 
-export async function buildMailboxQueues(): Promise<BuildQueueResult> {
+/**
+ * Builds the queues of every organization that has a mailbox, or only of
+ * `organizationIds` when given (the daily rollover passes one).
+ */
+export async function buildMailboxQueues(options: { organizationIds?: string[] } = {}): Promise<BuildQueueResult> {
   if (isMigrationControlPaused("emailOutbound")) {
     console.warn("[outreach/buildQueue] Email outbound is paused; queue rebuild skipped");
     return { mailboxesConsidered: 0, followUpsQueued: 0, newLeadsQueued: 0 };
   }
 
-  // One global run, one scope per organization: every organization's queue is
+  // One run, one scope per organization: every organization's queue is
   // built from its own mailboxes, campaigns and leads and nothing else.
   const total: BuildQueueResult = { mailboxesConsidered: 0, followUpsQueued: 0, newLeadsQueued: 0 };
-  const organizations = await db.selectDistinct({ organizationId: mailboxes.organizationId }).from(mailboxes);
+  const withMailboxes = await db.selectDistinct({ organizationId: mailboxes.organizationId }).from(mailboxes);
+  const wanted = options.organizationIds ? new Set(options.organizationIds) : null;
+  const organizations = wanted ? withMailboxes.filter((o) => wanted.has(o.organizationId)) : withMailboxes;
   for (const { organizationId } of organizations) {
     try {
       const part = await runInOrganization(organizationId, buildOrganizationQueues);

@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { slugify } from "./slug";
 import type { SetupInput } from "./setupInput";
+import { channelSettings } from "@/lib/channels/schema";
 import { accounts, members, organizations, users } from "./schema";
 
 /**
@@ -58,6 +59,16 @@ export async function createInitialAdmin(input: SetupInput): Promise<{ userId: s
       })
       .returning({ id: organizations.id });
     await tx.insert(members).values({ organizationId: organization.id, userId: user.id, role: "owner" });
+    // The browser's time zone (validated in setupInput.ts) starts the
+    // organization's day (Settings → Organization). UTC is the default, not stored.
+    if (input.timeZone && input.timeZone !== "UTC") {
+      await tx.insert(channelSettings).values({
+        organizationId: organization.id,
+        channel: "general",
+        values: { timeZone: input.timeZone },
+        updatedBy: user.id,
+      });
+    }
     return { userId: user.id, organizationId: organization.id };
   });
 }

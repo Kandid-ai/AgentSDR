@@ -23,6 +23,8 @@
  * Client-safe: no database or server imports.
  */
 
+import { resolveTimeZone } from "@/lib/timeZone";
+
 export const CHANNELS = ["email", "linkedin", "whatsapp", "general"] as const;
 export type Channel = (typeof CHANNELS)[number];
 
@@ -74,7 +76,13 @@ export type HoursRule = Common & {
 
 export type CountryRule = Common & { kind: "country"; default: string };
 
-export type Rule = NumberRule | RangeRule | HoursRule | CountryRule;
+/** An IANA time zone, stored under its current name (src/lib/timeZone.ts). */
+export type TimeZoneRule = Common & { kind: "timezone"; default: string };
+
+/** A time of day, "HH:mm", 24-hour. */
+export type ClockRule = Common & { kind: "time"; default: string };
+
+export type Rule = NumberRule | RangeRule | HoursRule | CountryRule | TimeZoneRule | ClockRule;
 
 export const CHANNEL_RULES = {
   email: [
@@ -268,6 +276,21 @@ export const CHANNEL_RULES = {
   ],
   general: [
     {
+      // Read by the daily rollover (src/lib/scheduler/dailyRollover.ts).
+      key: "timeZone",
+      kind: "timezone",
+      label: "Time zone",
+      help: "Your organization's time zone. The new day below starts at that time here.",
+      default: "UTC",
+    },
+    {
+      key: "dayStartsAt",
+      kind: "time",
+      label: "New day starts at",
+      help: "Daily limits reset and the day's email queue is built at this time.",
+      default: "00:00",
+    },
+    {
       key: "defaultPhoneCountry",
       kind: "country",
       label: "Default phone country",
@@ -283,6 +306,8 @@ type ValueOf<R> = R extends { kind: "number" } ? number
   : R extends { kind: "hours"; optional: true } ? WeeklyHours | null
   : R extends { kind: "hours" } ? WeeklyHours
   : R extends { kind: "country" } ? string
+  : R extends { kind: "timezone" } ? string
+  : R extends { kind: "time" } ? string
   : never;
 export type ChannelRuleValues<C extends Channel> = {
   [R in (typeof CHANNEL_RULES)[C][number] as R["key"]]: ValueOf<R>;
@@ -310,7 +335,7 @@ export function defaultValues<C extends Channel>(channel: C): ChannelRuleValues<
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const COUNTRY = /^[A-Z]{2}$/;
 
-function isTimeZone(value: string): boolean {
+export function isTimeZone(value: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: value });
     return true;
@@ -355,7 +380,21 @@ export function ruleError(rule: Rule, value: unknown): string | null {
       if (typeof value !== "string" || !COUNTRY.test(value)) return `${rule.label} must be a two-letter country code, like IN or US`;
       return null;
     }
+    case "timezone":
+      return typeof value === "string" && value !== "" && isTimeZone(value) ? null : `${rule.label}: unknown time zone`;
+    case "time":
+      return typeof value === "string" && HHMM.test(value) ? null : `${rule.label}: times must look like 09:00`;
   }
+}
+
+/** A valid value in its stored form: time zones under their current IANA name. */
+function normalize(rule: Rule, value: unknown): unknown {
+  if (rule.kind === "timezone") return resolveTimeZone(value as string);
+  if (rule.kind === "hours" && value !== null) {
+    const h = value as WeeklyHours;
+    return { ...h, days: [...new Set(h.days)].sort((a, b) => a - b) };
+  }
+  return value;
 }
 
 /** The warning to show for `value`, or null when it is within the safe range. */
@@ -376,7 +415,7 @@ export function resolveValues<C extends Channel>(channel: C, stored: Record<stri
   const values: Record<string, unknown> = {};
   for (const rule of rulesOf(channel)) {
     const candidate = stored?.[rule.key];
-    values[rule.key] = candidate !== undefined && ruleError(rule, candidate) === null ? candidate : rule.default;
+    values[rule.key] = candidate !== undefined && ruleError(rule, candidate) === null ? normalize(rule, candidate) : rule.default;
   }
   return values as ChannelRuleValues<C>;
 }
@@ -390,7 +429,7 @@ export function validateValues(channel: Channel, input: Record<string, unknown>)
     if (!rule) return { ok: false, error: `Unknown setting: ${key}` };
     const error = ruleError(rule, value);
     if (error) return { ok: false, error };
-    values[key] = rule.kind === "hours" && value !== null ? { ...(value as WeeklyHours), days: [...new Set((value as WeeklyHours).days)].sort((a, b) => a - b) } : value;
+    values[key] = normalize(rule, value);
   }
   return { ok: true, values };
 }

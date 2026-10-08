@@ -13,17 +13,15 @@ the code-level view, read [Architecture](/architecture).
 
 AgentSDR is **one web application and one PostgreSQL database**. There is no
 queue server and no separate worker deployment. The background work runs inside
-the same process as the web app, and a small scheduler calls a few web
-addresses on a timer.
+the same process as the web app, including a small scheduler for the periodic
+jobs.
 
 ```mermaid
 flowchart LR
   subgraph You["Your server"]
     App["AgentSDR app (Next.js)<br/>web pages, API and in-process workers"]
     DB[("PostgreSQL")]
-    Cron["Scheduler (cron container)"]
     App <--> DB
-    Cron -->|"daily and periodic jobs"| App
   end
   Browser["People using AgentSDR"] --> App
   App -->|"sends and reads mail"| Gmail["Google Workspace (Gmail)"]
@@ -41,15 +39,15 @@ What runs inside the app, and how often:
 | Work | How it runs | Page |
 |---|---|---|
 | Email sending | A loop inside the app, every minute, in production only | [Email campaigns](/email/campaigns) |
-| Daily email queue | The scheduler calls the app once a day | [Email campaigns](/email/campaigns) |
-| Renewing Gmail push notifications | The scheduler, daily (they expire after about 7 days) | [Gmail reply sync](/integrations/gmail-reply-sync) |
-| LinkedIn invitations and follow-ups | The scheduler, every 15 minutes | [LinkedIn campaigns](/linkedin/campaigns) |
+| Daily email queue | A scheduled job inside the app, once a day per organization, at the start of its day | [Email campaigns](/email/campaigns) |
+| Renewing Gmail push notifications | Part of the same daily job (they expire after about 7 days) | [Gmail reply sync](/integrations/gmail-reply-sync) |
+| LinkedIn invitations and follow-ups | A scheduled job inside the app, every 30 minutes | [LinkedIn campaigns](/linkedin/campaigns) |
 | WhatsApp campaign sends | A loop inside the app, every 30 seconds, in production only | [WhatsApp campaigns](/whatsapp/campaigns) |
 | Enrichment (Tables cells) | A worker inside the app, always on | [Enrichment](/tables/enrichment) |
 | Reply classification, drafts, follow-ups | A worker inside the app, always on | [CRM overview](/crm/overview) |
 
 Because the email and WhatsApp loops have no lock between copies, run **one**
-copy of the app. The schedule and its secrets are in
+copy of the app. The schedule is in
 [Configuration](/configuration#scheduled-jobs); the tuning knobs are in
 [Workers and tuning](/configuration#workers-and-tuning).
 
@@ -67,7 +65,7 @@ flowchart TD
   B --> C["Enrich in Tables: providers and AI columns"]
   C --> D["Add the Person to a campaign"]
   D --> E1["Email: queue built daily, sent by the minute loop"]
-  D --> E2["LinkedIn: invitation, then messages, every 15 min"]
+  D --> E2["LinkedIn: invitation, then messages, every 30 min"]
   D --> E3["WhatsApp: sequence steps, every 30 s"]
   E1 --> F["A reply arrives"]
   E2 --> F

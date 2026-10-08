@@ -1,6 +1,6 @@
 ---
 title: "Troubleshooting"
-description: "Real AgentSDR self-hosting failures with their exact messages: setup refusals, database connections, silent email, webhooks and cron."
+description: "Real AgentSDR self-hosting failures with their exact messages: setup refusals, database connections, silent email, webhooks and scheduled jobs."
 icon: "life-buoy"
 ---
 
@@ -14,7 +14,14 @@ Find the message you see, then follow cause and fix. Messages are quoted exactly
 
     **Cause:** `db:setup` refuses any database that already contains tables in the `public` schema, so it can never overwrite an install.
 
-    **Fix:** For a first install, point `DATABASE_URL` at an empty database (create a new one). To upgrade an existing install, run the migrations instead: [Upgrading](/self-hosting/production#upgrading). In Docker Compose the `setup` service passes `--if-empty`, which prints `Database already initialised — nothing to do.` and succeeds.
+    **Fix:** For a first install, point `DATABASE_URL` at an empty database (create a new one). To upgrade an existing install, run the migrations instead: [Upgrading](/self-hosting/production#upgrading). The app's start-up setup passes `--if-empty`, which prints `Database already initialised — nothing to do.` and carries on.
+  </Accordion>
+  <Accordion title="agentsdr: database setup failed (see above); not starting.">
+    **Symptom:** the app container exits at start with `agentsdr: database setup failed (see above); not starting. Check DATABASE_URL, or set AGENTSDR_SKIP_DB_SETUP=true to skip this step.`
+
+    **Cause:** Before starting, the image creates the schema if the database is empty (and only reads the catalog otherwise). That step failed: the line above the message says why, usually an unreachable database, wrong `DATABASE_URL` or password, a TLS mismatch, or a server older than PostgreSQL 16.
+
+    **Fix:** Fix what the line above says and start again. Set `AGENTSDR_SKIP_DB_SETUP=true` to skip the step if you manage the schema yourself.
   </Accordion>
   <Accordion title="PostgreSQL 16 or newer is required (this server is N)">
     **Cause:** `db:setup` checks the server version and refuses anything below 16.
@@ -101,24 +108,31 @@ Find the message you see, then follow cause and fix. Messages are quoted exactly
 
 <AccordionGroup>
   <Accordion title="Emails are queued but nothing is sent">
-    **Cause:** The daily `/api/outreach/build-queue` job never ran. It fills each mailbox's queue and resets daily counters; the in-process sender has nothing to send without it. Other causes: the app is not running with `NODE_ENV=production` (the sender runs only in production, so not under `bun run dev`), or `PAUSE_EMAIL_OUTBOUND` / `PEOPLE_MIGRATION_MODE` is on.
+    **Cause:** The daily rollover never ran for your organization. It fills each mailbox's queue and resets daily counters; the in-process sender has nothing to send without it. Look for `[scheduler]` lines in the app log, and check the organization's **Time zone** and **New day starts at** in Settings, Organization, Defaults. Other causes: the app is not running with `NODE_ENV=production` (the sender runs only in production, so not under `bun run dev`), or `PAUSE_EMAIL_OUTBOUND` / `PEOPLE_MIGRATION_MODE` is on.
 
-    **Fix:** Check that the `cron` service is running (`docker compose logs cron` should show `agentsdr cron: schedules loaded`) or that your external cron calls it. Run it once by hand: `curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP/api/outreach/build-queue"`. See [Scheduled jobs](/self-hosting/production#scheduled-jobs).
+    **Fix:** If the log shows `Table scheduled_job_runs is missing`, run the migration (next entry). If you set `INTERNAL_SCHEDULER=false`, check that your external cron calls the endpoints. To build the queue now, run it by hand (needs `OUTREACH_TICK_SECRET` set in the app): `curl -fsS -X POST -H "x-tick-secret: $OUTREACH_TICK_SECRET" "$APP/api/outreach/build-queue?force=1"`. See [Scheduled jobs](/self-hosting/production#scheduled-jobs).
+  </Accordion>
+  <Accordion title="[scheduler] Table scheduled_job_runs is missing">
+    **Symptom:** the app log has a loud `[scheduler] Table scheduled_job_runs is missing …` warning, and no scheduled jobs run (no queue is built, LinkedIn does not advance).
+
+    **Cause:** The install predates the in-app scheduler, and its database lacks the table that records each run. Until it exists the app runs no scheduled jobs in-process. The endpoints keep working as before.
+
+    **Fix:** Run the migration. With Docker Compose: `docker compose exec app agentsdr-entrypoint bun scripts/create-scheduled-job-runs.ts`. From source: `bun scripts/create-scheduled-job-runs.ts`. It is safe to re-run; the jobs start on their own afterwards.
   </Accordion>
   <Accordion title='{"error":"unauthorized"} (401) from a job endpoint'>
-    **Cause:** The secret sent does not match the app's. `OUTREACH_TICK_SECRET` is unset in the app (it answers 401 then), or the caller sends a different value. For `/api/linkedin/jobs/*` without a valid `Authorization: Bearer $CRON_SECRET` the request is treated as an ordinary browser call and redirected to sign-in or refused.
+    **Cause:** The secret sent does not match the app's. `OUTREACH_TICK_SECRET` or `CRON_SECRET` is unset in the app (both are optional, and unset they refuse every secret call), or the caller sends a different value. For `/api/linkedin/jobs/*` without a valid `Authorization: Bearer $CRON_SECRET` the request is treated as an ordinary browser call and redirected to sign-in or refused.
 
     **Fix:** Use the same value in the app and the caller. Outreach endpoints take `x-tick-secret` (or `?secret=`); LinkedIn endpoints take `Authorization: Bearer`. After editing `.env` or `docker-compose.yml`, recreate the containers: `docker compose up -d`.
   </Accordion>
   <Accordion title="Unified People migration is in progress; campaign and outbound changes are temporarily paused.">
-    **Cause:** `PEOPLE_MIGRATION_MODE` or `PAUSE_CAMPAIGN_MUTATIONS` is on, so `POST`, `PUT`, `PATCH` and `DELETE` calls to campaign, LinkedIn job and mailbox routes answer 503, including your scheduled jobs.
+    **Cause:** `PEOPLE_MIGRATION_MODE` or `PAUSE_CAMPAIGN_MUTATIONS` is on, so `POST`, `PUT`, `PATCH` and `DELETE` calls to campaign, LinkedIn job and mailbox routes answer 503, as an external cron would see. The in-app LinkedIn jobs and the daily rollover's Gmail-watch and LinkedIn-reset parts stop too.
 
     **Fix:** Set them to `false` (or remove them) and restart. See [PAUSE switches](/self-hosting/production#pause-switches).
   </Accordion>
   <Accordion title="Gmail replies stop arriving after about a week">
-    **Cause:** Gmail push watches expire after about 7 days and `/api/outreach/mailboxes/watch` is not scheduled.
+    **Cause:** Gmail push watches expire after about 7 days and the daily rollover that renews them did not run (see the scheduler entries above).
 
-    **Fix:** Schedule it once a day. See [Gmail reply sync](/integrations/gmail-reply-sync).
+    **Fix:** Check the app log for `[scheduler]` lines and `FAILED` runs. If you use an external cron, call `/api/outreach/mailboxes/watch` once a day. See [Gmail reply sync](/integrations/gmail-reply-sync).
   </Accordion>
   <Accordion title="Two copies of each email were sent">
     **Cause:** The app runs more than one instance, or `/api/outreach/tick` is also scheduled. The outreach sender loop has no distributed lock.
