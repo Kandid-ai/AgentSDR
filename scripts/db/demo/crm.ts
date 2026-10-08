@@ -465,7 +465,10 @@ function slots(c: CopyCtx) {
     t1 = pickTime(0);
     t2 = pickTime(3);
   }
-  const long = (d: Date, t: string) => `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} at ${t} ${c.tz}`;
+  // Weekdays only, never a date: the demo's clock moves every timestamp
+  // forward each day (src/lib/demo/clock.ts) but cannot rewrite text, so
+  // "Wednesday 14 Oct" would soon read as a date in the past.
+  const long = (d: Date, t: string) => `${WEEKDAYS[d.getUTCDay()]} at ${t} ${c.tz}`;
   const short = (d: Date, t: string) => `${WEEKDAYS[d.getUTCDay()]} at ${t}`;
   if (hasDay) {
     // They named the day: lead with it, then offer two times on it.
@@ -474,7 +477,7 @@ function slots(c: CopyCtx) {
       sb: `${t2} ${c.tz}`,
       sas: t1,
       sbs: t2,
-      leadDay: `${WEEKDAYS[d1.getUTCDay()]} ${d1.getUTCDate()} ${MONTHS[d1.getUTCMonth()]} works. `,
+      leadDay: `${WEEKDAYS[d1.getUTCDay()]} works. `,
     };
   }
   return { sa: long(d1, t1), sb: long(d2, t2), sas: short(d1, t1), sbs: short(d2, t2), leadDay: "" };
