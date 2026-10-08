@@ -9,8 +9,36 @@ Each release lists the database migrations it needs; see
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-08
+
+**Upgrading a Docker Compose install from 0.1.0** (breaking): the new
+`docker-compose.yml` no longer loads your whole `.env` into the containers;
+it passes only the settings it lists by name. Before `docker compose up -d`:
+
+1. Add `APP_URL=<your public address>` to `.env`. It replaces
+   `BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL`, which the new file does not
+   read. Without it the app assumes `http://localhost:3000`.
+2. Keep `POSTGRES_PASSWORD`, `BETTER_AUTH_SECRET`,
+   `INTEGRATION_CREDENTIALS_KEY`, `UNSUBSCRIBE_SECRET`, `CRON_SECRET` and
+   `OUTREACH_TICK_SECRET` in `.env` exactly as they are.
+3. Any other variable you relied on (a `PAUSE_*` switch, worker tuning,
+   Apollo) must be added to the `environment` block of `docker-compose.yml`.
+
 ### Added
 
+- **First-run setup page.** On a fresh install every visitor is sent to
+  `/setup`: one form (name, organization, email, password) creates the first
+  admin, already verified, and their organization, then signs them in. No
+  email service is needed to get started. The page closes for good once an
+  account exists.
+- **Copy-and-run Docker Compose.** `docker-compose.yml` runs the published
+  image (`ghcr.io/kandid-ai/agentsdr`), with no repository checkout and no
+  files to mount. Every setting is listed by name in the file; the ones to
+  replace are marked `# CHANGEME` and can be edited in place or set in a
+  `.env`. It starts as-is on `localhost`; on any other `APP_URL` it refuses
+  to start while a secret still has its placeholder. The scheduler runs from
+  the same image. `docker-compose.build.yml` builds from source instead.
+  The Docker guide is rewritten as numbered steps.
 - **Public demo.** `DEMO_MODE=true` turns a separate deployment into a
   read-only AgentSDR anyone can open without signing in, and
   `bun run db:seed:demo` now fills it with Northwind, a fictional company's
@@ -23,6 +51,12 @@ Each release lists the database migrations it needs; see
 - **License: MIT** (was AGPL-3.0-only). Anyone may use, modify, self-host,
   distribute and sell AgentSDR, including in closed-source products and
   hosted services, as long as the copyright and license notice is kept.
+- **Email recipients**: inbound Gmail keeps every To and Cc, replies can go
+  to all, and a colleague's reply joins the lead's thread.
+  `scripts/backfill-email-recipients.ts` (optional, dry run by default)
+  restores recipients on messages stored before.
+- **Tables**: about 70 fixes across columns, AI and enrichment runs and the
+  grid.
 - **The app is only the app.** The marketing website, blog theme and launch
   film moved to their own repository (agentsdr.ai). `/` now opens the
   workspace (sign-in first), and the app asks search engines not to index it.
@@ -85,5 +119,6 @@ The first public release.
   before deploying). The `WHATSAPP_*` sending variables are no longer read —
   set those limits in Settings → WhatsApp → Sending rules.
 
-[Unreleased]: https://github.com/Kandid-ai/AgentSDR/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Kandid-ai/AgentSDR/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Kandid-ai/AgentSDR/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Kandid-ai/AgentSDR/releases/tag/v0.1.0
