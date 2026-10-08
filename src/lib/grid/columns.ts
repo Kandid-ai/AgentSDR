@@ -20,9 +20,9 @@ import type {
 import { isRunnerColumnType, isStaticColumnType } from "./types";
 import { coerceClipboardValue } from "./clipboard";
 import { HTTP_SECRET_ENV_PREFIX, isAllowedHttpSecretEnvVar } from "./runners/http";
-import { resolveDeps } from "./runners";
+import { assertFormulaSyntax, resolveDeps } from "./runners";
 import { isResponseOutputKey } from "./json-pointer";
-import { effectiveColumnType } from "./value-types";
+import { effectiveColumnType, inputAcceptsColumnType, describeAcceptedInputTypes } from "./value-types";
 import { resolveFormulaConfig } from "./formula-lookups";
 
 // ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ export { resolveDeps } from "./runners";
 export function validateColumnConfig(
   type: ColumnType,
   config: ColumnConfig,
-  columns: Pick<GridColumn, "key" | "type">[] = [],
+  columns: Array<Pick<GridColumn, "key" | "type"> & Partial<Pick<GridColumn, "name" | "config">>> = [],
 ): void {
   if (!isPlainObject(config)) throw new Error("Column config must be an object");
 
@@ -197,8 +197,10 @@ export function validateColumnConfig(
       const source = columns.find((column) => column.key === binding.columnKey);
       if (!source) throw new Error(`${input.name} references a missing column`);
       const sourceType = effectiveColumnType(source);
-      if (!input.acceptedColumnTypes.some((accepted) => accepted === sourceType)) {
-        throw new Error(`${input.name} cannot use a ${sourceType} column`);
+      if (!inputAcceptsColumnType(input.acceptedColumnTypes, sourceType)) {
+        throw new Error(
+          `${input.name} needs a ${describeAcceptedInputTypes(input.acceptedColumnTypes)} column, but "${source.name ?? source.key}" is ${sourceType}`,
+        );
       }
     }
 
@@ -381,6 +383,7 @@ export async function createColumn(input: {
     if (!isStaticColumnType(input.type)) throw new Error("Copied values need a data column type");
   }
 
+  if (input.type === "formula") await assertFormulaSyntax((input.config as FormulaConfig | undefined)?.expression ?? "");
   const config = input.type === "formula"
     ? await resolveFormulaConfig(input.tableId, (input.config as FormulaConfig | undefined)?.expression ?? "")
     : input.config ?? {};
@@ -549,6 +552,7 @@ export async function updateColumn(
   if (patch.type !== undefined || patch.config !== undefined) {
     const type = patch.type ?? current.type;
     const candidateConfig = patch.config ?? current.config;
+    if (type === "formula") await assertFormulaSyntax((candidateConfig as FormulaConfig).expression ?? "");
     const config = type === "formula"
       ? await resolveFormulaConfig(
           current.tableId,

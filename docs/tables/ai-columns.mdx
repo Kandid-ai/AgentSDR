@@ -13,7 +13,7 @@ Wrap a column's key in double curly braces. A token that matches no column resol
 - In the AI prompt box, type `/` or `{{` to open a column picker. Pick a column and its key is inserted. Under the box the dialog lists each token and the column it points to, and warns about tokens that are not columns in this table because they would be sent blank.
 - In the HTTP column, tokens work in the URL, header values and request body.
 
-A column that reads other columns waits for them. With **Auto-run** on, it runs for a row once every column it references has a value. A table can't contain a loop where two columns depend on each other.
+A column that reads other columns waits for them. With **Auto-run** on, it runs for a row once every column it references has a value, and again whenever one of them is edited. Formula columns are the exception: they are free, so they recompute on every change, including when an input is cleared. A table can't contain a loop where two columns depend on each other.
 
 ## Use AI columns
 

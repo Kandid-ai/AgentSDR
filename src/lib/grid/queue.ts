@@ -1,12 +1,10 @@
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { getIntegrationAction } from "@/lib/integrations/catalog";
 import { gridCellRuns, gridColumns, gridJobs, gridRows, gridTables, type GridColumn, type GridJob } from "./schema";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
-import { inOrgTables, tableInOrganization } from "./scope";
-import type { CellResult, CellValues, EnrichmentConfig, PendingCellResult } from "./types";
-import { allReferencedInputsEmpty, columnDelaySeconds, hasCellValue } from "./runners/guards";
-import { ownCell } from "./runners/types";
+import { inOrgTables } from "./scope";
+import type { CellResult, CellValues, PendingCellResult } from "./types";
+import { cascadeTargets, type RowChange } from "./cascade-targets";
 import { cleanJson, cleanString } from "./sanitize";
 
 /**
@@ -27,67 +25,88 @@ export type EnqueueTarget = { rowId: string; columnKey: string; delaySeconds?: n
 /** A claimed job plus the organization of its table — what the worker scopes each run to. */
 export type ClaimedJob = GridJob & { organizationId: string };
 
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 /**
- * Queues cells, skipping any already queued or running.
+ * Queues cells, skipping any already running or waiting on a provider.
  *
  * The (row_id, column_key) unique constraint makes this an upsert: re-running
  * a cell moves its existing job back to queued rather than stacking a second
  * one, so a user hammering "Run" cannot flood the queue.
+ *
+ * The jobs and the cells' "queued" metadata commit together, and only for the
+ * jobs this call actually queued. Writing the metadata after the jobs were
+ * visible let a fast worker finish a cell first, and the late "queued" then
+ * overwrote its result forever; in one transaction a worker cannot claim a job
+ * before its marker exists, and every terminal write lands after it. Pass `tx`
+ * to queue inside a caller's transaction (the worker's cascade does, so a
+ * finished job and the jobs it queues become visible at one instant).
  */
 export async function enqueue(
   tableId: string,
   targets: EnqueueTarget[],
-  opts: { priority?: number } = {},
+  opts: { priority?: number; tx?: Tx } = {},
 ): Promise<number> {
   if (!targets.length) return 0;
-  // Fail closed: a table id from another organization queues nothing.
-  if (!(await tableInOrganization(tableId))) throw new Error("That table no longer exists");
+  // Fail closed: a table id from another organization queues nothing. Inside a
+  // caller's transaction the check runs on it — a second connection per
+  // in-flight job would exhaust the pool.
+  const reader = opts.tx ?? db;
+  const [table] = await reader
+    .select({ id: gridTables.id })
+    .from(gridTables)
+    .where(and(inOrg(gridTables), eq(gridTables.id, tableId)))
+    .limit(1);
+  if (!table) throw new Error("That table no longer exists");
 
   const CHUNK = 500;
   let queued = 0;
 
   for (let i = 0; i < targets.length; i += CHUNK) {
     const chunk = targets.slice(i, i + CHUNK);
-    const inserted = await db
-      .insert(gridJobs)
-      .values(
-        chunk.map((t) => ({
-          tableId,
-          rowId: t.rowId,
-          columnKey: t.columnKey,
-          status: "queued" as const,
-          priority: opts.priority ?? 0,
-          attempts: 0,
-          runAfter: new Date(Date.now() + (t.delaySeconds ?? 0) * 1000),
-        })),
-      )
-      .onConflictDoUpdate({
-        target: [gridJobs.rowId, gridJobs.columnKey],
-        set: {
-          status: "queued",
-          attempts: 0,
-          error: null,
-          providerState: null,
-          lockedAt: null,
-          runAfter: sql`excluded.run_after`,
-          updatedAt: new Date(),
-        },
-        // Leave a job that is mid-flight alone; re-queuing it under the worker
-        // would orphan the run in progress.
-        where: sql`${gridJobs.status} NOT IN ('running', 'waiting')`,
-      })
-      .returning({ id: gridJobs.id });
+    const write = async (tx: Tx) => {
+      const inserted = await tx
+        .insert(gridJobs)
+        .values(
+          chunk.map((t) => ({
+            tableId,
+            rowId: t.rowId,
+            columnKey: t.columnKey,
+            status: "queued" as const,
+            priority: opts.priority ?? 0,
+            attempts: 0,
+            runAfter: new Date(Date.now() + (t.delaySeconds ?? 0) * 1000),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [gridJobs.rowId, gridJobs.columnKey],
+          set: {
+            status: "queued",
+            attempts: 0,
+            error: null,
+            providerState: null,
+            lockedAt: null,
+            runAfter: sql`excluded.run_after`,
+            updatedAt: new Date(),
+          },
+          // Leave a job that is mid-flight alone; re-queuing it under the worker
+          // would orphan the run in progress.
+          where: sql`${gridJobs.status} NOT IN ('running', 'waiting')`,
+        })
+        .returning({ rowId: gridJobs.rowId, columnKey: gridJobs.columnKey });
 
-    queued += inserted.length;
+      // Mark exactly the cells that were queued so the grid shows pending state
+      // without waiting for a worker to pick the job up.
+      await markQueued(tx, tableId, inserted);
+      return inserted.length;
+    };
+    queued += opts.tx ? await write(opts.tx) : await db.transaction(write);
   }
 
-  // Mark every queued cell immediately so the grid shows pending state without
-  // waiting for a worker to pick the job up.
-  await markQueued(tableId, targets);
   return queued;
 }
 
-async function markQueued(tableId: string, targets: EnqueueTarget[]): Promise<void> {
+async function markQueued(tx: Tx, tableId: string, targets: { rowId: string; columnKey: string }[]): Promise<void> {
   const byColumn = new Map<string, Set<string>>();
   for (const t of targets) {
     const rowIds = byColumn.get(t.columnKey) ?? new Set<string>();
@@ -100,7 +119,7 @@ async function markQueued(tableId: string, targets: EnqueueTarget[]): Promise<vo
     const rowIds = [...ids];
     const patch = JSON.stringify({ [columnKey]: { status: "queued" } });
     for (let i = 0; i < rowIds.length; i += CHUNK) {
-      await db
+      await tx
         .update(gridRows)
         .set({
           cellMeta: sql`${gridRows.cellMeta} || ${patch}::jsonb`,
@@ -225,9 +244,13 @@ export async function deferJob(job: GridJob, result: PendingCellResult): Promise
 export async function completeJob(
   job: GridJob,
   result: CellResult,
+  opts: { cascadeColumns?: GridColumn[] } = {},
 ): Promise<void> {
   const meta = {
     status: "success" as const,
+    // A provider/AI/HTTP call that found nothing is still a finished run; the
+    // grid tells "no result" from "never ran" by this.
+    ...(result.outcome === "hit" || result.outcome === "miss" ? { outcome: result.outcome } : {}),
     provider: result.provider,
     costCents: result.costCents,
     runAt: new Date().toISOString(),
@@ -235,6 +258,10 @@ export async function completeJob(
   const produced = cleanJson({ [job.columnKey]: result.value ?? null, ...(result.outputs ?? {}) });
 
   await db.transaction(async (tx) => {
+    // Job first, then the row — the order every other writer here uses, so a
+    // concurrent enqueue (job, then row) can never deadlock against this.
+    await tx.delete(gridJobs).where(and(inOrgTables(gridJobs.tableId), eq(gridJobs.id, job.id)));
+
     // Only keys that are still columns: an output column deleted while the job
     // ran would otherwise keep receiving values no one can see.
     const current = await tx
@@ -269,11 +296,32 @@ export async function completeJob(
       response: result.response ?? null,
     });
 
-    await tx.delete(gridJobs).where(and(inOrgTables(gridJobs.tableId), eq(gridJobs.id, job.id)));
+    // Queue the dependents in the same transaction: the finished job and the
+    // jobs it triggers appear at one instant, so the table's active-job count
+    // never dips to zero between them and a polling client keeps polling.
+    // Nothing here may fail the completion, hence the savepoint.
+    if (opts.cascadeColumns) {
+      try {
+        await tx.transaction(async (savepoint) => {
+          const [fresh] = await savepoint
+            .select({ cells: gridRows.cells })
+            .from(gridRows)
+            .where(and(inOrgTables(gridRows.tableId), eq(gridRows.tableId, job.tableId), eq(gridRows.id, job.rowId)))
+            .limit(1);
+          if (!fresh) return;
+          await cascadeRows(
+            job.tableId,
+            [{ rowId: job.rowId, cells: fresh.cells ?? {}, changedKeys: Object.keys(values) }],
+            opts.cascadeColumns!,
+            { tx: savepoint },
+          );
+        });
+      } catch (err) {
+        console.error(`[grid/queue] cascade after ${job.columnKey} on row ${job.rowId} failed:`, err);
+      }
+    }
   });
 }
-
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Appends the audit row inside a savepoint. The row may have been deleted
@@ -394,13 +442,34 @@ export async function failJob(
 }
 
 /**
- * Queues the columns that read `columnKey`, for this row only.
+ * Queues the columns that read the changed keys, for the given rows.
  *
- * This cascade is what the table's "Auto-run" toggle controls. A dependent is
- * only queued once its runnable inputs have values, so a column reading two
- * required inputs does not run twice. Addable filter groups are ready as soon
- * as their minimum number of mapped filters has a value.
+ * This cascade is what the table's "Auto-run" toggle controls (the readiness
+ * rules live in cascade-targets.ts). It takes many rows so a 1,000-row paste
+ * is one table lookup and one batched enqueue, not a round trip per row.
  */
+export async function cascadeRows(
+  tableId: string,
+  changes: RowChange[],
+  columns: GridColumn[],
+  opts: { tx?: Tx; priority?: number } = {},
+): Promise<number> {
+  if (!changes.length || !columns.some((c) => c.autoRun && c.dependsOn.length)) return 0;
+
+  // The table-level Auto-run switch sits above each column's own.
+  const [table] = await (opts.tx ?? db)
+    .select({ autoRun: gridTables.autoRun })
+    .from(gridTables)
+    .where(and(inOrg(gridTables), eq(gridTables.id, tableId)))
+    .limit(1);
+  if (!table?.autoRun) return 0;
+
+  const targets = cascadeTargets(columns, changes);
+  if (!targets.length) return 0;
+  return enqueue(tableId, targets, opts);
+}
+
+/** Single-row form of cascadeRows. */
 export async function cascade(
   tableId: string,
   rowId: string,
@@ -408,45 +477,7 @@ export async function cascade(
   columns: GridColumn[],
   cells: CellValues,
 ): Promise<number> {
-  const dependents = columns.filter((c) => c.autoRun && c.dependsOn.includes(columnKey));
-  if (!dependents.length) return 0;
-
-  // The table-level Auto-run switch sits above each column's own.
-  const [table] = await db
-    .select({ autoRun: gridTables.autoRun })
-    .from(gridTables)
-    .where(and(inOrg(gridTables), eq(gridTables.id, tableId)))
-    .limit(1);
-  if (!table?.autoRun) return 0;
-
-  const ready = dependents.filter((column) => {
-    if (column.type === "enrichment") {
-      const config = column.config as EnrichmentConfig;
-      const action = getIntegrationAction(config.integrationKey, config.actionKey);
-      if (action?.filterBuilder) {
-        const requiredInputsReady = action.inputs.every((input) => {
-          if (!input.required) return true;
-          const binding = config.inputs[input.key];
-          return binding ? hasCellValue(ownCell(cells, binding.columnKey)) : false;
-        });
-        if (!requiredInputsReady) return false;
-        const populatedFilters = action.inputs.filter((input) => {
-          if (input.group !== "filter") return false;
-          const binding = config.inputs[input.key];
-          return binding ? hasCellValue(ownCell(cells, binding.columnKey)) : false;
-        }).length;
-        return populatedFilters >= action.filterBuilder.minFilters;
-      }
-    }
-    return column.dependsOn.every((dep) => hasCellValue(ownCell(cells, dep)))
-      && !allReferencedInputsEmpty(column, cells);
-  });
-  if (!ready.length) return 0;
-
-  return enqueue(
-    tableId,
-    ready.map((c) => ({ rowId, columnKey: c.key, delaySeconds: columnDelaySeconds(c) })),
-  );
+  return cascadeRows(tableId, [{ rowId, cells, changedKeys: [columnKey] }], columns);
 }
 
 /** Queued + running jobs for a table, for the toolbar counter. */
@@ -458,14 +489,74 @@ export async function activeJobCount(tableId: string): Promise<number> {
   return row?.n ?? 0;
 }
 
+/** Statuses that claim a job is on its way; with no job behind them they are stale. */
+const IN_FLIGHT_STATUSES = ["queued", "running", "processing"] as const;
+
+/**
+ * Clears cells that claim to be queued, running or processing but have no job
+ * left — the grid would spin on them forever. Returns how many cells it reset.
+ *
+ * Bounded to `limit` rows per call; the next call takes the rest. The cell and
+ * its job are always written in one transaction, so a cell with no job cannot
+ * be one that is mid-write.
+ */
+export async function reconcileStuckCells(tableId: string, limit = 1000): Promise<number> {
+  const rows = await db.execute<{ keys: string[] }>(sql`
+    WITH stale AS (
+      SELECT r.id, array_agg(e.key) AS keys
+      FROM ${gridRows} r
+      CROSS JOIN LATERAL jsonb_each(r.cell_meta) AS e(key, value)
+      WHERE r.table_id = ${tableId}::uuid
+        AND r.table_id IN (SELECT id FROM ${gridTables} WHERE organization_id = ${currentOrganizationId()})
+        AND jsonb_typeof(e.value) = 'object'
+        AND e.value->>'status' IN (${sql.join(IN_FLIGHT_STATUSES.map((status) => sql`${status}`), sql`, `)})
+        AND NOT EXISTS (
+          SELECT 1 FROM ${gridJobs} j
+          WHERE j.row_id = r.id AND j.column_key = e.key AND j.table_id = r.table_id
+        )
+      GROUP BY r.id
+      LIMIT ${limit}
+    )
+    UPDATE ${gridRows} AS target
+    SET cell_meta = target.cell_meta - stale.keys,
+        version = nextval('grid_row_version_seq'),
+        updated_at = now()
+    FROM stale
+    WHERE target.id = stale.id
+    RETURNING stale.keys AS keys
+  `);
+  return rows.reduce((sum, row) => sum + row.keys.length, 0);
+}
+
+// One sweep per table per interval and process: the changes poll calls it each
+// time a table is idle, and it scans the table's metadata.
+const RECONCILE_EVERY_MS = 10_000;
+const lastReconcile = new Map<string, number>();
+
+/** reconcileStuckCells for the idle poll: throttled, and never fails the poll. */
+export async function reconcileIdleTable(tableId: string): Promise<number> {
+  const now = Date.now();
+  if (now - (lastReconcile.get(tableId) ?? 0) < RECONCILE_EVERY_MS) return 0;
+  lastReconcile.set(tableId, now);
+  if (lastReconcile.size > 500) lastReconcile.delete(lastReconcile.keys().next().value as string);
+  try {
+    return await reconcileStuckCells(tableId);
+  } catch (err) {
+    console.warn("[grid/queue] reconcile failed:", err instanceof Error ? err.message : err);
+    return 0;
+  }
+}
+
 /**
  * Drops every pending job for a table — the "Stop" button.
  *
  * The cells those jobs had marked queued or processing go back to idle in the
- * same transaction; otherwise the grid would spin on them forever.
+ * same transaction; otherwise the grid would spin on them forever. Cells that
+ * claim to be in flight with no job at all (left by an earlier race or a crash)
+ * are reset too. Returns how many cells were reset.
  */
 export async function cancelTableJobs(tableId: string): Promise<number> {
-  return db.transaction(async (tx) => {
+  const reset = await db.transaction(async (tx) => {
     const deleted = await tx
       .delete(gridJobs)
       .where(and(inOrgTables(gridJobs.tableId), eq(gridJobs.tableId, tableId), inArray(gridJobs.status, ["queued", "waiting"])))
@@ -498,4 +589,5 @@ export async function cancelTableJobs(tableId: string): Promise<number> {
     }
     return deleted.length;
   });
+  return reset + (await reconcileStuckCells(tableId));
 }

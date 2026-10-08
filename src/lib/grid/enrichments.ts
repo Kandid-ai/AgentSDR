@@ -3,7 +3,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { getIntegrationAction } from "@/lib/integrations/catalog";
 import { gridCellRuns, gridColumns, gridRows, type GridColumn } from "./schema";
 import { inOrgTables, tableInOrganization } from "./scope";
-import { assertNoCycle, listColumns, uniqueColumnKey, validateColumnConfig } from "./columns";
+import { assertNoCycle, listColumns, uniqueColumnKey, uniqueColumnName, validateColumnConfig } from "./columns";
 import { getIntegrationConnection } from "./providers";
 import { responseOutputKey, valueAtJsonPointer } from "./json-pointer";
 import type { EnrichmentConfig, IntegrationOutputConfig } from "./types";
@@ -43,11 +43,20 @@ export async function createEnrichmentColumns(input: {
   );
 
   const taken = new Set(existing.map((column) => column.key));
+  // Three "Find work email" runs must not leave three indistinguishable
+  // "Work Email" headers: the source column and every output get a free name.
+  const takenNames = existing.map((column) => column.name);
+  const actionColumnName = uniqueColumnName(action.name, takenNames);
+  takenNames.push(actionColumnName);
   const outputKeys = new Map<string, string>();
+  const outputNames = new Map<string, string>();
   for (const output of selected) {
     const key = uniqueColumnKey(output.name, taken);
     taken.add(key);
     outputKeys.set(output.key, key);
+    const name = uniqueColumnName(output.name, takenNames);
+    takenNames.push(name);
+    outputNames.set(output.key, name);
   }
 
   const actionColumnKey = uniqueColumnKey(action.name, taken);
@@ -77,7 +86,7 @@ export async function createEnrichmentColumns(input: {
     {
       tableId: input.tableId,
       key: actionColumnKey,
-      name: action.name,
+      name: actionColumnName,
       type: "enrichment" as const,
       config,
       dependsOn: dependencies,
@@ -96,7 +105,7 @@ export async function createEnrichmentColumns(input: {
     return {
       tableId: input.tableId,
       key,
-      name: output.name,
+      name: outputNames.get(output.key)!,
       type: "integration_output" as const,
       config: outputConfig,
       dependsOn: [actionColumnKey],
@@ -146,11 +155,16 @@ export async function updateEnrichmentColumns(input: {
   );
   const taken = new Set(existing.map((column) => column.key));
   const outputKeys = new Map(Object.entries(previous.outputs ?? {}));
+  const takenNames = existing.map((column) => column.name);
+  const additionNames = new Map<string, string>();
   const additions = selected.filter((output) => !outputKeys.has(output.key));
   for (const output of additions) {
     const key = uniqueColumnKey(output.name, taken);
     taken.add(key);
     outputKeys.set(output.key, key);
+    const name = uniqueColumnName(output.name, takenNames);
+    takenNames.push(name);
+    additionNames.set(output.key, name);
   }
 
   const config: EnrichmentConfig = {
@@ -197,7 +211,7 @@ export async function updateEnrichmentColumns(input: {
       await tx.insert(gridColumns).values(additions.map((output, index) => ({
         tableId: input.tableId,
         key: outputKeys.get(output.key)!,
-        name: output.name,
+        name: additionNames.get(output.key)!,
         type: "integration_output" as const,
         config: {
           integrationKey: input.integrationKey,
@@ -210,10 +224,111 @@ export async function updateEnrichmentColumns(input: {
         position: positions[index],
         autoRun: false,
       })));
+      await backfillAdditions(tx, input.tableId, current.key, additions.map((output) => ({
+        columnKey: outputKeys.get(output.key)!,
+        outputKey: output.key,
+      })));
     }
   });
 
   return listColumns(input.tableId);
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Finds the value a catalog output holds in a saved provider response.
+ *
+ * Handlers derive their outputs from the response in code the grid cannot
+ * replay, so this looks the output's key up as a field name instead — the
+ * shallowest field with that name, case-insensitively, whose value is present
+ * (`mxProvider` inside `emails[0]`, `status` at the top of a verification).
+ * An output with no field of that name stays empty rather than guessed.
+ */
+export function findOutputInResponse(response: unknown, outputKey: string): unknown {
+  const wanted = outputKey.toLowerCase();
+  let level: unknown[] = [response];
+  for (let depth = 0; depth < 6 && level.length; depth += 1) {
+    const next: unknown[] = [];
+    for (const node of level) {
+      if (!node || typeof node !== "object") continue;
+      if (Array.isArray(node)) {
+        next.push(...node);
+        continue;
+      }
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (key.toLowerCase() === wanted && value !== undefined && value !== null) return value;
+        next.push(value);
+      }
+    }
+    level = next;
+  }
+  return undefined;
+}
+
+/**
+ * Fills output columns added to an existing enrichment from each row's latest
+ * successful run, so the new column shows what the provider already returned
+ * instead of staying empty until a paid re-run. One batched update per chunk,
+ * scoped to the organization through the table.
+ */
+async function backfillAdditions(
+  tx: Tx,
+  tableId: string,
+  sourceKey: string,
+  additions: { columnKey: string; outputKey: string }[],
+): Promise<void> {
+  // DISTINCT ON keeps one run per row: the newest that actually has a response.
+  const runs = await tx
+    .selectDistinctOn([gridCellRuns.rowId], {
+      rowId: gridCellRuns.rowId,
+      response: gridCellRuns.response,
+      provider: gridCellRuns.provider,
+      costCents: gridCellRuns.costCents,
+      createdAt: gridCellRuns.createdAt,
+    })
+    .from(gridCellRuns)
+    .where(and(
+      inOrgTables(gridCellRuns.tableId),
+      eq(gridCellRuns.tableId, tableId),
+      eq(gridCellRuns.columnKey, sourceKey),
+      sql`${gridCellRuns.outcome} NOT IN ('error', 'skipped')`,
+      sql`${gridCellRuns.response} IS NOT NULL`,
+    ))
+    .orderBy(gridCellRuns.rowId, desc(gridCellRuns.createdAt));
+
+  const patches: { id: string; cells: Record<string, unknown>; meta: Record<string, unknown> }[] = [];
+  for (const run of runs) {
+    const cells: Record<string, unknown> = {};
+    const meta: Record<string, unknown> = {};
+    for (const addition of additions) {
+      const value = findOutputInResponse(run.response, addition.outputKey);
+      if (value === undefined) continue;
+      cells[addition.columnKey] = value;
+      meta[addition.columnKey] = {
+        status: "success",
+        provider: run.provider ?? undefined,
+        costCents: Number(run.costCents ?? 0),
+        runAt: run.createdAt?.toISOString() ?? new Date().toISOString(),
+      };
+    }
+    if (Object.keys(cells).length) patches.push({ id: run.rowId, cells, meta });
+  }
+
+  for (let start = 0; start < patches.length; start += 1000) {
+    const batch = JSON.stringify(patches.slice(start, start + 1000));
+    await tx.execute(sql`
+      UPDATE grid_rows
+      SET cells = grid_rows.cells || v.cells,
+          cell_meta = grid_rows.cell_meta || v.meta,
+          version = nextval('grid_row_version_seq'),
+          updated_at = now()
+      FROM jsonb_to_recordset(${batch}::jsonb) AS v(id uuid, cells jsonb, meta jsonb)
+      WHERE grid_rows.id = v.id
+        AND grid_rows.table_id = ${tableId}
+        AND ${inOrgTables(gridRows.tableId)}
+    `);
+  }
 }
 
 /**
@@ -262,7 +377,7 @@ export async function addEnrichmentResponseColumn(input: {
     if (existingOutput) return existingOutput;
   }
 
-  const name = input.name.trim() || "Enrichment result";
+  const name = uniqueColumnName(input.name.trim() || "Enrichment result", existing.map((column) => column.name));
   const valueType = inferResponseValueType(selectedValue, `${name} ${input.pointer}`);
   const key = uniqueColumnKey(name, new Set(existing.map((column) => column.key)));
   const related = existing

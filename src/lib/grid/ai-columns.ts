@@ -96,6 +96,10 @@ export async function createAiColumns(input: AiColumnInput): Promise<GridColumn[
 
   const taken = new Set(existing.map((column) => column.key));
   const takenNames = existing.map((column) => column.name);
+  // Two "Claude (AI)" columns (or an output named like one) must stay
+  // distinguishable, so the AI column itself gets a free name first.
+  const aiColumnName = uniqueColumnName(model.producesImages ? model.name : `${model.name} (AI)`, takenNames);
+  takenNames.push(aiColumnName);
   const outputColumns = new Map<string, string>();
   const outputNames = new Map<string, string>();
   for (const field of fields) {
@@ -141,7 +145,7 @@ export async function createAiColumns(input: AiColumnInput): Promise<GridColumn[
     {
       tableId: input.tableId,
       key: aiColumnKey,
-      name: model.producesImages ? model.name : `${model.name} (AI)`,
+      name: aiColumnName,
       type: "ai" as const,
       config,
       dependsOn,

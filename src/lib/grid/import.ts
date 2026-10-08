@@ -3,7 +3,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { gridColumns, gridRows } from "./schema";
 import { listColumns, toColumnKey, uniqueColumnKey, uniqueColumnName } from "./columns";
-import { coerceClipboardValue } from "./clipboard";
+import { coerceClipboardValue, parseNumericText } from "./clipboard";
 import { MAX_NAME_LENGTH } from "./validate";
 import { insertRows } from "./rows";
 import { inOrgTables, tableInOrganization } from "./scope";
@@ -97,20 +97,60 @@ export function parseSpreadsheet(buffer: ArrayBuffer, sheetName?: string): Parse
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const URL_RE = /^https?:\/\/\S+$/i;
-const NUMBER_RE = /^-?\d[\d,]*(\.\d+)?$/;
 const BOOL_VALUES = new Set(["true", "false", "yes", "no", "y", "n", "1", "0"]);
+
+/** Share of non-empty samples that must fit a number or date type; the rest stay raw strings. */
+const MAJORITY = 0.9;
+
+const MONTH = "(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?";
+const DATE_SHAPES: RegExp[] = [
+  // 2024-01-05, 2024-01-05 13:45, 2024-01-05T13:45:10.000Z, 2024/01/05
+  /^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s?[AP]M)?(?:Z|[+-]\d{2}:?\d{2})?)?$/i,
+  // 05/01/2024, 5-1-24, 5.1.2024
+  /^\d{1,2}[/.-]\d{1,2}[/.-](?:\d{4}|\d{2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AP]M)?)?$/i,
+  // Jan 5, 2024 / January 5 2024
+  new RegExp(`^${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+\\d{4}$`, "i"),
+  // 5 Jan 2024 / 5th January, 2024
+  new RegExp(`^\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH},?\\s+\\d{4}$`, "i"),
+];
+
+/** True for text that has the shape of a real calendar date, not merely something Date.parse tolerates. */
+export function looksLikeDate(value: string): boolean {
+  const text = value.trim();
+  if (!DATE_SHAPES.some((shape) => shape.test(text))) return false;
+  const numeric = /^(\d{1,2})[/.-](\d{1,2})[/.-]\d{2,4}/.exec(text);
+  if (numeric) {
+    const [a, b] = [Number(numeric[1]), Number(numeric[2])];
+    // dd/mm or mm/dd — one of the two has to be a month.
+    return a >= 1 && b >= 1 && a <= 31 && b <= 31 && (a <= 12 || b <= 12);
+  }
+  const iso = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(text);
+  if (iso) return Number(iso[2]) >= 1 && Number(iso[2]) <= 12 && Number(iso[3]) >= 1 && Number(iso[3]) <= 31;
+  return !Number.isNaN(Date.parse(text));
+}
+
+/** A number as a person writes it; zip-code-like "02134" and 16+ digit ids stay text. */
+function looksNumeric(value: string): boolean {
+  if (/^[+-]?0\d/.test(value.trim())) return false;
+  if (/^[+-]?\d{16,}$/.test(value.trim())) return false;
+  return parseNumericText(value) !== null;
+}
 
 /**
  * Guesses a column type from sample values, so an imported file arrives with
  * sensible types instead of everything being text.
  *
- * Only non-empty samples count, and every one of them has to agree — a single
- * disagreeing value falls back to text, because a wrong type is worse than a
- * loose one: it makes cells uneditable or unparseable.
+ * Only non-empty samples count. Email, URL and boolean need every one to
+ * agree. Number and date accept a 90% majority: a column of figures with one
+ * "N/A" is still a number column, and the stray value is kept as its raw
+ * string (see coerceValue) rather than lost. Dates must have a real date
+ * shape — Date.parse alone accepts far too much ("a&b=1", "Room 5").
  */
 export function inferColumnType(samples: string[]): StaticColumnType {
   const values = samples.map((s) => s.trim()).filter(Boolean);
   if (!values.length) return "text";
+  const mostly = (test: (v: string) => boolean) =>
+    values.filter(test).length / values.length >= MAJORITY;
 
   if (values.every((v) => EMAIL_RE.test(v))) return "email";
   if (values.every((v) => URL_RE.test(v))) return "url";
@@ -118,8 +158,8 @@ export function inferColumnType(samples: string[]): StaticColumnType {
   // a number than a yes/no question; numbers also round-trip losslessly.
   if (values.every((v) => v === "0" || v === "1")) return "number";
   if (values.every((v) => BOOL_VALUES.has(v.toLowerCase()))) return "boolean";
-  if (values.every((v) => NUMBER_RE.test(v))) return "number";
-  if (values.every((v) => !NUMBER_RE.test(v) && !Number.isNaN(Date.parse(v)))) return "date";
+  if (mostly(looksNumeric)) return "number";
+  if (mostly(looksLikeDate)) return "date";
 
   return "text";
 }
@@ -279,12 +319,13 @@ export async function importRows(
   const takenNames = existing.map((c) => c.name);
 
   // A fresh grid has a placeholder row and a "New Column" column. Reuse that
-  // column for the first imported field instead of leaving an empty column in
-  // front of the imported data. Prefer an explicit mapping to it (e.g. a
-  // "Name" header); otherwise promote the first newly-created file column.
-  const seedMapping = canReuseSeedColumn
-    ? mapping.find((m) => m.action === "map" && m.columnKey === existing[0].key)
-      ?? mapping.find((m) => m.action === "create")
+  // column for the first newly-created file column instead of leaving an
+  // empty column in front of the imported data. A header the person mapped
+  // onto an existing column — the seed included — is written into it as is:
+  // mapping never renames or retypes a column.
+  const seedMapped = canReuseSeedColumn && mapping.some((m) => m.action === "map" && m.columnKey === existing[0].key);
+  const seedMapping = canReuseSeedColumn && !seedMapped
+    ? mapping.find((m): m is Extract<ColumnMapping, { action: "create" }> => m.action === "create")
     : undefined;
   const creates = mapping.filter(
     (m): m is Extract<ColumnMapping, { action: "create" }> => m.action === "create" && m !== seedMapping,
@@ -299,16 +340,13 @@ export async function importRows(
 
   if (seedMapping) {
     const seed = existing[0];
-    const nextName = seedMapping.action === "create"
-      ? seedMapping.name.trim()
-      : sheet.headers[seedMapping.headerIndex]?.trim() || seed.name;
-    const nextType: ColumnType = seedMapping.action === "create" ? seedMapping.type : seed.type;
+    const nextName = seedMapping.name.trim() || seed.name;
     await db
       .update(gridColumns)
-      .set({ name: nextName || seed.name, type: nextType, updatedAt: new Date() })
-      .where(eq(gridColumns.id, seed.id));
+      .set({ name: nextName, type: seedMapping.type, updatedAt: new Date() })
+      .where(and(inOrgTables(gridColumns.tableId), eq(gridColumns.id, seed.id)));
     target.set(seedMapping.headerIndex, seed.key);
-    takenNames.splice(0, takenNames.length, nextName || seed.name);
+    takenNames.splice(0, takenNames.length, nextName);
   }
 
   if (creates.length) {
@@ -339,7 +377,7 @@ export async function importRows(
 
   // Type per target key, so values are coerced the way their column expects.
   const typeByKey = new Map<string, ColumnType>(existing.map((c) => [c.key, c.type]));
-  if (seedMapping && seedMapping.action === "create") {
+  if (seedMapping) {
     typeByKey.set(existing[0].key, seedMapping.type);
   }
   for (const m of creates) {

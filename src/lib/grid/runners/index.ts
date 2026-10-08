@@ -7,7 +7,7 @@ import { enrichmentRunner } from "./enrichment";
 import type { ColumnRunner } from "./types";
 
 export * from "./types";
-export { substituteTokens, evaluateOnce, evaluateCondition } from "./formula";
+export { substituteTokens, evaluateOnce, evaluateCondition, assertFormulaSyntax, excelOnlyOperator } from "./formula";
 export { allReferencedInputsEmpty, columnDelaySeconds, columnRunCondition, hasCellValue } from "./guards";
 export { createSandbox, type Sandbox } from "./sandbox";
 

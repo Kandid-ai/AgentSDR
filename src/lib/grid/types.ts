@@ -267,6 +267,12 @@ export type CellMeta = {
   costCents?: number;
   /** ISO timestamp of the last completed run. */
   runAt?: string;
+  /**
+   * What a finished run found. `status` stays "success" for a clean miss, so
+   * this is how the grid tells "no result" from "never ran". Absent on cells
+   * written before it existed and on static values.
+   */
+  outcome?: "hit" | "miss";
 };
 
 /** The value plane: { [columnKey]: value }. */

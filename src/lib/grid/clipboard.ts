@@ -117,6 +117,31 @@ export function parseClipboardText(text: string): string[][] {
   return parseDelimited(text, delimiter);
 }
 
+const CURRENCY_SYMBOLS = /[$€£¥₹]/g;
+const CURRENCY_CODES = /^(?:USD|EUR|GBP|JPY|INR|CAD|AUD|CHF|CNY|SGD|AED)\s*|\s*(?:USD|EUR|GBP|JPY|INR|CAD|AUD|CHF|CNY|SGD|AED)$/i;
+const DECIMAL_TEXT = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+
+/**
+ * Reads a number a person would type: "1,234.5", "$1,234.50", "€ 99", "USD 12",
+ * "-$5", "(1,200)" (accounting negative). Returns null when the text is not
+ * entirely a number, so "N/A", "12abc" and "50%" are left to the caller.
+ */
+export function parseNumericText(text: string): number | null {
+  let value = text.trim();
+  if (!value) return null;
+  let negative = false;
+  const wrapped = /^\((.*)\)$/.exec(value);
+  if (wrapped) {
+    negative = true;
+    value = wrapped[1].trim();
+  }
+  value = value.replace(CURRENCY_CODES, "").replace(CURRENCY_SYMBOLS, "").replace(/,/g, "").replace(/\s+/g, "");
+  if (!DECIMAL_TEXT.test(value)) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return negative ? -number : number;
+}
+
 /**
  * Coerce a pasted string to the persisted value shape of a static grid column.
  * Text-like values retain their exact whitespace; only blank detection and
@@ -129,10 +154,10 @@ export function coerceClipboardValue(raw: string, type: StaticColumnType): unkno
   switch (type) {
     case "number":
     case "currency": {
-      const value = Number(trimmed.replace(/,/g, ""));
+      const value = parseNumericText(trimmed);
       // Preserve malformed input instead of silently clearing an existing
       // cell. Inline editing already permits the same raw string shape.
-      return Number.isFinite(value) ? value : raw;
+      return value ?? raw;
     }
     case "boolean": {
       const normalized = trimmed.toLowerCase();

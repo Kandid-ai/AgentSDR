@@ -45,11 +45,14 @@ const NEW_COLUMN_TYPES: StaticColumnType[] = [
 export default function ImportDialog({
   open,
   tableId,
+  initialFile,
   onClose,
   onImported,
 }: {
   open: boolean;
   tableId: string;
+  /** A file already chosen elsewhere (New workbook): skips the picker and goes straight to mapping. */
+  initialFile?: File | null;
   onClose: () => void;
   onImported: (summary: { rowsInserted: number; columnsCreated: number }) => void;
 }) {
@@ -109,6 +112,14 @@ export default function ImportDialog({
     [tableId],
   );
 
+  const startedWith = useRef<File | null>(null);
+  useEffect(() => {
+    if (!open || !initialFile || startedWith.current === initialFile) return;
+    startedWith.current = initialFile;
+    setFile(initialFile);
+    void loadPreview(initialFile);
+  }, [open, initialFile, loadPreview]);
+
   const pick = useCallback(
     (f: File | undefined) => {
       if (!f) return;
@@ -148,6 +159,7 @@ export default function ImportDialog({
   if (!open || !mounted) return null;
 
   const included = mapping.filter((m) => m.action !== "skip").length;
+  const blankName = mapping.some((m) => m.action === "create" && !m.name.trim());
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -327,6 +339,22 @@ export default function ImportDialog({
                               </Select.Root>
 
                               {m?.action === "create" && (
+                                <input
+                                  aria-label="New column name"
+                                  value={m.name}
+                                  placeholder={header || `Column ${i + 1}`}
+                                  onChange={(e) =>
+                                    setMapping((prev) => {
+                                      const copy = [...prev];
+                                      copy[i] = { ...m, name: e.target.value };
+                                      return copy;
+                                    })
+                                  }
+                                  className="w-[150px] min-w-0 rounded-lg border border-stroke-soft-200 bg-bg-white-0 px-2 py-1 text-[13px] text-text-strong-950 outline-none focus:border-blue-500"
+                                />
+                              )}
+
+                              {m?.action === "create" && (
                                 <Select.Root
                                   size="xsmall"
                                   value={m.type}
@@ -373,6 +401,7 @@ export default function ImportDialog({
               onClick={() => {
                 setPreview(null);
                 setFile(null);
+                startedWith.current = null;
                 setError(null);
               }}
               disabled={busy}
@@ -392,7 +421,7 @@ export default function ImportDialog({
           <button
             type="button"
             onClick={runImport}
-            disabled={!preview || busy || included === 0}
+            disabled={!preview || busy || included === 0 || blankName}
             className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-[13px] font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
           >
             {busy && <RiLoader4Line className="size-4 animate-spin" />}

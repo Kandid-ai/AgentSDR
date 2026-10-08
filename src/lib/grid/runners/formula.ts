@@ -1,5 +1,5 @@
 import type { CellResult, CellValues, FormulaConfig, FormulaLookupRegistry } from "../types";
-import { createSandbox, type Sandbox } from "./sandbox";
+import { checkFormulaSyntax, createSandbox, type Sandbox } from "./sandbox";
 import { PermanentRunError, ownCell, tokensIn, type ColumnRunner, type RunSession } from "./types";
 import { buildFormulaLookupRegistry } from "../formula-lookups";
 
@@ -113,4 +113,34 @@ export async function evaluateCondition(
   } catch {
     return false;
   }
+}
+
+/**
+ * Throws a user-facing error when an expression does not compile. Tokens are
+ * replaced by `null` first, so only the user's own syntax is judged.
+ */
+export async function assertFormulaSyntax(expression: string): Promise<void> {
+  const problem = await checkFormulaSyntax(substituteTokens(expression, {}));
+  if (problem) throw new Error(problem);
+}
+
+/**
+ * Excel operators that are valid JavaScript with a different meaning — a lone
+ * `&` is bitwise AND here, so `"a" & "b"` silently evaluates to 0. Returns a
+ * hint for the first one found outside a string literal, or null.
+ */
+export function excelOnlyOperator(expression: string): string | null {
+  for (let i = 0; i < expression.length; i += 1) {
+    const char = expression[i];
+    if (char === '"' || char === "'" || char === "`") {
+      for (i += 1; i < expression.length && expression[i] !== char; i += 1) {
+        if (expression[i] === "\\") i += 1;
+      }
+    } else if (char === "&" && expression[i + 1] !== "&" && expression[i - 1] !== "&") {
+      return 'Use + to join text; "&" is bitwise AND in this formula language';
+    } else if (char === "<" && expression[i + 1] === ">") {
+      return 'Use !== for "not equal"; "<>" is not supported';
+    }
+  }
+  return null;
 }

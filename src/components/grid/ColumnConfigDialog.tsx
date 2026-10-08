@@ -61,6 +61,7 @@ export default function ColumnConfigDialog({
   const [slashAt, setSlashAt] = useState<number | null>(null);
   const [preview, setPreview] = useState<PreviewState>({ state: "idle" });
   const [busy, setBusy] = useState(false);
+  const [busyRun, setBusyRun] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
   const [suggestion, setSuggestion] = useState<{ formula: string; explanation: string } | null>(null);
@@ -113,6 +114,15 @@ export default function ColumnConfigDialog({
 
   if (!open || !mounted) return null;
 
+  // The live preview already ran this exact expression: a parse failure there
+  // would only be refused by the server on save, so say so up front. Runtime
+  // errors on one row (a missing value, a bad LOOKUP) are not blocked — they
+  // may be fine on other rows.
+  const formulaSyntaxError =
+    type === "formula" && preview.state === "error" && /syntax|unexpected|unterminated|unmatched|invalid or unexpected/i.test(preview.error)
+      ? preview.error
+      : null;
+
   const referenceColumns = columns.filter((candidate) => candidate.id !== column?.id);
 
   const insertColumn = (key: string) => {
@@ -163,6 +173,10 @@ export default function ColumnConfigDialog({
         setError("Formula is required");
         return;
       }
+      if (formulaSyntaxError) {
+        setError(`Fix the formula first: ${formulaSyntaxError}`);
+        return;
+      }
       config = { expression: expression.trim() } satisfies FormulaConfig;
     } else {
       if (!url.trim()) {
@@ -189,6 +203,7 @@ export default function ColumnConfigDialog({
     }
 
     setBusy(true);
+    setBusyRun(runAfterSave);
     setError(null);
     try {
       const endpoint = column
@@ -228,6 +243,7 @@ export default function ColumnConfigDialog({
         }
         activeJobs = runData.activeJobs;
       }
+      setError(null);
       await onSaved(activeJobs);
       onClose();
     } catch {
@@ -259,7 +275,7 @@ export default function ColumnConfigDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
           <Field label="Column name">
-            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} className={inputClass} />
+            <input autoFocus value={name} onChange={(event) => { setName(event.target.value); setError(null); }} className={inputClass} />
           </Field>
 
           {type === "formula" ? (
@@ -286,6 +302,7 @@ export default function ColumnConfigDialog({
                   placeholder={'e.g. CONCATENATE({{firstName}}, " ", {{lastName}})'}
                   onChange={(event) => {
                     setExpression(event.target.value);
+                    setError(null);
                     setPreview({ state: "idle" });
                     const cursor = event.target.selectionStart;
                     setSlashAt(event.target.value[cursor - 1] === "/" ? cursor - 1 : null);
@@ -302,7 +319,7 @@ export default function ColumnConfigDialog({
             <>
               <div className="grid grid-cols-[112px_1fr] gap-2">
                 <Field label="Method">
-                  <Select.Root size="small" value={method} onValueChange={(next) => setMethod(next as HttpConfig["method"])}>
+                  <Select.Root size="small" value={method} onValueChange={(next) => { setMethod(next as HttpConfig["method"]); setError(null); }}>
                     <Select.Trigger aria-label="Method" className="w-full">
                       <Select.Value />
                     </Select.Trigger>
@@ -314,7 +331,7 @@ export default function ColumnConfigDialog({
                   </Select.Root>
                 </Field>
                 <Field label="URL">
-                  <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://api.example.com/people/{{email}}" className={inputClass} />
+                  <input value={url} onChange={(event) => { setUrl(event.target.value); setError(null); }} placeholder="https://api.example.com/people/{{email}}" className={inputClass} />
                 </Field>
               </div>
 
@@ -331,13 +348,13 @@ export default function ColumnConfigDialog({
                 </div>
               </Field>
 
-              {method !== "GET" && <Field label="Request body"><textarea value={body} onChange={(event) => setBody(event.target.value)} rows={6} spellCheck={false} placeholder={'{"email":"{{email}}"}'} className={`${inputClass} resize-y font-mono`} /></Field>}
-              <Field label="Response path" hint="Optional dot path, for example data.person.email."><input value={responsePath} onChange={(event) => setResponsePath(event.target.value)} placeholder="data.result" className={inputClass} /></Field>
+              {method !== "GET" && <Field label="Request body"><textarea value={body} onChange={(event) => { setBody(event.target.value); setError(null); }} rows={6} spellCheck={false} placeholder={'{"email":"{{email}}"}'} className={`${inputClass} resize-y font-mono`} /></Field>}
+              <Field label="Response path" hint="Optional dot path, for example data.person.email."><input value={responsePath} onChange={(event) => { setResponsePath(event.target.value); setError(null); }} placeholder="data.result" className={inputClass} /></Field>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Credential env var" hint="Must start with GRID_HTTP_SECRET_. Only the name is stored."><input value={authEnvVar} onChange={(event) => setAuthEnvVar(event.target.value)} placeholder="GRID_HTTP_SECRET_ACME" className={inputClass} /></Field>
-                <Field label="Provider key"><input value={providerKey} onChange={(event) => setProviderKey(event.target.value)} placeholder="apollo" className={inputClass} /></Field>
+                <Field label="Credential env var" hint="Must start with GRID_HTTP_SECRET_. Only the name is stored."><input value={authEnvVar} onChange={(event) => { setAuthEnvVar(event.target.value); setError(null); }} placeholder="GRID_HTTP_SECRET_ACME" className={inputClass} /></Field>
+                <Field label="Provider key"><input value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setError(null); }} placeholder="apollo" className={inputClass} /></Field>
               </div>
-              <Field label="Cost per call (cents)"><input type="number" min="0" step="0.000001" value={costCents} onChange={(event) => setCostCents(event.target.value)} placeholder="0" className={inputClass} /></Field>
+              <Field label="Cost per call (cents)"><input type="number" min="0" step="0.000001" value={costCents} onChange={(event) => { setCostCents(event.target.value); setError(null); }} placeholder="0" className={inputClass} /></Field>
             </>
           )}
 
@@ -354,11 +371,11 @@ export default function ColumnConfigDialog({
           </label>
         </div>
 
-        {error && <p role="alert" className="mx-5 mt-3 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
+        {(error || formulaSyntaxError) && <p role="alert" className="mx-5 mt-3 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error ?? `Formula syntax error: ${formulaSyntaxError}`}</p>}
         <div className="mt-3 flex justify-end gap-2 border-t border-stroke-soft-200 px-5 py-4">
           <button type="button" onClick={onClose} disabled={busy} className="rounded-lg border border-stroke-soft-200 px-3 py-2 text-[13px] font-medium text-text-strong-950 hover:bg-bg-weak-50">Cancel</button>
-          <button type="button" onClick={() => void save()} disabled={busy} className="rounded-lg border border-blue-200 dark:border-blue-500/30 px-3 py-2 text-[13px] font-medium text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 disabled:opacity-50">Save</button>
-          <button type="button" onClick={() => void save(true)} disabled={busy} className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-[13px] font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy && <RiLoader4Line className="size-4 animate-spin" />} Save &amp; run</button>
+          <button type="button" onClick={() => void save()} disabled={busy || !!formulaSyntaxError} className="relative rounded-lg border border-blue-200 dark:border-blue-500/30 px-3 py-2 text-[13px] font-medium text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 disabled:opacity-50"><span className={busy && !busyRun ? "invisible" : undefined}>Save</span>{busy && !busyRun && <RiLoader4Line className="absolute inset-0 m-auto size-4 animate-spin" />}</button>
+          <button type="button" onClick={() => void save(true)} disabled={busy || !!formulaSyntaxError} className="relative rounded-lg bg-blue-600 px-3 py-2 text-[13px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"><span className={busy && busyRun ? "invisible" : undefined}>Save &amp; run</span>{busy && busyRun && <RiLoader4Line className="absolute inset-0 m-auto size-4 animate-spin" />}</button>
         </div>
       </div>
     </div>,

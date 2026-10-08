@@ -1,5 +1,6 @@
 "use client";
 
+import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
@@ -146,22 +147,22 @@ export default function AiDialog({
   const savedKeys = new Set(Object.keys(saved?.outputColumns ?? {}));
 
   const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
-  const [useCase, setUseCase] = useState<AiUseCase>(saved?.useCase ?? "web-research");
-  const [providerKey, setProviderKey] = useState(saved?.providerKey ?? "");
-  const [modelKey, setModelKey] = useState(saved?.modelKey ?? "");
-  const [upstreamProvider, setUpstreamProvider] = useState(saved?.upstreamProvider ?? "");
-  const [connectionId, setConnectionId] = useState(saved?.connectionId ?? "");
-  const [prompt, setPrompt] = useState(saved?.prompt ?? "");
-  const [outputFormat, setOutputFormat] = useState<"fields" | "json_schema">(
+  const [useCase, setUseCaseRaw] = useState<AiUseCase>(saved?.useCase ?? "web-research");
+  const [providerKey, setProviderKeyRaw] = useState(saved?.providerKey ?? "");
+  const [modelKey, setModelKeyRaw] = useState(saved?.modelKey ?? "");
+  const [upstreamProvider, setUpstreamProviderRaw] = useState(saved?.upstreamProvider ?? "");
+  const [connectionId, setConnectionIdRaw] = useState(saved?.connectionId ?? "");
+  const [prompt, setPromptRaw] = useState(saved?.prompt ?? "");
+  const [outputFormat, setOutputFormatRaw] = useState<"fields" | "json_schema">(
     saved?.outputFormat ?? "fields",
   );
-  const [outputs, setOutputs] = useState<AiOutputField[]>(
+  const [outputs, setOutputsRaw] = useState<AiOutputField[]>(
     saved?.outputs?.length ? saved.outputs : [{ key: "response", name: "response", type: "text" }],
   );
-  const [schemaText, setSchemaText] = useState(
+  const [schemaText, setSchemaTextRaw] = useState(
     saved?.jsonSchema ? JSON.stringify(saved.jsonSchema, null, 2) : "",
   );
-  const [examples, setExamples] = useState<AiExample[]>(saved?.examples ?? []);
+  const [examples, setExamplesRaw] = useState<AiExample[]>(saved?.examples ?? []);
   const [autoRun, setAutoRun] = useState(column ? column.autoRun : true);
   const [conditionEnabled, setConditionEnabled] = useState(Boolean(saved?.runCondition));
   const [runCondition, setRunCondition] = useState(saved?.runCondition ?? "");
@@ -176,6 +177,22 @@ export default function AiDialog({
   const [modelSearch, setModelSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // An error banner describes the last attempt: editing any of the fields it
+  // could be about dismisses it, so it never outlives the fix.
+  const clearing = <T,>(set: Dispatch<SetStateAction<T>>): Dispatch<SetStateAction<T>> =>
+    (value) => {
+      set(value);
+      setError(null);
+    };
+  const setUseCase = clearing(setUseCaseRaw);
+  const setProviderKey = clearing(setProviderKeyRaw);
+  const setModelKey = clearing(setModelKeyRaw);
+  const setUpstreamProvider = clearing(setUpstreamProviderRaw);
+  const setPrompt = clearing(setPromptRaw);
+  const setOutputFormat = clearing(setOutputFormatRaw);
+  const setOutputs = clearing(setOutputsRaw);
+  const setSchemaText = clearing(setSchemaTextRaw);
+  const setExamples = clearing(setExamplesRaw);
   /** The open column picker: where its trigger starts and what follows it. */
   const [picker, setPicker] = useState<{ start: number; query: string } | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
@@ -292,7 +309,7 @@ export default function AiDialog({
       });
       setOpenRouterChoices(next);
       // OpenRouter columns must use the connection chosen in AI Settings; a stale saved one would be refused.
-      setConnectionId((current) => body.settings?.connectionId || current);
+      setConnectionIdRaw((current) => body.settings?.connectionId || current);
       setDefaultModel(body.settings?.defaultModel ?? null);
     }).finally(() => setModelsLoading(false));
   }, [open]);
@@ -431,6 +448,7 @@ export default function AiDialog({
         }
         activeJobs = runData.activeJobs;
       }
+      setError(null);
       await onSaved(activeJobs);
       onClose();
     } catch {

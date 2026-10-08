@@ -35,7 +35,7 @@ type CellRun = {
 type DetailsResponse = {
   sourceColumnKey: string;
   sourceColumnName: string;
-  sourceColumnType: "enrichment" | "ai";
+  sourceColumnType: "enrichment" | "ai" | "http" | "formula";
   canAddResponseColumn: boolean;
   run: CellRun | null;
   error?: string;

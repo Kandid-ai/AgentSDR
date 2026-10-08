@@ -4,6 +4,7 @@ import { inOrgTables, tableInOrganization } from "./scope";
 import { gridJobs, gridRows, gridTables, type GridRow } from "./schema";
 import { currentOrganizationId } from "@/lib/tenancy/scope";
 import type { CellMeta, CellValues, ColumnType } from "./types";
+import { reconcileIdleTable } from "./queue";
 import { assertKnownColumns, buildOrderBy, buildWhere, type GridQuery } from "./query";
 
 /** Bumps the global version so pollers see the write. Always set on update. */
@@ -298,6 +299,23 @@ export async function changesSince(
   cursor: number,
   limit = 500,
 ): Promise<{ rows: GridRow[]; cursor: number; activeJobs: number }> {
+  const [jobs] = await db
+    .select({ n: count() })
+    .from(gridJobs)
+    .where(
+      and(
+        inOrgTables(gridJobs.tableId),
+        eq(gridJobs.tableId, tableId),
+        inArray(gridJobs.status, ["queued", "running", "waiting"]),
+      ),
+    );
+
+  // A table with no jobs left but cells still claiming to be queued or running
+  // (a race or a crash left them) would spin forever: clear them first, so the
+  // rows read below carry the cleanup. Throttled, and a no-op on a healthy table.
+  const activeJobs = jobs?.n ?? 0;
+  if (activeJobs === 0) await reconcileIdleTable(tableId);
+
   const rows = await db
     .select()
     .from(gridRows)
@@ -319,22 +337,11 @@ export async function changesSince(
     // for `limit` new ones so a busy table's cursor still advances.
     .limit(limit + VERSION_OVERLAP);
 
-  const [jobs] = await db
-    .select({ n: count() })
-    .from(gridJobs)
-    .where(
-      and(
-        inOrgTables(gridJobs.tableId),
-        eq(gridJobs.tableId, tableId),
-        inArray(gridJobs.status, ["queued", "running", "waiting"]),
-      ),
-    );
-
   return {
     rows,
     // Hold the cursor when nothing changed, and never move it backwards.
     cursor: rows.length ? Math.max(cursor, Number(rows[rows.length - 1].version)) : cursor,
-    activeJobs: jobs?.n ?? 0,
+    activeJobs,
   };
 }
 

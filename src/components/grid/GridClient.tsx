@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AgGridReact } from "ag-grid-react";
+import { AgGridReact, type CustomCellEditorProps } from "ag-grid-react";
 import {
   AllCommunityModule,
   ModuleRegistry,
   themeQuartz,
   type CellClickedEvent,
   type CellFocusedEvent,
+  type CellKeyDownEvent,
   type CellMouseDownEvent,
   type CellValueChangedEvent,
   type ColDef,
@@ -32,6 +33,7 @@ import {
   RiFilter3Line,
   RiLayoutColumnLine,
   RiLoader4Line,
+  RiStopCircleLine,
   RiMegaphoneLine,
   RiMore2Line,
   RiPlayLine,
@@ -54,7 +56,6 @@ import {
   type CellMetaMap,
   type ColumnType,
   type IntegrationOutputConfig,
-  type SelectConfig,
   type TableView,
 } from "@/lib/grid/types";
 import {
@@ -200,28 +201,90 @@ const theme = themeQuartz.withParams({
   wrapperBorderRadius: 0,
 });
 
+function selectOptions(column: GridColumn): { value: string; label: string }[] {
+  const options = (column.config as { options?: unknown } | null)?.options;
+  if (!Array.isArray(options)) return [];
+  return options.flatMap((option: unknown) => {
+    if (typeof option === "string") return [{ value: option, label: option }];
+    const candidate = option as { value?: unknown; label?: unknown } | null;
+    if (candidate && typeof candidate.value === "string") {
+      return [{ value: candidate.value, label: typeof candidate.label === "string" ? candidate.label : candidate.value }];
+    }
+    return [];
+  });
+}
+
+/** Popup editor for multiselect cells: a checkbox per option, plus any stored value the list lacks. */
+function MultiSelectEditor(props: CustomCellEditorProps<RowData, unknown> & { options: string[] }) {
+  const current = Array.isArray(props.value) ? props.value.map(String) : [];
+  const choices = [...props.options, ...current.filter((value) => !props.options.includes(value))];
+  const toggle = (value: string) => {
+    const next = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
+    props.onValueChange(next);
+  };
+  return (
+    <div className="max-h-64 min-w-[200px] overflow-auto rounded-lg border border-stroke-soft-200 bg-bg-white-0 p-1.5 shadow-lg">
+      {choices.length === 0 && <p className="px-2 py-1.5 text-[12px] text-text-sub-600">This column has no options.</p>}
+      {choices.map((value) => (
+        <label key={value} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-text-strong-950 hover:bg-bg-weak-50">
+          <input type="checkbox" checked={current.includes(value)} onChange={() => toggle(value)} />
+          <span className="truncate">{value}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Editing behaviour per static column type. Every editor result goes through
  * the same coercion as paste and import, so a typed "42" is the number 42 and
- * JSON is edited as JSON text instead of "[object Object]".
+ * JSON is edited as JSON text instead of "[object Object]". Booleans have no
+ * editor: a click or Space toggles them (see onCellClicked).
  */
-function editorFor(column: GridColumn): Pick<ColDef<RowData>, "cellEditor" | "cellEditorParams" | "valueParser"> {
+function editorFor(column: GridColumn): Pick<ColDef<RowData>, "cellEditor" | "cellEditorParams" | "cellEditorPopup" | "valueParser"> {
   const type = column.type;
   if (!isStaticColumnType(type)) return {};
   const base = {
     valueParser: (params: { newValue: unknown }) =>
       coerceClipboardValue(params.newValue === undefined || params.newValue === null ? "" : String(params.newValue), type),
   };
-  if (type === "boolean") return { ...base, cellEditor: "agCheckboxCellEditor" };
   if (type === "select") {
-    const options = (column.config as Partial<SelectConfig> | null)?.options;
-    if (options?.length) {
-      return { ...base, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...options.map((option) => option.value)] } };
+    const values = selectOptions(column).map((option) => option.value);
+    if (values.length) {
+      return {
+        ...base,
+        cellEditor: "agSelectCellEditor",
+        // A value the options lack stays selectable only while the cell holds it.
+        cellEditorParams: (params: { value?: unknown }) => {
+          const held = typeof params.value === "string" && params.value !== "" && !values.includes(params.value) ? [params.value] : [];
+          return { values: ["", ...values, ...held] };
+        },
+      };
     }
   }
-  if (type === "json" || type === "multiselect") return { ...base, cellEditorParams: { useFormatter: true } };
+  if (type === "multiselect") {
+    return {
+      ...base,
+      cellEditor: MultiSelectEditor,
+      cellEditorParams: { options: selectOptions(column).map((option) => option.value) },
+      cellEditorPopup: true,
+    };
+  }
+  if (type === "json") return { ...base, cellEditorParams: { useFormatter: true } };
   return base;
 }
+
+function isPendingMeta(meta: CellMeta | undefined): boolean {
+  return meta?.status === "queued" || meta?.status === "running" || meta?.status === "processing";
+}
+
+/** True while any of these rows still has a cell waiting on a run. */
+function hasPendingCells(rows: RowData[]): boolean {
+  return rows.some((row) => Object.values(row.__meta ?? {}).some((meta) => isPendingMeta(meta as CellMeta | undefined)));
+}
+
+/** Years and similar identifiers read as "2010", not "2,010". */
+const UNGROUPED_NUMBER_NAME = /year|founded/i;
 
 function toRowData(rows: GridRow[]): RowData[] {
   return rows.map((r) => ({ ...(r.cells ?? {}), __id: r.id, __meta: r.cellMeta ?? {} }));
@@ -286,8 +349,7 @@ function formatCellValue(value: unknown, column: GridColumn, valueType: ColumnTy
     }
   }
   if (valueType === "select" && column.type === "select") {
-    const options = (column.config as Partial<SelectConfig> | null)?.options;
-    return options?.find((option) => option.value === value)?.label ?? String(value);
+    return selectOptions(column).find((option) => option.value === value)?.label ?? String(value);
   }
   return String(value);
 }
@@ -409,6 +471,14 @@ function GutterCell(props: ICellRendererParams<RowData> & {
   );
 }
 
+/** A run that finished without finding anything (the server marks it outcome "miss"). */
+function isMiss(meta: CellMeta | undefined): boolean {
+  return (meta as { outcome?: string } | undefined)?.outcome === "miss";
+}
+
+/** A run that finished without finding anything, as opposed to one that has not run. */
+const NO_RESULT = <span className="italic text-text-soft-400">No result</span>;
+
 function IntegrationActionCell(props: ICellRendererParams<RowData> & { onRun?: (rowId: string) => void; disabled?: boolean }) {
   if (props.node.rowPinned === "top") return props.value ?? "";
   const meta = props.data?.__meta?.[props.colDef?.field ?? ""] as CellMeta | undefined;
@@ -423,6 +493,8 @@ function IntegrationActionCell(props: ICellRendererParams<RowData> & { onRun?: (
     content = <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400"><RiLoader4Line className="size-4 animate-spin" />Waiting for provider…</span>;
   } else if (meta?.status === "error") {
     content = <span title={meta.error} className="flex items-center gap-1.5 truncate font-medium text-red-700 dark:text-red-400"><RiCloseCircleLine className="size-4 shrink-0" /><span className="truncate">{meta.error || "API call failed"}</span></span>;
+  } else if (meta?.status === "success" && isMiss(meta) && (props.value === undefined || props.value === null || props.value === "")) {
+    content = NO_RESULT;
   } else if (meta?.status === "success") {
     content = <span className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400"><RiCheckboxCircleLine className="size-4" />{String(props.value ?? "Completed")}</span>;
   } else {
@@ -466,6 +538,8 @@ function RunnerValueCell(props: ICellRendererParams<RowData> & { onRun?: (rowId:
     content = <span className="flex items-center gap-1.5 text-text-sub-600"><RiLoader4Line className="size-4 animate-spin" />Running…</span>;
   } else if (meta?.status === "error") {
     content = <span title={meta.error} className="flex items-center gap-1.5 truncate font-medium text-red-700 dark:text-red-400"><RiCloseCircleLine className="size-4 shrink-0" /><span className="truncate">{meta.error || "Run failed"}</span></span>;
+  } else if (isMiss(meta) && text === "") {
+    content = NO_RESULT;
   } else {
     content = <span title={text}>{text}</span>;
   }
@@ -493,7 +567,7 @@ function RunnerValueCell(props: ICellRendererParams<RowData> & { onRun?: (rowId:
   );
 }
 
-function IntegrationOutputCell(props: ICellRendererParams<RowData> & { sourceColumnKey?: string; valueType?: ColumnType }) {
+function IntegrationOutputCell(props: ICellRendererParams<RowData> & { sourceColumnKey?: string; valueType?: ColumnType; ungrouped?: boolean }) {
   if (props.node.rowPinned === "top") return props.value ?? "";
   if (props.value !== undefined && props.value !== null && props.value !== "") {
     const type = props.valueType ?? "text";
@@ -514,7 +588,7 @@ function IntegrationOutputCell(props: ICellRendererParams<RowData> & { sourceCol
       const parsed = new Date(raw);
       if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
     }
-    if (type === "number" && Number.isFinite(Number(props.value))) return Number(props.value).toLocaleString();
+    if (type === "number" && Number.isFinite(Number(props.value))) return Number(props.value).toLocaleString(undefined, props.ungrouped ? { useGrouping: false } : undefined);
     if (type === "boolean") {
       const checked = props.value === true || props.value === 1 || String(props.value).toLowerCase() === "true";
       return <span className="flex items-center gap-1.5"><RiCheckboxCircleLine className={`size-4 ${checked ? "text-emerald-600 dark:text-emerald-400" : "text-text-disabled-300"}`} />{checked ? "True" : "False"}</span>;
@@ -534,6 +608,7 @@ function IntegrationOutputCell(props: ICellRendererParams<RowData> & { sourceCol
   if (sourceMeta?.status === "error") {
     return <span className="italic text-text-soft-400">Action failed</span>;
   }
+  if (isMiss(sourceMeta)) return NO_RESULT;
   return "";
 }
 
@@ -647,7 +722,16 @@ export default function GridClient({
   const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Progress polling: `watching` is switched on by anything that can queue work
+  // (a run, a dialog save, an edit with auto-run); `pollSuspended` is the
+  // give-up latch for cells that stay "running" with no job behind them.
+  const [watching, setWatching] = useState(false);
+  const [pollSuspended, setPollSuspended] = useState(false);
+  const [stopping, setStopping] = useState(false);
 
+  const graceUntilRef = useRef(0);
+  const rowDataRef = useRef<RowData[]>([]);
+  const refetchRef = useRef<(search?: string, pageIndex?: number) => Promise<void>>(async () => {});
   const cursorRef = useRef(initialCursor);
   const refetchSequence = useRef(0);
   // Saved-view bookkeeping: the last view the server confirmed (to roll back a
@@ -667,12 +751,24 @@ export default function GridClient({
   const undoStackRef = useRef<CellEditCommand[]>([]);
   const redoStackRef = useRef<CellEditCommand[]>([]);
 
+  // Toasts float over the grid and clear themselves: errors linger longer.
   useEffect(() => {
     if (!notice) return;
 
     const timeout = window.setTimeout(() => setNotice(null), 4000);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+
+  useEffect(() => {
+    if (!error) return;
+
+    const timeout = window.setTimeout(() => setError(null), 10000);
+    return () => window.clearTimeout(timeout);
+  }, [error]);
+
+  // The details panel would sit on top of a column setup dialog.
+  const columnDialogOpen = Boolean(configuring || enrichmentPosition || aiPosition);
+  if (columnDialogOpen && cellDetails) setCellDetails(null);
 
   useEffect(() => {
     const finishSelection = () => {
@@ -979,18 +1075,55 @@ export default function GridClient({
     [refetch],
   );
 
-  // Polling runs only while work is in flight. Phase 1 has no runners, so it
-  // stays idle; wiring it now means Phase 2 needs no UI change.
   useEffect(() => {
-    if (activeJobs === 0) return;
-    let cancelled = false;
-    // One poll at a time: a slow response must not stack requests behind it.
-    let inFlight = false;
-    let failures = 0;
+    rowDataRef.current = rowData;
+  }, [rowData]);
+  useEffect(() => {
+    refetchRef.current = refetch;
+  }, [refetch]);
 
-    const id = setInterval(async () => {
-      if (inFlight) return;
-      inFlight = true;
+  const pendingCells = useMemo(() => hasPendingCells(rowData), [rowData]);
+
+  /**
+   * Called after anything that can queue work. The run endpoints answer with a
+   * job count, but a short run can already be finished (0) by the time the
+   * grid refetches, and a count alone never started polling for cells that
+   * were queued by a dialog or an edit. The grace window keeps polling alive
+   * long enough to see the first results either way.
+   */
+  const startWatching = useCallback((graceMs = 15000) => {
+    graceUntilRef.current = Math.max(graceUntilRef.current, Date.now() + graceMs);
+    setPollSuspended(false);
+    setWatching(true);
+  }, []);
+
+  // Poll while jobs are active, while any loaded cell is queued/running, or
+  // inside the grace window after a start. Also true on mount when the first
+  // page already has work in flight. Backs off from 1.5s to 5s, gives up after
+  // 20 minutes, and always ends with one authoritative refetch.
+  const shouldPoll = !pollSuspended && (activeJobs > 0 || pendingCells || watching);
+  useEffect(() => {
+    if (!shouldPoll) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    let ticks = 0;
+    const startedAt = Date.now();
+
+    const finish = async (giveUp: boolean) => {
+      setWatching(false);
+      if (giveUp) setPollSuspended(true);
+      try {
+        await refetchRef.current();
+      } catch {
+        // The next action refetches; nothing more to do here.
+      }
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      let next = ticks < 20 ? 1500 : ticks < 60 ? 3000 : 5000;
+      ticks += 1;
       try {
         const res = await fetch(`/api/grid/tables/${table.id}/changes?cursor=${cursorRef.current}`);
         if (cancelled) return;
@@ -1001,45 +1134,58 @@ export default function GridClient({
         // Applying a change replaces row objects under the grid, which can
         // cancel a cell the person is typing into. The cursor is left where it
         // was, so the next tick picks the same changes up once they are done.
-        if (gridRef.current?.api?.getEditingCells().length) return;
-        cursorRef.current = d.cursor;
-        setActiveJobs(d.activeJobs);
-        if (d.rows.length) {
-          setRowData((prev) => {
-            const byId = new Map(prev.map((r) => [r.__id, r]));
-            for (const r of toRowData(d.rows)) {
-              if (byId.has(r.__id)) byId.set(r.__id, r);
-            }
-            return [...byId.values()];
-          });
+        if (!gridRef.current?.api?.getEditingCells().length) {
+          cursorRef.current = d.cursor;
+          setActiveJobs(d.activeJobs);
+          const changed = toRowData(d.rows);
+          if (changed.length) {
+            setRowData((prev) => {
+              const byId = new Map(prev.map((r) => [r.__id, r]));
+              for (const r of changed) {
+                if (byId.has(r.__id)) byId.set(r.__id, r);
+              }
+              return [...byId.values()];
+            });
+          }
+          const changedIds = new Set(changed.map((r) => r.__id));
+          const stillPending =
+            hasPendingCells(changed) ||
+            hasPendingCells(rowDataRef.current.filter((r) => !changedIds.has(r.__id)));
+          if (d.activeJobs === 0 && !stillPending && Date.now() >= graceUntilRef.current) {
+            // Reconcile from the authoritative snapshot: clears any optimistic
+            // queued/running state an incremental poll missed at the moment the
+            // final job left the queue.
+            await finish(false);
+            return;
+          }
         }
-        // Reconcile from the authoritative table snapshot at completion. This
-        // clears any optimistic queued/running state that an incremental poll
-        // missed at the exact moment the final job left the queue.
-        if (d.activeJobs === 0) {
-          clearInterval(id);
-          await refetch();
+        if (Date.now() - startedAt > 20 * 60 * 1000) {
+          await finish(true);
+          return;
         }
       } catch (cause) {
-        // A blip is retried on the next tick; a poll that keeps failing (signed
-        // out, server down) stops instead of hammering the API every 1.5s.
+        // A blip is retried; a poll that keeps failing (signed out, server
+        // down) stops instead of hammering the API.
         failures += 1;
         if (failures >= 5 && !cancelled) {
-          clearInterval(id);
+          setWatching(false);
+          setPollSuspended(true);
           setError(
             `Lost contact with the server while checking progress${cause instanceof Error ? ` (${cause.message})` : ""}. Reload the page to see the latest results.`,
           );
+          return;
         }
-      } finally {
-        inFlight = false;
+        next = 3000;
       }
-    }, 1500);
+      if (!cancelled) timer = setTimeout(() => void tick(), next);
+    };
 
+    timer = setTimeout(() => void tick(), 1500);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      if (timer) clearTimeout(timer);
     };
-  }, [activeJobs, table.id, refetch]);
+  }, [shouldPoll, table.id]);
 
   /* ---- mutations ---- */
 
@@ -1430,6 +1576,8 @@ export default function GridClient({
           recordCellCommand({ undo: previousValues, redo: updates });
         }
       }
+      // With auto-run on, an edit can queue dependent columns.
+      if (typeof data.queued === "number" && data.queued > 0) startWatching();
       try {
         await refetch();
       } catch (cause) {
@@ -1449,7 +1597,7 @@ export default function GridClient({
         setCellSavingLabel(null);
       }
     }
-  }, [recordCellCommand, refetch, table.id]);
+  }, [recordCellCommand, refetch, startWatching, table.id]);
 
   const onCellValueChanged = useCallback(
     async (event: CellValueChangedEvent<RowData>) => {
@@ -1943,6 +2091,12 @@ export default function GridClient({
     else setFillTargetRow(null);
   }, [fillSelectedCells, rowData.length]);
 
+  const toggleBoolean = useCallback(async (row: RowData, column: GridColumn) => {
+    const current = row[column.key];
+    const checked = current === true || String(current).toLowerCase() === "true";
+    await persistCellUpdates([{ rowId: row.__id, columnKey: column.key, value: !checked }]);
+  }, [persistCellUpdates]);
+
   const onCellClicked = useCallback((event: CellClickedEvent<RowData>) => {
     if (event.node.rowPinned === "top" || !event.data) return;
     // The per-row run button and cell links do their own thing.
@@ -1951,9 +2105,27 @@ export default function GridClient({
     const columnKey = event.colDef.field;
     if (!columnKey) return;
     const column = columns.find((candidate) => candidate.key === columnKey);
-    if (!column || (column.type !== "enrichment" && column.type !== "integration_output" && column.type !== "ai" && !aiOutputSources.has(column.key))) return;
+    if (!column) return;
+    if (column.type === "boolean") {
+      // One click flips a checkbox; modifiers are for selecting a range.
+      const mouse = event.event instanceof MouseEvent ? event.event : null;
+      if (mouse && (mouse.shiftKey || mouse.metaKey || mouse.ctrlKey || mouse.altKey)) return;
+      void toggleBoolean(event.data, column);
+      return;
+    }
+    if (column.type !== "enrichment" && column.type !== "integration_output" && column.type !== "ai" && column.type !== "http" && column.type !== "formula" && !aiOutputSources.has(column.key)) return;
     setCellDetails({ rowId: event.data.__id, column });
-  }, [aiOutputSources, columns]);
+  }, [aiOutputSources, columns, toggleBoolean]);
+
+  const onCellKeyDown = useCallback((event: CellKeyDownEvent<RowData>) => {
+    if (event.node.rowPinned === "top" || !event.data) return;
+    const keyboard = event.event instanceof KeyboardEvent ? event.event : null;
+    if (!keyboard || keyboard.key !== " " || keyboard.shiftKey || keyboard.metaKey || keyboard.ctrlKey || keyboard.altKey) return;
+    const column = columns.find((candidate) => candidate.key === event.colDef.field);
+    if (column?.type !== "boolean") return;
+    keyboard.preventDefault();
+    void toggleBoolean(event.data, column);
+  }, [columns, toggleBoolean]);
 
   const toggleAutoRun = useCallback(async () => {
     const previous = autoRun;
@@ -1976,7 +2148,7 @@ export default function GridClient({
     }
   }, [autoRun, table.id, onTableChanged]);
 
-  const runColumn = useCallback(async (column: GridColumn, rowIds?: string[]) => {
+  const runColumn = useCallback(async (column: GridColumn, rowIds?: string[], options: { onlyEmpty?: boolean } = {}) => {
     // An empty list means "no rows", never "every row".
     if (rowIds && rowIds.length === 0) {
       setRunMenu(null);
@@ -1989,17 +2161,36 @@ export default function GridClient({
       const response = await fetch(`/api/grid/tables/${table.id}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ columnKey: column.key, rowIds }),
+        body: JSON.stringify({ columnKey: column.key, rowIds, ...(options.onlyEmpty ? { onlyEmpty: true } : {}) }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error ?? "Could not start column");
       setActiveJobs(data.activeJobs ?? 0);
+      startWatching();
       await refetch();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not start column");
     } finally {
       setRunMenu(null);
       setBusy(false);
+    }
+  }, [refetch, startWatching, table.id]);
+
+  const stopRun = useCallback(async () => {
+    setStopping(true);
+    try {
+      const response = await fetch(`/api/grid/tables/${table.id}/run`, { method: "DELETE" });
+      const data: { cancelled?: number; reset?: number; activeJobs?: number; error?: string } = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error ?? "Could not stop the run");
+      graceUntilRef.current = 0;
+      setActiveJobs(data.activeJobs ?? 0);
+      const total = (data.cancelled ?? 0) + (data.reset ?? 0);
+      setNotice(total > 0 ? `Stopped. ${total.toLocaleString()} queued cell${total === 1 ? "" : "s"} cleared.` : "Nothing was running.");
+      await refetch();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not stop the run");
+    } finally {
+      setStopping(false);
     }
   }, [refetch, table.id]);
 
@@ -2208,7 +2399,7 @@ export default function GridClient({
             ? (rect: DOMRect) => setRunMenu({ column: runSource, rect })
             : undefined,
         },
-        editable: (p) => p.node.rowPinned !== "top" && isStaticColumnType(c.type) && !aiOutput,
+        editable: (p) => p.node.rowPinned !== "top" && isStaticColumnType(c.type) && c.type !== "boolean" && !aiOutput,
         ...editorFor(c),
         cellDataType: false,
         // initialWidth: a width the person dragged survives column-def updates.
@@ -2233,9 +2424,9 @@ export default function GridClient({
           c.type === "enrichment" || c.type === "ai" || c.type === "http" || c.type === "formula"
             ? { onRun: (rowId: string) => void runColumn(c, [rowId]), disabled: busy }
             : c.type === "integration_output"
-            ? { sourceColumnKey: (c.config as IntegrationOutputConfig).sourceColumnKey, valueType }
+            ? { sourceColumnKey: (c.config as IntegrationOutputConfig).sourceColumnKey, valueType, ungrouped: UNGROUPED_NUMBER_NAME.test(c.name) }
             : aiOutput
-              ? { sourceColumnKey: aiOutput.sourceColumnKey, valueType }
+              ? { sourceColumnKey: aiOutput.sourceColumnKey, valueType, ungrouped: UNGROUPED_NUMBER_NAME.test(c.name) }
             : undefined,
         valueFormatter: (p) =>
           p.node?.rowPinned === "top"
@@ -2356,6 +2547,24 @@ export default function GridClient({
             {activeJobs}
           </span>
         </div>
+
+        {(activeJobs > 0 || pendingCells) && (
+          <div className="flex items-center gap-1.5 rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 py-[3px] pl-2.5 pr-[3px] text-[13px] font-medium text-blue-700 dark:text-blue-400">
+            <RiLoader4Line className="size-4 animate-spin" />
+            <span>
+              Running{activeJobs > 0 ? ` · ${activeJobs.toLocaleString()} left` : ""}
+            </span>
+            <button
+              type="button"
+              disabled={stopping}
+              onClick={() => void stopRun()}
+              className="flex items-center gap-1 rounded-md bg-bg-white-0 px-2 py-1 text-[12px] font-semibold text-red-600 dark:text-red-400 shadow-sm ring-1 ring-inset ring-stroke-soft-200 transition hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50"
+            >
+              <RiStopCircleLine className="size-3.5" />
+              {stopping ? "Stopping…" : "Stop"}
+            </button>
+          </div>
+        )}
 
         <button
           type="button"
@@ -2500,18 +2709,6 @@ export default function GridClient({
         </div>
       )}
 
-      {error && (
-        <div className="shrink-0 border-b border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">
-          {error}
-        </div>
-      )}
-
-      {notice && (
-        <div className="shrink-0 border-b border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-2 text-[13px] text-emerald-800 dark:text-emerald-400">
-          {notice}
-        </div>
-      )}
-
       {/* ---------- grid ---------- */}
       <div className="min-h-0 flex-1 overflow-auto bg-bg-white-0">
         <div
@@ -2543,6 +2740,9 @@ export default function GridClient({
             rowHeight={ROW_H}
             onCellValueChanged={onCellValueChanged}
             onCellClicked={onCellClicked}
+            onCellKeyDown={onCellKeyDown}
+            enterNavigatesVertically
+            enterNavigatesVerticallyAfterEdit
             onCellMouseDown={onCellMouseDown}
             onCellFocused={onCellFocused}
             onColumnMoved={onColumnMoved}
@@ -2557,6 +2757,12 @@ export default function GridClient({
             hidden
             onPointerDown={onFillHandlePointerDown}
           />
+          {(error || notice) && (
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex flex-col items-center gap-2 px-3" role="status" aria-live="polite">
+              {error && <Toast tone="error" onClose={() => setError(null)}>{error}</Toast>}
+              {notice && <Toast tone="success" onClose={() => setNotice(null)}>{notice}</Toast>}
+            </div>
+          )}
           {cellSavingLabel && (
             <div className="pointer-events-none absolute right-3 top-3 z-20 flex items-center gap-1.5 rounded-md border border-blue-200 dark:border-blue-500/30 bg-bg-white-0/95 px-2.5 py-1.5 text-[12px] font-medium text-blue-700 dark:text-blue-400 shadow-sm">
               <RiLoader4Line className="size-3.5 animate-spin" />
@@ -2617,6 +2823,7 @@ export default function GridClient({
             )}
             <button type="button" disabled={busy} onClick={() => void runColumn(runMenu.column, rowData.slice(0, 10).map((row) => row.__id))} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-text-strong-950 hover:bg-bg-weak-50 disabled:opacity-50"><RiPlayLine className="size-4" />Run first 10 rows on this page</button>
             <button type="button" disabled={busy} onClick={() => void runColumn(runMenu.column)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-text-strong-950 hover:bg-bg-weak-50 disabled:opacity-50"><RiPlayLine className="size-4" />Run all rows</button>
+            <button type="button" disabled={busy} onClick={() => void runColumn(runMenu.column, undefined, { onlyEmpty: true })} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-medium text-text-strong-950 hover:bg-bg-weak-50 disabled:opacity-50"><RiPlayLine className="size-4" />Run empty cells only</button>
           </div>
         </Popover>
       )}
@@ -2887,6 +3094,8 @@ export default function GridClient({
           onClose={() => setAiPosition(null)}
           onSaved={async (nextActiveJobs) => {
             if (nextActiveJobs !== undefined) setActiveJobs(nextActiveJobs);
+            // A save can queue a run even when the count it reports is 0.
+            startWatching();
             await refetch();
           }}
         />
@@ -2906,6 +3115,8 @@ export default function GridClient({
           onClose={() => setEnrichmentPosition(null)}
           onSaved={async (nextActiveJobs) => {
             if (nextActiveJobs !== undefined) setActiveJobs(nextActiveJobs);
+            // A save can queue a run even when the count it reports is 0.
+            startWatching();
             await refetch();
           }}
         />
@@ -2956,6 +3167,8 @@ export default function GridClient({
           onClose={() => setConfiguring(null)}
           onSaved={async (nextActiveJobs) => {
             if (nextActiveJobs !== undefined) setActiveJobs(nextActiveJobs);
+            // A save can queue a run even when the count it reports is 0.
+            startWatching();
             await refetch();
           }}
         />
@@ -2973,6 +3186,24 @@ export default function GridClient({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** Floating message over the grid: it never moves the rows underneath it. */
+function Toast({ tone, onClose, children }: { tone: "error" | "success"; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div
+      className={`pointer-events-auto flex max-w-xl items-start gap-2 rounded-lg border px-3 py-2 text-[13px] shadow-lg ${
+        tone === "error"
+          ? "border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-400"
+          : "border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-400"
+      }`}
+    >
+      <span className="min-w-0 flex-1 break-words">{children}</span>
+      <button type="button" aria-label="Dismiss" onClick={onClose} className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100">
+        <RiCloseLine className="size-4" />
+      </button>
     </div>
   );
 }

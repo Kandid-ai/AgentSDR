@@ -397,6 +397,19 @@ export default function WorkbookClient({
     return data.table as GridTable;
   }, [activeId, dialogs]);
 
+  // Inline rename from double-clicking a tab. `finishedRef` keeps Enter (which
+  // unmounts the input and so blurs it) from committing a second time.
+  const [editingTableId, setEditingTableId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const finishedRef = useRef(false);
+  const finishInlineRename = useCallback(async (table: GridTable, commit: boolean) => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    setEditingTableId(null);
+    const name = editingName.trim();
+    if (commit && name && name !== table.name) await patchTable(table, { name });
+  }, [editingName, patchTable]);
+
   const renameTable = useCallback(async (table: GridTable) => {
     const name = (
       await dialogs.prompt({
@@ -671,7 +684,7 @@ export default function WorkbookClient({
             return (
               <div
                 key={t.id}
-                draggable
+                draggable={editingTableId !== t.id}
                 onDragStart={() => {
                   setDragId(t.id);
                   orderAtDragStart.current = tablesRef.current.map((item) => item.id);
@@ -694,9 +707,33 @@ export default function WorkbookClient({
                     : "border-transparent text-text-sub-600 hover:bg-bg-weak-50"
                 } ${dragging ? "opacity-40" : ""}`}
               >
+                {editingTableId === t.id ? (
+                  <span className="flex items-center gap-1.5 py-[5px] pl-2.5 pr-1">
+                    <SheetIcon />
+                    <input
+                      autoFocus
+                      aria-label="Table name"
+                      value={editingName}
+                      maxLength={200}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onChange={(event) => setEditingName(event.target.value)}
+                      onBlur={() => void finishInlineRename(t, true)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void finishInlineRename(t, true);
+                        else if (event.key === "Escape") void finishInlineRename(t, false);
+                      }}
+                      className="w-[140px] rounded border border-blue-500 bg-bg-white-0 px-1.5 py-0.5 text-[13px] font-medium text-text-strong-950 outline-none"
+                    />
+                  </span>
+                ) : (
                 <button
                   type="button"
                   onClick={() => !active && loadSheet(t.id)}
+                  onDoubleClick={() => {
+                    finishedRef.current = false;
+                    setEditingName(t.name);
+                    setEditingTableId(t.id);
+                  }}
                   // Start the fetch on approach. A pointer takes a few hundred
                   // milliseconds to travel and press, which is most of what the
                   // switch used to spend waiting after the click.
@@ -707,6 +744,7 @@ export default function WorkbookClient({
                   <SheetIcon />
                   {t.name}
                 </button>
+                )}
                 <TableActionsMenu
                   canMoveLeft={index > 0}
                   canMoveRight={index < tables.length - 1}

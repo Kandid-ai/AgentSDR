@@ -8,6 +8,9 @@ import type { AiConfig, AiOutputConfig, IntegrationOutputConfig } from "@/lib/gr
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
 import { clientMessage, isRecord, isUuid } from "@/lib/grid/validate";
 
+// Columns whose runs are audited in grid_cell_runs.
+const RUN_COLUMN_TYPES = new Set(["enrichment", "ai", "http", "formula"]);
+
 async function resolveCell(tableId: string, rowId: string, columnKey: string) {
   // Every query below is keyed by table id; another organization's table reads as not found.
   if (!(await tableInOrganization(tableId))) return null;
@@ -24,7 +27,7 @@ async function resolveCell(tableId: string, rowId: string, columnKey: string) {
   if (!column) return null;
 
   let sourceColumnKey: string | null = null;
-  if (column.type === "enrichment" || column.type === "ai") {
+  if (column.type === "enrichment" || column.type === "ai" || column.type === "http" || column.type === "formula") {
     sourceColumnKey = column.key;
   } else if (column.type === "integration_output") {
     sourceColumnKey = (column.config as IntegrationOutputConfig).sourceColumnKey;
@@ -46,7 +49,7 @@ async function resolveCell(tableId: string, rowId: string, columnKey: string) {
     eq(gridColumns.tableId, tableId),
     eq(gridColumns.key, sourceColumnKey),
   )).limit(1);
-  if (!source || (source.type !== "enrichment" && source.type !== "ai")) return null;
+  if (!source || !RUN_COLUMN_TYPES.has(source.type)) return null;
   return { column, source };
 }
 export async function GET(

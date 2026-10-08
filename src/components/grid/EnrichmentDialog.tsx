@@ -17,7 +17,7 @@ import * as Select from "@/components/alignui/select";
 import type { GridColumn } from "@/lib/grid/schema";
 import type { IntegrationConnection } from "@/lib/grid/providers";
 import type { EnrichmentConfig } from "@/lib/grid/types";
-import { effectiveColumnType } from "@/lib/grid/value-types";
+import { effectiveColumnType, inputAcceptsColumnType } from "@/lib/grid/value-types";
 import IntegrationIcon from "./IntegrationIcon";
 import {
   ACTION_CATEGORIES,
@@ -40,8 +40,9 @@ function ColumnMappingSelect({
   value: string;
   onChange: (columnKey: string) => void;
 }) {
+  // The server's rule (a Text "domain" column can feed a URL input).
   const compatible = columns.filter((column) =>
-    input.acceptedColumnTypes.some((type) => type === effectiveColumnType(column))
+    inputAcceptsColumnType(input.acceptedColumnTypes, effectiveColumnType(column)),
   );
   return (
     <>
@@ -338,6 +339,7 @@ export default function EnrichmentDialog({
   }
 
   function setInputColumn(inputKey: string, columnKey: string) {
+    setError(null);
     setInputs((current) => {
       if (columnKey) return { ...current, [inputKey]: columnKey };
       const next = { ...current };
@@ -422,6 +424,7 @@ export default function EnrichmentDialog({
         activeJobs = runData.activeJobs;
       }
 
+      setError(null);
       await onSaved(activeJobs);
       onClose();
     } catch {
@@ -479,10 +482,10 @@ export default function EnrichmentDialog({
             addingAccount={addingAccount}
             onAddingAccountChange={setAddingAccount}
             accountName={accountName}
-            onAccountNameChange={setAccountName}
+            onAccountNameChange={(next) => { setAccountName(next); setError(null); }}
             credentialValues={credentialValues}
             onCredentialChange={(key, value) =>
-              setCredentialValues((current) => ({ ...current, [key]: value }))
+              { setCredentialValues((current) => ({ ...current, [key]: value })); setError(null); }
             }
             busy={busy}
             error={error}
@@ -505,7 +508,7 @@ export default function EnrichmentDialog({
                 <h3 className="bg-bg-weak-50 px-4 py-3 text-[14px] font-semibold text-text-strong-950">Account</h3>
                 <div className="p-4">
                   {connections.length > 0 && (
-                    <Select.Root size="small" value={connectionId} onValueChange={setConnectionId}>
+                    <Select.Root size="small" value={connectionId} onValueChange={(next) => { setConnectionId(next); setError(null); }}>
                       <Select.Trigger aria-label={`${integration?.name ?? "Integration"} account`} className="w-full">
                         <Select.Value />
                       </Select.Trigger>
@@ -523,11 +526,11 @@ export default function EnrichmentDialog({
                     <button type="button" onClick={() => setAddingAccount(true)} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2.5 text-[13px] font-medium text-white hover:bg-blue-700"><RiAddLine className="size-4" />Add account</button>
                   ) : (
                     <div className="mt-2 rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50/50 dark:bg-blue-500/10 p-3">
-                      <input value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder={`${integration?.name} account name`} className="mt-2 w-full rounded-lg border border-stroke-soft-200 bg-bg-white-0 px-3 py-2 text-[13px] outline-none focus:border-blue-500" />
+                      <input value={accountName} onChange={(event) => { setAccountName(event.target.value); setError(null); }} placeholder={`${integration?.name} account name`} className="mt-2 w-full rounded-lg border border-stroke-soft-200 bg-bg-white-0 px-3 py-2 text-[13px] outline-none focus:border-blue-500" />
                       {integration?.auth.fields.map((field) => (
                         <label key={field.key} className="mt-2 block">
                           <span className="mb-1 block text-[11px] font-medium text-text-sub-600">{field.label}{field.required && <span className="text-red-500"> *</span>}</span>
-                          <input type={field.inputType} autoComplete="off" value={credentialValues[field.key] ?? ""} onChange={(event) => setCredentialValues((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} className="w-full rounded-lg border border-stroke-soft-200 bg-bg-white-0 px-3 py-2 text-[13px] outline-none focus:border-blue-500" />
+                          <input type={field.inputType} autoComplete="off" value={credentialValues[field.key] ?? ""} onChange={(event) => { setCredentialValues((current) => ({ ...current, [field.key]: event.target.value })); setError(null); }} placeholder={field.placeholder} className="w-full rounded-lg border border-stroke-soft-200 bg-bg-white-0 px-3 py-2 text-[13px] outline-none focus:border-blue-500" />
                         </label>
                       ))}
                       <p className="mt-2 text-[11px] text-text-sub-600">The key is encrypted before it is stored and is never shown again.</p>
@@ -706,7 +709,7 @@ export default function EnrichmentDialog({
             <div className="min-h-0 flex-1 overflow-y-auto p-5">
               <div className="flex items-start justify-between gap-3"><div><h3 className="text-[18px] font-semibold text-text-strong-950">Add data as columns to your table</h3><p className="mt-2 text-[13px] leading-5 text-text-sub-600">Select the data points you want added as columns. The integration runs once per row.</p></div><span className="shrink-0 text-[13px] text-text-sub-600">{outputs.size} selected</span></div>
               <label className="mt-5 flex items-center gap-2 rounded-lg border border-stroke-soft-200 px-3 py-2.5"><RiSearchLine className="size-4 text-text-soft-400" /><input value={outputSearch} onChange={(event) => setOutputSearch(event.target.value)} placeholder="Search data columns" className="min-w-0 flex-1 text-[13px] outline-none" /></label>
-              <div className="mt-4 space-y-2">{filteredOutputs.map((output) => { const selected = outputs.has(output.key); const alreadyAdded = column ? Object.prototype.hasOwnProperty.call((column.config as EnrichmentConfig).outputs, output.key) : false; return <button key={output.key} type="button" disabled={alreadyAdded} onClick={() => setOutputs((current) => { const next = new Set(current); if (selected) next.delete(output.key); else next.add(output.key); return next; })} className="flex w-full items-center gap-3 rounded-lg bg-bg-weak-50 px-3 py-3 text-left hover:bg-bg-weak-50 disabled:cursor-default">{selected ? <RiCheckboxLine className="size-5 text-blue-600 dark:text-blue-400" /> : <RiCheckboxBlankLine className="size-5 text-text-soft-400" />}<span className="min-w-0 flex-1"><span className="font-medium text-text-strong-950">{output.name}</span>{output.example && <span className="ml-2 text-text-sub-600">{output.example}</span>}<span className="block text-[11px] text-text-soft-400">{output.columnType}{alreadyAdded ? " · already added" : ""}</span></span></button>; })}</div>
+              <div className="mt-4 space-y-2">{filteredOutputs.map((output) => { const selected = outputs.has(output.key); const alreadyAdded = column ? Object.prototype.hasOwnProperty.call((column.config as EnrichmentConfig).outputs, output.key) : false; return <button key={output.key} type="button" disabled={alreadyAdded} onClick={() => { setError(null); setOutputs((current) => { const next = new Set(current); if (selected) next.delete(output.key); else next.add(output.key); return next; }); }} className="flex w-full items-center gap-3 rounded-lg bg-bg-weak-50 px-3 py-3 text-left hover:bg-bg-weak-50 disabled:cursor-default">{selected ? <RiCheckboxLine className="size-5 text-blue-600 dark:text-blue-400" /> : <RiCheckboxBlankLine className="size-5 text-text-soft-400" />}<span className="min-w-0 flex-1"><span className="font-medium text-text-strong-950">{output.name}</span>{output.example && <span className="ml-2 text-text-sub-600">{output.example}</span>}<span className="block text-[11px] text-text-soft-400">{output.columnType}{alreadyAdded ? " · already added" : ""}</span></span></button>; })}</div>
             </div>
             {error && <p role="alert" className="mx-5 mb-3 mt-3 shrink-0 rounded-lg bg-red-50 dark:bg-red-500/10 px-3 py-2 text-[13px] text-red-700 dark:text-red-400">{error}</p>}
             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-stroke-soft-200 bg-bg-white-0 px-5 py-4"><button type="button" onClick={() => void save(false)} disabled={busy || !outputs.size} className="rounded-lg border border-stroke-soft-200 px-3 py-2.5 text-[13px] font-semibold text-text-strong-950 hover:bg-bg-weak-50 disabled:opacity-50">{column ? "Save changes" : "Save without running"}</button><button type="button" title={action.implemented ? undefined : "The live Apollo handler is not implemented yet"} onClick={() => void save(true)} disabled={busy || !outputs.size || !action.implemented} className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2.5 text-[13px] font-semibold text-white disabled:bg-blue-300">{busy && <RiLoader4Line className="size-4 animate-spin" />}Save &amp; run 10 rows</button></div>

@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { gridColumns, gridRows, type GridColumn } from "./schema";
 import { inOrgTables } from "./scope";
 import { runInOrganization } from "@/lib/tenancy/scope";
-import { cascade, claim, type ClaimedJob, completeJob, deferJob, failJob, recoverStaleJobs, skipJob } from "./queue";
+import { claim, type ClaimedJob, completeJob, deferJob, failJob, recoverStaleJobs, skipJob } from "./queue";
 import { setCellMeta } from "./rows";
 import {
   allReferencedInputsEmpty,
@@ -162,7 +162,6 @@ async function runJob(job: ClaimedJob, sessions: SessionCache): Promise<void> {
   // transactional.
   await setCellMeta(job.rowId, job.columnKey, { status: "running" }).catch(() => {});
 
-  let changedKeys: string[];
   try {
     const session = runner.prepare
       ? await sessionFor(sessions, `${column.id}:${column.updatedAt?.getTime() ?? 0}`, () =>
@@ -193,8 +192,11 @@ async function runJob(job: ClaimedJob, sessions: SessionCache): Promise<void> {
       return;
     }
 
-    await completeJob(job, result);
-    changedKeys = [job.columnKey, ...Object.keys(result.outputs ?? {})];
+    // The cascade runs inside completeJob's transaction, from the row as the
+    // database holds it NOW rather than the snapshot taken when this job
+    // started: a sibling job finishing at the same moment has written its own
+    // value since, and a dependent reading both would otherwise never be queued.
+    await completeJob(job, result, { cascadeColumns: columns });
   } catch (err) {
     const permanent = err instanceof PermanentRunError;
     const message = err instanceof Error ? err.message : String(err);
@@ -204,20 +206,6 @@ async function runJob(job: ClaimedJob, sessions: SessionCache): Promise<void> {
       console.warn(`[grid/worker] ${job.columnKey} on row ${job.rowId} failed: ${message}`);
     }
     return;
-  }
-
-  // The job is done and recorded; nothing below may fail it. Cascade from the
-  // row as the database holds it NOW, not from the snapshot taken when this job
-  // started: a sibling job finishing at the same moment has written its own
-  // value since, and a dependent reading both would otherwise never be queued.
-  try {
-    const fresh = await loadRow(job.tableId, job.rowId);
-    if (!fresh) return;
-    for (const changedKey of changedKeys) {
-      await cascade(job.tableId, job.rowId, changedKey, columns, fresh);
-    }
-  } catch (err) {
-    console.error(`[grid/worker] cascade after ${job.columnKey} on row ${job.rowId} failed:`, err);
   }
 }
 

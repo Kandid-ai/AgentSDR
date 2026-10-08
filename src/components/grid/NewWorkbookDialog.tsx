@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { RiFileExcel2Line, RiLoader4Line, RiTableLine } from "@remixicon/react";
 import * as Modal from "@/components/alignui/modal";
 import WorkbookIcon from "./WorkbookIcon";
+import ImportDialog from "./ImportDialog";
 
 type CreatedWorkbook = { workbook: { id: string }; table: { id: string } };
 
@@ -21,6 +22,7 @@ export default function NewWorkbookDialog({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ workbookId: string; tableId: string; file: File } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -52,49 +54,38 @@ export default function NewWorkbookDialog({
     }
   }
 
+  // A file is chosen first, the workbook and its empty table are created, and
+  // the same mapping screen as Import data opens on that table — one set of
+  // type inference and column-name rules for both paths. Leaving that screen
+  // without importing removes the workbook again, so Cancel leaves nothing behind.
   async function createFromFile(file: File | undefined) {
     if (!file) return;
     setBusy(true);
     setError(null);
-    let created: CreatedWorkbook | null = null;
-
     try {
       const name = file.name.replace(/\.(csv|tsv|txt|xlsx|xls)$/i, "").trim() || "Untitled workbook";
-      created = await createWorkbook(name);
-
-      const previewForm = new FormData();
-      previewForm.append("file", file);
-      const previewResponse = await fetch(`/api/grid/tables/${created.table.id}/import`, {
-        method: "POST",
-        body: previewForm,
-      });
-      const preview = await previewResponse.json().catch(() => ({}));
-      if (!previewResponse.ok) throw new Error(preview.error ?? "Could not read that file");
-
-      const importForm = new FormData();
-      importForm.append("file", file);
-      importForm.append("mapping", JSON.stringify(preview.mapping));
-      const importResponse = await fetch(`/api/grid/tables/${created.table.id}/import`, {
-        method: "POST",
-        body: importForm,
-      });
-      const result = await importResponse.json().catch(() => ({}));
-      if (!importResponse.ok) throw new Error(result.error ?? "Could not import that file");
-
-      onCreated(created.workbook.id);
+      const created = await createWorkbook(name);
+      setPending({ workbookId: created.workbook.id, tableId: created.table.id, file });
     } catch (cause) {
-      if (created) {
-        await fetch(`/api/grid/workbooks/${created.workbook.id}`, { method: "DELETE" }).catch(() => undefined);
-      }
-      setError(cause instanceof Error ? cause.message : "Could not import that file");
+      setError(cause instanceof Error ? cause.message : "Could not create workbook");
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";
     }
   }
 
+  async function abandonPending() {
+    const current = pending;
+    setPending(null);
+    onClose();
+    if (current) {
+      await fetch(`/api/grid/workbooks/${current.workbookId}`, { method: "DELETE" }).catch(() => undefined);
+    }
+  }
+
   return (
-    <Modal.Root open={open} onOpenChange={(next) => { if (!next && !busy) onClose(); }}>
+    <>
+    <Modal.Root open={open && !pending} onOpenChange={(next) => { if (!next && !busy) onClose(); }}>
       <Modal.Content size="max-w-lg">
         <Modal.Header icon={WorkbookIcon}>
           <Modal.Title>Create a workbook</Modal.Title>
@@ -157,5 +148,17 @@ export default function NewWorkbookDialog({
         </Modal.Body>
       </Modal.Content>
     </Modal.Root>
+    <ImportDialog
+      open={open && pending !== null}
+      tableId={pending?.tableId ?? ""}
+      initialFile={pending?.file ?? null}
+      onClose={() => void abandonPending()}
+      onImported={() => {
+        const id = pending?.workbookId;
+        setPending(null);
+        if (id) onCreated(id);
+      }}
+    />
+    </>
   );
 }

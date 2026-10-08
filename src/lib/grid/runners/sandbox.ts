@@ -122,6 +122,71 @@ function librarySource(): string {
   return librarySourceCache;
 }
 
+/**
+ * Finds an unbalanced bracket in a JavaScript expression, ignoring string and
+ * comment contents. Used only to word a SyntaxError: evaluation wraps the
+ * expression in `return (...)`, so the engine reports an unclosed "(" as an
+ * "unexpected ')'" pointing at the wrapper rather than at the user's text.
+ */
+export function bracketProblem(expression: string): string | null {
+  const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  const stack: string[] = [];
+  for (let i = 0; i < expression.length; i += 1) {
+    const char = expression[i];
+    if (char === '"' || char === "'" || char === "`") {
+      for (i += 1; i < expression.length && expression[i] !== char; i += 1) {
+        if (expression[i] === "\\") i += 1;
+      }
+    } else if (char === "/" && expression[i + 1] === "/") {
+      while (i < expression.length && expression[i] !== "\n") i += 1;
+    } else if (char === "/" && expression[i + 1] === "*") {
+      const end = expression.indexOf("*/", i + 2);
+      if (end === -1) return "Unclosed comment: add */";
+      i = end + 1;
+    } else if (char === "(" || char === "[" || char === "{") {
+      stack.push(char);
+    } else if (char in pairs) {
+      if (stack.pop() !== pairs[char]) return `Unexpected "${char}" in the formula`;
+    }
+  }
+  const open = stack.pop();
+  if (!open) return null;
+  const close = open === "(" ? ")" : open === "[" ? "]" : "}";
+  return `Unclosed "${open}" in the formula: add a matching "${close}"`;
+}
+
+/** The message shown for a SyntaxError raised while compiling the user's expression. */
+export function describeSyntaxError(expression: string, engineMessage: string): string {
+  const message = bracketProblem(expression) ?? engineMessage;
+  return `Formula syntax error: ${message}`;
+}
+
+/**
+ * Compiles an expression without running it. Returns null when it parses, or a
+ * message naming the problem. Needs no libraries, so it is cheap enough to run
+ * on every save. {{tokens}} must already be substituted (any literal will do).
+ */
+export async function checkFormulaSyntax(expression: string): Promise<string | null> {
+  const QJS = await getQuickJS();
+  const runtime = QJS.newRuntime();
+  runtime.setMemoryLimit(MEMORY_LIMIT);
+  const ctx = runtime.newContext();
+  try {
+    // Defining the function compiles the body; it is never called.
+    const result = ctx.evalCode(`(function (row) { "use strict"; return (\n${expression}\n); })`);
+    if (!result.error) {
+      result.value.dispose();
+      return null;
+    }
+    const dumped = ctx.dump(result.error) as { message?: string };
+    result.error.dispose();
+    return describeSyntaxError(expression, dumped?.message ?? "invalid expression");
+  } finally {
+    ctx.dispose();
+    runtime.dispose();
+  }
+}
+
 export type Sandbox = {
   /**
    * Evaluates `expression` with the row bound. Returns the value, or throws
@@ -202,7 +267,9 @@ export async function createSandbox(lookupRegistry: FormulaLookupRegistry = {}):
         (function (row) {
           "use strict";
           const LOOKUP = globalThis.__gridLookup;
-          return (${expression});
+          return (
+${expression}
+);
         })(${JSON.stringify(row)})
       `;
 
@@ -213,6 +280,7 @@ export async function createSandbox(lookupRegistry: FormulaLookupRegistry = {}):
         result.error.dispose();
         runtime.setInterruptHandler(() => false);
         const message = dumped?.message ?? String(dumped);
+        if (dumped?.name === "SyntaxError") throw new Error(describeSyntaxError(expression, message));
         throw new Error(
           message === "interrupted"
             ? `Formula timed out after ${EVAL_TIMEOUT_MS}ms`

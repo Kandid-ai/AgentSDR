@@ -54,3 +54,33 @@ export function displayHref(value: unknown, type: ColumnType): string | null {
   const text = value.trim();
   return /^https?:\/\//i.test(text) ? text : `https://${text.replace(/^www\./i, "")}`;
 }
+
+/** Column types whose cells hold plain strings, so they can feed a string-valued enrichment input. */
+const TEXT_LIKE_COLUMN_TYPES: ReadonlySet<ColumnType> = new Set(["text", "url", "email", "select"]);
+
+/**
+ * Whether a column of effective type `columnType` (see effectiveColumnType, which
+ * already resolves ai_output / integration_output to their value type) may be
+ * mapped to an enrichment input that declares `accepted` column types.
+ *
+ *  - an exact match always works;
+ *  - an input that accepts any of text / url / email is string-valued, so every
+ *    text-like column (text, url, email, select) works for it — a CSV import
+ *    leaves domains and names as plain text, and the run validates each value;
+ *  - a formula column's output type is unknown until it runs, so it is accepted
+ *    anywhere and each value is checked at run time.
+ * Clearly incompatible types (boolean, json, number for a domain...) stay rejected.
+ */
+export function inputAcceptsColumnType(accepted: readonly StaticColumnType[], columnType: ColumnType): boolean {
+  if (accepted.some((type) => type === columnType)) return true;
+  if (columnType === "formula") return true;
+  const stringInput = accepted.some((type) => type === "text" || type === "url" || type === "email");
+  return stringInput && TEXT_LIKE_COLUMN_TYPES.has(columnType);
+}
+
+/** "text, URL or email" — for messages about what an input can be mapped to. */
+export function describeAcceptedInputTypes(accepted: readonly StaticColumnType[]): string {
+  const stringInput = accepted.some((type) => type === "text" || type === "url" || type === "email");
+  const names = stringInput ? ["text", "URL", "email", "select", "formula"] : [...accepted, "formula"];
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0];
+}
