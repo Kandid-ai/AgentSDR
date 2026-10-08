@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { Instrument_Serif, Inter as FontSans } from "next/font/google";
 import AppShell from "@/components/AppShell";
 import DialogProvider from "@/components/DialogProvider";
+import { DemoProvider } from "@/components/demo/DemoProvider";
 import { brandDisplay } from "@/components/brand/font";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/components/theme/ThemeProvider";
+import { isDemoMode } from "@/lib/demo/mode";
 import "./globals.css";
 
 const fontSans = FontSans({
@@ -26,7 +29,7 @@ export const metadata: Metadata = {
   // the brand tile, which reads on light and dark tabs alike.
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
   modal,
 }: Readonly<{
@@ -34,6 +37,11 @@ export default function RootLayout({
   /** Pop-ups with their own URL — today only Settings (src/app/@modal). */
   modal: React.ReactNode;
 }>) {
+  // DEMO_MODE is a runtime setting of the deployment, not of the build: read
+  // it per request, never baked into a prerendered page.
+  await connection();
+  const demo = isDemoMode();
+
   // Theme: data-theme="light" is the server default. THEME_INIT_SCRIPT runs
   // before paint and switches <html> to the stored choice (light, dark, or the
   // OS preference) — the `.dark` token block in globals.css does the rest —
@@ -57,8 +65,10 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-bg-white-0 text-text-strong-950">
         <ThemeProvider>
           <DialogProvider>
-            <AppShell>{children}</AppShell>
-            {modal}
+            <DemoProvider enabled={demo}>
+              <AppShell>{children}</AppShell>
+              {modal}
+            </DemoProvider>
           </DialogProvider>
         </ThemeProvider>
       </body>

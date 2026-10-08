@@ -491,6 +491,16 @@ on every redirect. A self-hosted install that needs internal APIs can set
 
 Read in `src/lib/grid/runners/http.ts`.
 
+## Public demo
+
+### `DEMO_MODE`
+
+`true` turns the deployment into a public, read-only demo: visitors are signed
+in as the seeded demo user without a password, every write is refused, no
+background work starts, and the seeded data's dates move forward each day.
+Only for a deployment with its own database seeded by `bun run db:seed:demo`.
+See [Public demo](self-hosting/demo.mdx). Default off.
+
 ## Set by the platform
 
 You normally do not set these.
@@ -507,7 +517,7 @@ Read by tooling in `scripts/`, never by the running app.
 
 | Variable | Script | What it does |
 |---|---|---|
-| `DEMO_PASSWORD` | `scripts/db/seed-demo.ts` | Password of the demo user created by `bun run db:seed:demo`. Default `demo-password-123`. |
+| `DEMO_PASSWORD` | `scripts/db/seed-demo.ts`, `/demo` | Password of the demo user created by `bun run db:seed:demo`, and the one `/demo` signs in with under `DEMO_MODE`. Default `demo-password-123`. |
 | `PG_DUMP` | `scripts/db/dump-schema.ts` | Path to a `pg_dump` at least as new as the server, for `bun run db:schema:dump`. Default: `pg_dump` on `PATH`. |
 | `ORGANIZATION_ID` | `scripts/lib/organization.ts` | Organization a one-shot script runs as; defaults to the initial organization. |
 | `LEGACY_INTEGRATION_CREDENTIALS_KEYS`, `AUTH_SECRET` | `scripts/rotate-integration-credentials.ts` | Old keys to re-encrypt credentials from. See [rotating the key](#rotating-the-encryption-key). |

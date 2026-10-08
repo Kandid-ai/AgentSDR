@@ -9,6 +9,15 @@ Each release lists the database migrations it needs; see
 
 ## [Unreleased]
 
+### Added
+
+- **Public demo.** `DEMO_MODE=true` turns a separate deployment into a
+  read-only AgentSDR anyone can open without signing in, and
+  `bun run db:seed:demo` now fills it with Northwind, a fictional company's
+  three months of email, LinkedIn and WhatsApp outbound, calls with
+  transcripts, a full CRM pipeline with AI drafts awaiting review, Tables and
+  Analytics. See docs/self-hosting/demo.mdx.
+
 ### Changed
 
 - **License: MIT** (was AGPL-3.0-only). Anyone may use, modify, self-host,

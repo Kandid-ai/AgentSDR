@@ -130,6 +130,7 @@
               "self-hosting/from-source",
               "self-hosting/dokploy",
               "self-hosting/production",
+              "self-hosting/demo",
               "self-hosting/troubleshooting"
             ]
           },

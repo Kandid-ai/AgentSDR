@@ -9,6 +9,7 @@ import { RiMenuLine } from "@remixicon/react";
 import { Logo } from "@/components/brand/Logo";
 import Sidebar from "@/components/Sidebar";
 import { SessionGate } from "@/components/auth/SessionGate";
+import { DemoBanner } from "@/components/demo/DemoProvider";
 
 const CHROMELESS_ROUTES = [
   "/login",
@@ -45,7 +46,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <SessionGate>
-    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-bg-white-0 md:flex-row">
+    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-bg-white-0">
+    <DemoBanner />
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <div className="hidden h-full md:flex">
         <Sidebar />
       </div>
@@ -83,6 +86,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           clipping, and stretch the document's scroll area to the full content
           height — leaving a tall blank band below the app. */}
       <div className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</div>
+    </div>
     </div>
     </SessionGate>
   );

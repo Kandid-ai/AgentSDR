@@ -31,6 +31,7 @@ import { CommandPalette } from "@/components/nav/CommandPalette";
 import { ThemeToggleButton } from "@/components/theme/ThemeSwitch";
 import { activeHref, NAV_FOOTER, NAV_SECTIONS, type NavBadges, type NavEntry, type NavGroup, type NavLink } from "@/components/nav/navConfig";
 import { APP_VERSION, bugReportUrl, SUPPORT_LINKS } from "@/lib/support";
+import { useDemoMode } from "@/components/demo/DemoProvider";
 import { cn } from "@/utils/cn";
 
 /**
@@ -296,6 +297,7 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
   const { data: session, isPending: sessionPending } = useSession();
   const { data: activeOrg, isPending: orgPending } = useActiveOrganization();
   const { data: orgs } = useListOrganizations();
+  const demo = useDemoMode();
   const [switchError, setSwitchError] = useState("");
   const wsLoading = sessionPending || orgPending;
   const wsName = activeOrg?.name ?? "No organization";
@@ -439,12 +441,14 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
                 </Dropdown.Item>
               ))}
               {switchError && <p role="alert" className="px-2 py-1 text-paragraph-xs text-error-base">{switchError}</p>}
-              <Dropdown.Item asChild>
-                <Link href="/onboarding?new=1">
-                  <Dropdown.ItemIcon as={RiAddLine} />
-                  Create organization
-                </Link>
-              </Dropdown.Item>
+              {!demo && (
+                <Dropdown.Item asChild>
+                  <Link href="/onboarding?new=1">
+                    <Dropdown.ItemIcon as={RiAddLine} />
+                    Create organization
+                  </Link>
+                </Dropdown.Item>
+              )}
               <Dropdown.Separator />
               <Dropdown.Item asChild>
                 <Link href={SETTINGS_HOME}>
@@ -457,11 +461,16 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
                 Search or jump to
                 <span className="ml-auto text-paragraph-xs text-text-soft-400">⌘K</span>
               </Dropdown.Item>
-              <Dropdown.Separator />
-              <Dropdown.Item onSelect={() => void signOut()}>
-                <Dropdown.ItemIcon as={RiLogoutBoxRLine} />
-                Sign out
-              </Dropdown.Item>
+              {/* The demo signs every visitor in as the demo user; there is nothing to sign out of. */}
+              {!demo && (
+                <>
+                  <Dropdown.Separator />
+                  <Dropdown.Item onSelect={() => void signOut()}>
+                    <Dropdown.ItemIcon as={RiLogoutBoxRLine} />
+                    Sign out
+                  </Dropdown.Item>
+                </>
+              )}
             </Dropdown.Content>
           </Dropdown.Root>
         </div>

@@ -1,6 +1,7 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextRequest, NextResponse } from "next/server";
 import { migrationMutationBlockReason } from "@/lib/migration/controls";
+import { DEMO_READ_ONLY_CODE, DEMO_READ_ONLY_MESSAGE, demoRequestBlock, isDemoMode } from "@/lib/demo/mode";
 
 /**
  * Unauthenticated paths.
@@ -53,6 +54,23 @@ export function proxy(request: NextRequest) {
   if (migrationBlockReason) {
     return NextResponse.json({ error: migrationBlockReason }, { status: 503 });
   }
+
+  // The public demo (DEMO_MODE): read-only, and the sign-in screens lead
+  // straight in as the demo user. See src/lib/demo/mode.ts.
+  const demo = demoRequestBlock(pathname, request.method);
+  if (demo?.kind === "enter") {
+    const url = request.nextUrl.clone();
+    const from = request.nextUrl.searchParams.get("from");
+    url.pathname = "/demo";
+    url.search = "";
+    if (from) url.searchParams.set("from", from);
+    return NextResponse.redirect(url);
+  }
+  if (demo?.kind === "refuse") {
+    return NextResponse.json({ error: DEMO_READ_ONLY_MESSAGE, code: DEMO_READ_ONLY_CODE }, { status: 403 });
+  }
+  if (demo?.kind === "silent") return NextResponse.json({ ok: true });
+  if (pathname === "/demo" && isDemoMode()) return NextResponse.next();
   const isPublic =
     pathname === "/robots.txt" ||
     PUBLIC.some((p) => pathname.startsWith(p)) ||
@@ -82,7 +100,8 @@ export function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Sign in to continue", code: "UNAUTHENTICATED" }, { status: 401 });
   }
   const url = request.nextUrl.clone();
-  url.pathname = "/sign-in";
+  // In the demo nobody signs in: /demo creates the session and comes back.
+  url.pathname = isDemoMode() ? "/demo" : "/sign-in";
   url.search = "";
   url.searchParams.set("from", `${pathname}${request.nextUrl.search}`);
   return NextResponse.redirect(url);

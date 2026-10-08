@@ -8,6 +8,16 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return; // skip edge runtime invocations
 
+  // The public demo is read-only fictional data: nothing may send, sync,
+  // enrich or call a model, so none of the loops below start
+  // (src/lib/demo/mode.ts). Only its clock runs, keeping the data current.
+  const { isDemoMode } = await import("./lib/demo/mode");
+  if (isDemoMode()) {
+    const { startDemoClock } = await import("./lib/demo/clock");
+    startDemoClock();
+    return;
+  }
+
   // Outreach remains production-only: it is not backed by a distributed
   // claim lock and duplicate dev hot-reload loops could double-send messages.
   if (process.env.NODE_ENV === "production") {

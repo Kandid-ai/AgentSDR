@@ -3,6 +3,8 @@ import { listOpenRouterByokCatalog, listOpenRouterByokCatalogCached } from "@/li
 import { getByokSettings } from "@/lib/ai/byok";
 import { getAiConnection, getAiCredentials } from "@/lib/ai/connections";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
+import { isDemoMode } from "@/lib/demo/mode";
+import { DEMO_OPENROUTER_CATALOG } from "@/lib/demo/openrouterCatalog";
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,8 +19,11 @@ export async function GET(request: NextRequest) {
           return NextResponse.json({ error: "Reconnect OpenRouter in AI Settings" }, { status: 409 });
         }
         // AI Settings (?all=1) must see a key added on OpenRouter right away;
-        // the column dialog's picker can take the cached catalog.
-        const providers = request.nextUrl.searchParams.has("all")
+        // the column dialog's picker can take the cached catalog. The public
+        // demo's keys are placeholders: it shows a fixed catalog instead.
+        const providers = isDemoMode()
+          ? DEMO_OPENROUTER_CATALOG
+          : request.nextUrl.searchParams.has("all")
           ? await listOpenRouterByokCatalog(credentials.managementKey)
           : await listOpenRouterByokCatalogCached(credentials.managementKey);
         const enabled = providers.flatMap((provider) => {

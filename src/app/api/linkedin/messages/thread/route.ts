@@ -4,6 +4,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { inOrg } from "@/lib/tenancy/scope";
 import { messages } from "@/lib/linkedin/schema";
+import { isDemoMode } from "@/lib/demo/mode";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,8 @@ export async function GET(req: NextRequest) {
       .where(and(inOrg(messages), eq(messages.connectionId, connectionId)))
       .orderBy(asc(messages.createdAt));
 
-    await db
+    // The demo is read-only: opening a thread must not mark it read for every later visitor.
+    if (!isDemoMode()) await db
       .update(messages)
       .set({ seen: true })
       .where(and(inOrg(messages), eq(messages.connectionId, connectionId), eq(messages.seen, false)));

@@ -51,7 +51,9 @@ bun run dev               # http://localhost:3000
 ```
 
 `db:seed:demo` creates `demo@example.com` with password `demo-password-123` in
-an organization named "Northwind Demo", filled with fictional data. Without it,
+"Northwind", a fictional company with three months of outbound on every
+channel (scripts/db/demo/). Add `DEMO_MODE=true` to browse it the way the
+public demo does: no sign-in, read-only ([Public demo](self-hosting/demo.mdx)). Without it,
 sign up at `/sign-up` yourself (the verification link appears in the dev server
 log) and create an organization at `/onboarding`.
 

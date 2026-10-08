@@ -4,6 +4,11 @@ import pkg from "./package.json";
 const nextConfig: NextConfig = {
   output: "standalone",
 
+  // A second dev server beside the usual one (e.g. the demo, DEMO_MODE=true,
+  // on its own database) needs its own build directory: two `next dev` in one
+  // folder otherwise fight over .next's lock.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
+
   // package.json's version, inlined into client code for the Help menu's bug-report link.
   env: { NEXT_PUBLIC_APP_VERSION: pkg.version },
 
