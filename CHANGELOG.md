@@ -9,6 +9,19 @@ Each release lists the database migrations it needs; see
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-08
+
+### Fixed
+
+- **`docker-compose.yml` names its release's image** (`0.3.1`) instead of
+  `latest`. A server that had pulled an earlier `latest` kept running it with
+  the new file: 0.2.0's image does not create the schema, so every query
+  failed with `relation … does not exist`. Upgrade by downloading the new
+  file; `AGENTSDR_VERSION` still overrides the tag.
+- **A rejected database password is explained at startup**: the bundled
+  database keeps the password its volume was first created with, and the log
+  now says so, with the two ways out.
+
 ## [0.3.0] - 2026-10-08
 
 ### Changed
@@ -173,7 +186,8 @@ The first public release.
   before deploying). The `WHATSAPP_*` sending variables are no longer read —
   set those limits in Settings → WhatsApp → Sending rules.
 
-[Unreleased]: https://github.com/Kandid-ai/AgentSDR/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Kandid-ai/AgentSDR/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Kandid-ai/AgentSDR/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Kandid-ai/AgentSDR/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Kandid-ai/AgentSDR/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Kandid-ai/AgentSDR/releases/tag/v0.1.0

@@ -101,20 +101,21 @@ Set any of these in `docker-compose.yml` or in `.env` (a `.env` value wins). Eve
 | `DB_POOL_MAX` | `8` | Connections the app opens to PostgreSQL. |
 | `CRON_SECRET`, `OUTREACH_TICK_SECRET` | not in the file | Optional. Add them to the `environment` block only to call the [job endpoints](/self-hosting/production#scheduled-jobs) from outside. |
 | `PORT` | `3000` | The host port the app is published on. Read by Compose only. |
-| `AGENTSDR_VERSION` | `latest` | The image tag, e.g. `0.1.0`, to pin a release. Read by Compose only. |
+| `AGENTSDR_VERSION` | the release the file was written for | The image tag. The file names its own release rather than `latest`, so a server that pulled an older `latest` never runs it with a newer file. Read by Compose only. |
 
 Every other variable in the [configuration reference](/configuration) can be added to the `environment` block the same way. Run `docker compose up -d` again after any change to recreate the containers.
 
 ## Upgrading
 
-Back up first (see [Backups](#backups)), read the release notes for any migration, then pull the new image:
+Back up first (see [Backups](#backups)), read the release notes for any migration, then download the new `docker-compose.yml` (it names the new release's image) and start it:
 
 ```sh
+curl -O https://raw.githubusercontent.com/Kandid-ai/AgentSDR/main/docker-compose.yml
 docker compose pull
-docker compose up -d
+docker compose up -d --remove-orphans
 ```
 
-Pin a release instead of `latest` by setting `AGENTSDR_VERSION=0.1.0` in `.env`. The app only creates a schema in an empty database; it does not upgrade an existing one. Migration steps are in [Upgrading](/self-hosting/production#upgrading).
+If you edited values into the old file, copy them across (keeping them in `.env` avoids this). The app only creates a schema in an empty database; it does not upgrade an existing one. Migration steps are in [Upgrading](/self-hosting/production#upgrading).
 
 **From 0.2.0:** the new file has two containers, not four. Replace your `docker-compose.yml` with the new one, then:
 
@@ -236,7 +237,10 @@ This is the file in the repository root, for copying if you cannot download it.
 name: agentsdr
 
 x-agentsdr: &agentsdr
-  image: ghcr.io/kandid-ai/agentsdr:${AGENTSDR_VERSION:-latest}
+  # The release this file was written for. Not `latest`: a server that pulled
+  # `latest` before would keep running that older image with this newer file.
+  # To upgrade, download the new docker-compose.yml (it names the new release).
+  image: ghcr.io/kandid-ai/agentsdr:${AGENTSDR_VERSION:-0.3.1}
   environment:
     # ── Where people reach AgentSDR ──────────────────────────────────────────
     # Your public address, no trailing slash, e.g. https://sdr.example.com

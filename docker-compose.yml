@@ -24,7 +24,10 @@
 name: agentsdr
 
 x-agentsdr: &agentsdr
-  image: ghcr.io/kandid-ai/agentsdr:${AGENTSDR_VERSION:-latest}
+  # The release this file was written for. Not `latest`: a server that pulled
+  # `latest` before would keep running that older image with this newer file.
+  # To upgrade, download the new docker-compose.yml (it names the new release).
+  image: ghcr.io/kandid-ai/agentsdr:${AGENTSDR_VERSION:-0.3.1}
   environment:
     # ── Where people reach AgentSDR ──────────────────────────────────────────
     # Your public address, no trailing slash, e.g. https://sdr.example.com

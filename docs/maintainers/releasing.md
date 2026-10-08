@@ -46,7 +46,9 @@ produces the matching image tag.
    in the release notes and in [../self-hosting.md](../self-hosting.md) if it is
    permanent.
 7. **Changelog and version.** Update `CHANGELOG.md`; set `version` in
-   `package.json`.
+   `package.json`, and the same version as the image tag default in
+   `docker-compose.yml` (`${AGENTSDR_VERSION:-X.Y.Z}`, also inlined in
+   `docs/self-hosting/docker-compose.mdx`). CI fails if they differ.
 8. **Tag.** `git tag vX.Y.Z && git push origin vX.Y.Z`. Confirm the Docker
    workflow publishes the image.
 9. **GitHub release.** Create a release from the tag, paste the changelog
