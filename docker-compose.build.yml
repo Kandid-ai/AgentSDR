@@ -5,10 +5,8 @@
 # (or COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml in .env)
 
 services:
-  init:
-    build: .
-    image: agentsdr:local
   setup:
+    build: .
     image: agentsdr:local
   app:
     image: agentsdr:local

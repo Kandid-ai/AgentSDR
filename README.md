@@ -99,7 +99,7 @@ Outbound usually means stitching together a lead database, an enrichment tool, a
     </td>
     <td width="50%" valign="top">
       <a href="https://docs.agentsdr.ai/self-hosting/docker-compose"><img src="docs/assets/readme/self-host.png" alt="Self-hosting AgentSDR with Docker Compose"></a>
-      <p><b>Self-host it in minutes.</b> Clone, fill in a few secrets, <code>docker compose up -d</code>. No Redis, no queue server. <a href="https://docs.agentsdr.ai/self-hosting/docker-compose">Self-hosting →</a></p>
+      <p><b>Self-host it in minutes.</b> Download one file, set a few secrets, <code>docker compose up -d</code>. No Redis, no queue server. <a href="https://docs.agentsdr.ai/self-hosting/docker-compose">Self-hosting →</a></p>
     </td>
   </tr>
 </table>
@@ -138,17 +138,17 @@ Also inside: a lead database with custom fields, CSV and XLSX import with merge 
 
 ## Get started
 
-You need a server with Docker. Generate each secret with `openssl rand -hex 32`.
+You need a machine with Docker.
 
 ```sh
-git clone https://github.com/Kandid-ai/AgentSDR.git && cd AgentSDR
-cp .env.example .env          # fill in the required values
+mkdir agentsdr && cd agentsdr
+curl -O https://raw.githubusercontent.com/Kandid-ai/AgentSDR/main/docker-compose.yml
 docker compose up -d          # PostgreSQL, schema, the app on :3000, the scheduler
 ```
 
-Open the app and sign up: the first account and organization become the instance's operator. Then connect your services in **Settings**.
+Open http://localhost:3000: the setup page creates your admin account and organization. Then connect your services in **Settings**. For a server, replace the `# CHANGEME` values in `docker-compose.yml` (or a `.env` beside it) first; `openssl rand -hex 32` makes a secret.
 
-The [Docker Compose guide](https://docs.agentsdr.ai/self-hosting/docker-compose) walks through every value in `.env` and every service. There are also guides for [running from source](https://docs.agentsdr.ai/self-hosting/from-source), [deploying on a VPS with Dokploy](https://docs.agentsdr.ai/self-hosting/dokploy) and [going to production](https://docs.agentsdr.ai/self-hosting/production).
+The [Docker Compose guide](https://docs.agentsdr.ai/self-hosting/docker-compose) walks through every setting and every service. There are also guides for [running from source](https://docs.agentsdr.ai/self-hosting/from-source), [deploying on a VPS with Dokploy](https://docs.agentsdr.ai/self-hosting/dokploy) and [going to production](https://docs.agentsdr.ai/self-hosting/production).
 
 <details>
 <summary><b>Run it from source</b></summary>

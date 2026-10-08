@@ -6,9 +6,9 @@
 #   DATABASE_SSL=            # empty: TLS on (what hosted Postgres expects); "disable" only if it has no TLS
 #
 # then `docker compose up -d` as usual. The bundled `db` service is not
-# started (the generated Postgres password goes unused), and the schema is
-# created in your database on first start (it must be empty then). Needs
-# Docker Compose 2.24 or newer (for !reset and !override).
+# started (POSTGRES_PASSWORD goes unused), and the schema is created in your
+# database on first start (it must be empty then). Needs Docker Compose 2.24
+# or newer (for !reset).
 
 services:
   db:
@@ -16,9 +16,7 @@ services:
     profiles: ["bundled-db"]
 
   setup:
-    depends_on: !override
-      init:
-        condition: service_completed_successfully
+    depends_on: !reset {}
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env to your PostgreSQL}
       DATABASE_SSL: ${DATABASE_SSL:-}

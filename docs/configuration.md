@@ -39,12 +39,13 @@ Google service-account key: they are not read. See
 
 | How you run AgentSDR | File | Notes |
 |---|---|---|
-| Docker Compose | `.env` next to `docker-compose.yml` | Compose reads it and passes it to the `app` container. See [Docker Compose](self-hosting/docker-compose.mdx). |
+| Docker Compose | `docker-compose.yml`, or a `.env` next to it | Every setting is listed by name in the compose file; a `.env` value wins over it. See [Docker Compose](self-hosting/docker-compose.mdx). |
 | From source (`bun run dev`, `next start`) | `.env.local` | Next.js and Bun load it. See [From source](self-hosting/from-source.mdx). |
 | A platform such as Dokploy | The platform's environment settings | See [Dokploy](self-hosting/dokploy.mdx). |
 
-Start from `.env.example`: `cp .env.example .env` (Compose) or
-`cp .env.example .env.local` (source). Restart the app after any change. The
+From source, start from `.env.example`: `cp .env.example .env.local`. With
+Compose, edit the values in `docker-compose.yml` or write `NAME=value` lines in
+a `.env`. Restart the app after any change. The
 pause switches are re-read on every call, but most other values are read once
 when the server starts.
 
@@ -66,8 +67,8 @@ comment.
 # bundled database), so you can leave it out.
 DATABASE_URL=postgres://agentsdr:CHANGE-ME@db.example.com:5432/agentsdr
 
-# Docker Compose generates every secret and the database password on first
-# start (in the `secrets` volume); anything you set here wins.
+# Docker Compose: set each secret (and POSTGRES_PASSWORD) in docker-compose.yml
+# or here; a .env value wins over the default in the file.
 
 # Set to "disable" only if your database has no TLS (the Compose database).
 # Leave it out to require TLS, which hosted databases expect.
@@ -144,10 +145,10 @@ PostgreSQL 16 or newer. Create the tables in an empty database with
 
 | | |
 |---|---|
-| **Required?** | No. Compose generates one. |
-| **Default** | A random value, kept in the `secrets` volume. |
+| **Required?** | Yes, with the bundled database. |
+| **Default** | A `changeme-...` placeholder, accepted only on a localhost `APP_URL`. |
 | **What it does** | The password of the bundled PostgreSQL container. Compose also builds the app's `DATABASE_URL` from it. |
-| **How to get it** | Optional: `openssl rand -hex 24`. Honoured only when the `secrets` volume is first created: the database stores it on first start, and changing the variable later does not change the stored password. |
+| **How to get it** | Optional: `openssl rand -hex 24`. Letters and digits only (it becomes part of the database URL). The database stores it on first start, and changing the variable later does not change the stored password. |
 | **Read in** | `docker-compose.yml` |
 
 ### `COMPOSE_FILE` (Docker Compose with your own PostgreSQL)
@@ -312,7 +313,7 @@ mailboxes, which send through Gmail. Setup steps:
 |---|---|
 | **Required?** | Needed before you invite anyone in production. |
 | **Default** | None. |
-| **What it does** | Without it, no auth email is sent: each one is written to the server log instead (with a one-time warning in production), and the first account can be verified by copying the link from the log (`docker compose logs app`). Real users would wait for email that never arrives. |
+| **What it does** | Without it, no auth email is sent: each one is written to the server log instead (with a one-time warning in production), so you can copy a link from `docker compose logs app`. The first admin account, created on the setup page, needs no email. Invited users would wait for email that never arrives. |
 | **How to get it** | Resend dashboard, [API Keys](https://resend.com/api-keys), create a key. Resend shows the value once and cannot show it again, so copy it then. See Resend's [API keys](https://resend.com/docs/dashboard/api-keys/introduction) page. |
 | **Example** | `RESEND_API_KEY=re_123abc...` |
 | **Read in** | `src/lib/auth/email.ts` |

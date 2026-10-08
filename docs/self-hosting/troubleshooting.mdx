@@ -29,7 +29,7 @@ Find the message you see, then follow cause and fix. Messages are quoted exactly
   <Accordion title="Set DATABASE_URL in .env to your PostgreSQL">
     **Cause:** You enabled `docker-compose.external-db.yml` but did not set `DATABASE_URL`.
 
-    **Fix:** Put `DATABASE_URL` (and `DATABASE_SSL`) in `.env` next to `docker-compose.yml`. The secrets themselves need no setup: Compose generates them on first start.
+    **Fix:** Put `DATABASE_URL` (and `DATABASE_SSL`) in `.env` next to `docker-compose.yml`. Set your secrets the same way (see [Docker Compose](/self-hosting/docker-compose)).
   </Accordion>
   <Accordion title="The app cannot connect: SSL / TLS errors">
     **Cause:** The app connects with TLS unless `DATABASE_SSL=disable`. A database without TLS (a local one, Dokploy's Postgres) fails the handshake.
@@ -63,7 +63,7 @@ Find the message you see, then follow cause and fix. Messages are quoted exactly
   <Accordion title="The verification or invitation email never arrives">
     **Cause:** Without `RESEND_API_KEY` nothing is sent. The log shows `[auth/email] RESEND_API_KEY is not set: verification, password-reset and invitation emails are written to this log instead of being sent. Set RESEND_API_KEY and AUTH_EMAIL_FROM before inviting anyone.` and the message itself as `[auth/email] (not sent — no RESEND_API_KEY) to=… subject="…"`.
 
-    **Fix:** For the first account, copy the link from `docker compose logs app`. For everyone else set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` (an address on a domain verified in Resend) and restart. See [Resend](/integrations/resend). If both are set and mail still does not arrive, check the Resend dashboard for rejected sends and the domain's verification status.
+    **Fix:** Copy the link from `docker compose logs app`, or set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` (an address on a domain verified in Resend) and restart. See [Resend](/integrations/resend). If both are set and mail still does not arrive, check the Resend dashboard for rejected sends and the domain's verification status.
   </Accordion>
   <Accordion title="This instance is invite-only: if … hasn't been invited, no account was created and no email will arrive">
     **Cause:** `AUTH_SIGNUP` defaults to `invite-only`. After the first account, only an email address with a pending, unexpired invitation (they expire after 7 days) gets an account; anyone else gets the normal "check your email" response and nothing is created.
@@ -108,7 +108,7 @@ Find the message you see, then follow cause and fix. Messages are quoted exactly
   <Accordion title='{"error":"unauthorized"} (401) from a job endpoint'>
     **Cause:** The secret sent does not match the app's. `OUTREACH_TICK_SECRET` is unset in the app (it answers 401 then), or the caller sends a different value. For `/api/linkedin/jobs/*` without a valid `Authorization: Bearer $CRON_SECRET` the request is treated as an ordinary browser call and redirected to sign-in or refused.
 
-    **Fix:** Use the same value in the app and the caller. Outreach endpoints take `x-tick-secret` (or `?secret=`); LinkedIn endpoints take `Authorization: Bearer`. After editing `.env`, recreate the containers: `docker compose up -d`.
+    **Fix:** Use the same value in the app and the caller. Outreach endpoints take `x-tick-secret` (or `?secret=`); LinkedIn endpoints take `Authorization: Bearer`. After editing `.env` or `docker-compose.yml`, recreate the containers: `docker compose up -d`.
   </Accordion>
   <Accordion title="Unified People migration is in progress; campaign and outbound changes are temporarily paused.">
     **Cause:** `PEOPLE_MIGRATION_MODE` or `PAUSE_CAMPAIGN_MUTATIONS` is on, so `POST`, `PUT`, `PATCH` and `DELETE` calls to campaign, LinkedIn job and mailbox routes answer 503, including your scheduled jobs.

@@ -54,7 +54,7 @@ Each feature switches on once the service it needs is connected.
 
 | Path | Best for | Guide |
 |---|---|---|
-| Docker Compose | Most people: copy one file, run one command; database, scheduler and secrets included. No `.env` needed. | [Docker Compose](self-hosting/docker-compose.mdx) |
+| Docker Compose | Most people: download one file, set your secrets, run one command; database and scheduler included. | [Docker Compose](self-hosting/docker-compose.mdx) |
 | From source | Development, or a host where you manage Node/Bun and Postgres yourself. | [From source](self-hosting/from-source.mdx) |
 | Dokploy on a VPS | A self-hosted platform with domains, HTTPS and deploy-on-push. | [Dokploy](self-hosting/dokploy.mdx) |
 

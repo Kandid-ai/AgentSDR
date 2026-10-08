@@ -50,9 +50,9 @@ The "platform operator" is an owner or admin of the organization flagged `initia
 
 ## Transactional email (Resend)
 
-Sign-up verification, password reset and invitations are sent through [Resend](https://resend.com). Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` (an address on a domain you have verified in Resend), for example `AgentSDR <auth@yourdomain.com>`. Setup steps: [Resend](/integrations/resend).
+Invitations, sign-up verification and password reset are sent through [Resend](https://resend.com). Set `RESEND_API_KEY` and `AUTH_EMAIL_FROM` (an address on a domain you have verified in Resend), for example `AgentSDR <auth@yourdomain.com>`. Setup steps: [Resend](/integrations/resend).
 
-Without `RESEND_API_KEY`, verification, reset and invitation emails are written to the server log (with a one-time warning in production) instead of sent: enough to verify the first account from the logs (`docker compose logs app`), but you need Resend before inviting anyone. Email verification is required before password sign-in works.
+Without `RESEND_API_KEY`, verification, reset and invitation emails are written to the server log (with a one-time warning in production) instead of sent. The first admin account, created on the setup page, needs none of them; you need Resend before inviting anyone, since invited people must confirm their email before password sign-in works.
 
 This is separate from the email your campaigns send, which goes out through the Gmail accounts you connect ([Google Workspace](/integrations/google-workspace)).
 
