@@ -32,8 +32,13 @@ function schemaFor(config: AiConfig): Record<string, unknown> | null {
       config.outputs.map((field) => [
         field.key,
         {
-          type: field.type === "number" ? "number" : field.type === "boolean" ? "boolean" : "string",
-          ...(field.description ? { description: field.description } : {}),
+          // Nullable, so a model that found nothing can say so: forced to a
+          // string or number it answers "" or 0, and 0 employees reads as a
+          // fact rather than as "not found".
+          type: [field.type === "number" ? "number" : field.type === "boolean" ? "boolean" : "string", "null"],
+          description: [field.description, "null when it is not known or cannot be found; never guess."]
+            .filter(Boolean)
+            .join(" — "),
         },
       ]),
     ),

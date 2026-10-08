@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { inOrgTables } from "@/lib/grid/scope";
 import { gridRows } from "@/lib/grid/schema";
 import { evaluateOnce } from "@/lib/grid/runners";
-import { buildFormulaLookupRegistry, resolveFormulaConfig } from "@/lib/grid/formula-lookups";
+import { buildFormulaLookupRegistry, resolveFormulaConfig, textColumnKeys } from "@/lib/grid/formula-lookups";
 import { authContextErrorResponse, withOrgContext } from "@/lib/auth/context";
 import { isRecord, isUuid } from "@/lib/grid/validate";
 
@@ -67,13 +67,17 @@ export async function POST(
 
       let formula;
       let registry;
+      let textKeys;
       try {
         formula = await resolveFormulaConfig(tableId, expression);
-        registry = await buildFormulaLookupRegistry(formula.lookupRefs);
+        [registry, textKeys] = await Promise.all([
+          buildFormulaLookupRegistry(formula.lookupRefs),
+          textColumnKeys(tableId),
+        ]);
       } catch (error) {
         return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Invalid formula" }, { status: 422 });
       }
-      const result = await evaluateOnce(expression, row.cells, registry);
+      const result = await evaluateOnce(expression, row.cells, registry, textKeys);
       if (!result.ok) return NextResponse.json(result, { status: 422 });
       return NextResponse.json({ ...result, rowId: row.id, rowNumber: Number(ordinal) });
     });

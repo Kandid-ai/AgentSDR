@@ -113,3 +113,19 @@ describe("formula syntax", () => {
     expect(excelOnlyOperator('{{a}} && "a&b"')).toBeNull();
   });
 });
+
+test("a blank text token is an empty string in a formula; a blank number stays null", async () => {
+  const { substituteTokens } = await import("./runners/formula");
+  const text = new Set(["first", "last"]);
+  expect(substituteTokens('{{first}} + " " + {{last}}', { first: "Pat" }, text)).toBe('"Pat" + " " + ""');
+  expect(substituteTokens("{{n}} * 2", { n: null }, text)).toBe("null * 2");
+  expect(substituteTokens("{{first}}", { first: "" })).toBe("null");
+});
+
+test("formulas see blank text as '' and ISBLANK agrees", async () => {
+  const { evaluateOnce } = await import("./runners/formula");
+  const text = new Set(["first", "last"]);
+  expect(await evaluateOnce('{{first}} + " " + {{last}}', { first: "Pat" }, {}, text)).toEqual({ ok: true, value: "Pat " });
+  expect(await evaluateOnce("ISBLANK({{last}})", { first: "Pat" }, {}, text)).toEqual({ ok: true, value: true });
+  expect(await evaluateOnce("{{n}} * 2", {}, {}, text)).toEqual({ ok: true, value: 0 });
+});

@@ -307,6 +307,7 @@ async function backfillAdditions(
       cells[addition.columnKey] = value;
       meta[addition.columnKey] = {
         status: "success",
+        outcome: "hit",
         provider: run.provider ?? undefined,
         costCents: Number(run.costCents ?? 0),
         runAt: run.createdAt?.toISOString() ?? new Date().toISOString(),

@@ -14,7 +14,7 @@ const RUN_COLUMN_TYPES = new Set(["enrichment", "ai", "http", "formula"]);
 async function resolveCell(tableId: string, rowId: string, columnKey: string) {
   // Every query below is keyed by table id; another organization's table reads as not found.
   if (!(await tableInOrganization(tableId))) return null;
-  const [row] = await db.select({ id: gridRows.id }).from(gridRows).where(and(
+  const [row] = await db.select({ id: gridRows.id, cells: gridRows.cells }).from(gridRows).where(and(
     eq(gridRows.id, rowId),
     eq(gridRows.tableId, tableId),
   )).limit(1);
@@ -50,7 +50,7 @@ async function resolveCell(tableId: string, rowId: string, columnKey: string) {
     eq(gridColumns.key, sourceColumnKey),
   )).limit(1);
   if (!source || !RUN_COLUMN_TYPES.has(source.type)) return null;
-  return { column, source };
+  return { column, source, cells: row.cells ?? {} };
 }
 export async function GET(
   request: NextRequest,
@@ -95,6 +95,11 @@ export async function GET(
         canAddResponseColumn: resolved.source.type === "enrichment",
         run: {
           ...run,
+          // A formula runs locally and stores no response; its result is the
+          // cell itself, which is what the panel's Response tab should show.
+          response: run.response ?? (resolved.source.type === "formula"
+            ? { result: (resolved.cells as Record<string, unknown>)[resolved.source.key] ?? null }
+            : null),
           costCents: Number(run.costCents ?? 0),
         },
       });

@@ -41,6 +41,11 @@ export default function Popover({
     const onDown = (e: PointerEvent) => {
       const target = e.target as Element;
       if (target.closest?.("[data-radix-popper-content-wrapper]")) return;
+      // While a Radix Select closes it keeps `pointer-events: none` on <body>,
+      // so the next click lands on <html> itself. A real outside click always
+      // hits some element on the page; this one is the person still working
+      // inside the panel (picking the operator after the column).
+      if (target === document.documentElement || target === document.body) return;
       if (ref.current && !ref.current.contains(target)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {

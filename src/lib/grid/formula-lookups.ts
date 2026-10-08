@@ -6,6 +6,7 @@ import { inOrgTables } from "./scope";
 import { gridColumns, gridRows, gridTables } from "./schema";
 import type { FormulaConfig, FormulaLookupRef, FormulaLookupRegistry } from "./types";
 import { tokensIn } from "./runners/types";
+import { effectiveColumnType } from "./value-types";
 
 const MAX_LOOKUP_ROWS = 50_000;
 
@@ -157,4 +158,21 @@ function stringLiteral(value: string, label: string): string {
 
 function dedupeRefs(refs: FormulaLookupRef[]): FormulaLookupRef[] {
   return [...new Map(refs.map((ref) => [formulaLookupSignature(ref.tableToken, ref.lookupColumnToken, ref.returnColumnToken), ref])).values()];
+}
+
+const TEXT_LIKE = new Set(["text", "url", "email", "select", "image"]);
+
+/**
+ * Keys of the table's text-like columns. A formula sees a blank one as "" —
+ * the way a spreadsheet does — so `{{first}} + " " + {{last}}` with no last
+ * name gives "Ada ", not "Ada null". Blank numbers, dates and JSON stay null.
+ */
+export async function textColumnKeys(tableId: string): Promise<Set<string>> {
+  const columns = await db
+    .select({ key: gridColumns.key, type: gridColumns.type, config: gridColumns.config })
+    .from(gridColumns)
+    .where(and(inOrgTables(gridColumns.tableId), eq(gridColumns.tableId, tableId)));
+  return new Set(
+    columns.filter((column) => TEXT_LIKE.has(effectiveColumnType(column as never))).map((column) => column.key),
+  );
 }

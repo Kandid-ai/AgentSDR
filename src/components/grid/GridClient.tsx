@@ -2901,6 +2901,8 @@ export default function GridClient({
             onClose={closeColumnMenu}
             onError={(message) => setError(message)}
             onRename={(name) => patchColumn(columnMenu.column, { name })}
+            onSaveOptions={(options) =>
+              patchColumn(columnMenu.column, { config: { ...(columnMenu.column.config as object), options } })}
             onInsert={(side, rect) => {
               setColumnMenu(null);
               setAddMenu({

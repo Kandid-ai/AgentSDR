@@ -10,6 +10,7 @@ import {
   RiFileCopyLine,
   RiFilter3Line,
   RiGitBranchLine,
+  RiListCheck,
   RiPencilLine,
   RiPushpinLine,
   RiSettings3Line,
@@ -46,6 +47,7 @@ export default function ColumnMenu({
   onClose,
   onError,
   onRename,
+  onSaveOptions,
   onInsert,
   onChangeType,
   onDuplicate,
@@ -66,6 +68,8 @@ export default function ColumnMenu({
   onClose: () => void;
   onError: (message: string) => void;
   onRename: (name: string) => Promise<void>;
+  /** Select / multi-select only: replaces the column's option list. */
+  onSaveOptions?: (options: string[]) => Promise<void>;
   onInsert: (side: "left" | "right", anchor: DOMRect) => void;
   onChangeType: (type: ColumnType) => Promise<void>;
   onDuplicate: () => Promise<void>;
@@ -84,6 +88,9 @@ export default function ColumnMenu({
   const [submenu, setSubmenu] = useState<"insert" | "split" | "sort" | null>(null);
   const [busy, setBusy] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [editingOptions, setEditingOptions] = useState(false);
+  const [optionsText, setOptionsText] = useState(() => currentOptions(column).join("\n"));
+  const [optionsError, setOptionsError] = useState<string | null>(null);
 
   const usedIn = columns.filter((candidate) => candidate.dependsOn.includes(column.key));
   const valueType = effectiveColumnType(column);
@@ -128,6 +135,44 @@ export default function ColumnMenu({
       setBusy(false);
     }
   };
+
+  const hasOptions = onSaveOptions && (column.type === "select" || column.type === "multiselect");
+
+  if (editingOptions && onSaveOptions) {
+    const options = [...new Set(optionsText.split("\n").map((line) => line.trim()).filter(Boolean))];
+    return (
+      <form
+        className="p-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setBusy(true);
+          setOptionsError(null);
+          onSaveOptions(options)
+            .then(onClose)
+            .catch((error) => setOptionsError(error instanceof Error ? error.message : "Could not save the options"))
+            .finally(() => setBusy(false));
+        }}
+      >
+        <label className="mb-1.5 block text-[12px] font-medium text-text-sub-600">Options, one per line</label>
+        <textarea
+          autoFocus
+          rows={6}
+          value={optionsText}
+          onChange={(event) => setOptionsText(event.target.value)}
+          className="w-full resize-y rounded-lg border border-blue-500 px-2.5 py-2 text-[13px] text-text-strong-950 outline-none ring-1 ring-blue-500"
+        />
+        {optionsError && <p className="mt-1.5 text-[12px] text-red-600 dark:text-red-400">{optionsError}</p>}
+        <div className="mt-2 flex justify-end gap-2">
+          <button type="button" onClick={() => setEditingOptions(false)} className="rounded-md px-2.5 py-1.5 text-[12px] text-text-sub-600 hover:bg-bg-weak-50">
+            Cancel
+          </button>
+          <button type="submit" disabled={busy} className="rounded-md bg-blue-600 px-2.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-50">
+            Save {options.length} option{options.length === 1 ? "" : "s"}
+          </button>
+        </div>
+      </form>
+    );
+  }
 
   if (renaming) {
     return (
@@ -178,6 +223,7 @@ export default function ColumnMenu({
         </>
       )}
       <MenuButton icon={RiPencilLine} label="Rename column" onClick={() => setRenaming(true)} />
+      {hasOptions && <MenuButton icon={RiListCheck} label="Edit options" onClick={() => setEditingOptions(true)} />}
       <HoverSubmenu
         icon={RiArrowRightLine}
         label="Insert column"
@@ -336,4 +382,15 @@ function MenuButton({
       {suffix && <RiArrowRightSLine className="size-4 shrink-0" />}
     </button>
   );
+}
+
+/** A select column's options as plain values (they may be stored as strings or {value, label}). */
+function currentOptions(column: GridColumn): string[] {
+  const options = (column.config as { options?: unknown } | null)?.options;
+  if (!Array.isArray(options)) return [];
+  return options.flatMap((option: unknown) => {
+    if (typeof option === "string") return [option];
+    const value = (option as { value?: unknown } | null)?.value;
+    return typeof value === "string" ? [value] : [];
+  });
 }

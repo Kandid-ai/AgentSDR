@@ -5,6 +5,7 @@ import { inOrgTables } from "./scope";
 import { runInOrganization } from "@/lib/tenancy/scope";
 import { claim, type ClaimedJob, completeJob, deferJob, failJob, recoverStaleJobs, skipJob } from "./queue";
 import { setCellMeta } from "./rows";
+import { textColumnKeys } from "./formula-lookups";
 import {
   allReferencedInputsEmpty,
   columnRunCondition,
@@ -218,10 +219,10 @@ async function conditionHolds(
 ): Promise<boolean> {
   try {
     const session = await sessionFor(sessions, `condition:${column.id}`, async () => {
-      const sandbox = await createSandbox();
-      return { sandbox, dispose: () => sandbox.dispose() };
+      const [sandbox, textKeys] = await Promise.all([createSandbox(), textColumnKeys(column.tableId)]);
+      return { sandbox, textKeys, dispose: () => sandbox.dispose() };
     });
-    return await evaluateCondition(condition, cells, session.sandbox as Sandbox);
+    return await evaluateCondition(condition, cells, session.sandbox as Sandbox, session.textKeys as Set<string>);
   } catch {
     // A condition that cannot be evaluated must not authorise a paid call.
     return false;

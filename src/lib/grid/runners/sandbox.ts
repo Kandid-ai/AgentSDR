@@ -116,6 +116,9 @@ function librarySource(): string {
     if (typeof formulajs === "object" && formulajs) {
       for (var k in formulajs) { if (typeof globalThis[k] === "undefined") globalThis[k] = formulajs[k]; }
     }
+    // A blank text cell arrives as "", which a spreadsheet's ISBLANK counts
+    // as blank; FormulaJS only checks for null.
+    globalThis.ISBLANK = function (value) { return value === null || value === undefined || value === ""; };
   `);
 
   librarySourceCache = parts.join("\n;\n");

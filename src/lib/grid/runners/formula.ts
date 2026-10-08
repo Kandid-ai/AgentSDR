@@ -1,7 +1,7 @@
 import type { CellResult, CellValues, FormulaConfig, FormulaLookupRegistry } from "../types";
 import { checkFormulaSyntax, createSandbox, type Sandbox } from "./sandbox";
 import { PermanentRunError, ownCell, tokensIn, type ColumnRunner, type RunSession } from "./types";
-import { buildFormulaLookupRegistry } from "../formula-lookups";
+import { buildFormulaLookupRegistry, textColumnKeys } from "../formula-lookups";
 
 const TOKEN_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
@@ -13,10 +13,17 @@ const TOKEN_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
  * JSON.stringify also does the escaping, which is what stops a cell containing
  * a quote from breaking out of the literal and into the surrounding expression.
  */
-export function substituteTokens(expression: string, row: CellValues): string {
+export function substituteTokens(
+  expression: string,
+  row: CellValues,
+  textKeys: ReadonlySet<string> = new Set(),
+): string {
   return expression.replace(TOKEN_RE, (_, key: string) => {
     const v = ownCell(row, key);
-    return v === undefined ? "null" : JSON.stringify(v);
+    // A blank text cell is "" (so concatenation does not print "null");
+    // a blank number, date or JSON cell is null.
+    if (v === undefined || v === null || v === "") return textKeys.has(key) ? '""' : "null";
+    return JSON.stringify(v);
   });
 }
 
@@ -37,10 +44,13 @@ export const formulaRunner: ColumnRunner<FormulaConfig> = {
 
   // One sandbox per run, reused across every row: booting the isolate and
   // loading the libraries costs ~60ms, against ~10µs for an evaluation.
-  async prepare(config): Promise<RunSession> {
-    const registry = await buildFormulaLookupRegistry(config.lookupRefs);
+  async prepare(config, ctx): Promise<RunSession> {
+    const [registry, textKeys] = await Promise.all([
+      buildFormulaLookupRegistry(config.lookupRefs),
+      textColumnKeys(ctx.tableId),
+    ]);
     const sandbox: Sandbox = await createSandbox(registry);
-    return { sandbox, dispose: () => sandbox.dispose() };
+    return { sandbox, textKeys, dispose: () => sandbox.dispose() };
   },
 
   async run(config, row, _ctx, session): Promise<CellResult> {
@@ -54,7 +64,7 @@ export const formulaRunner: ColumnRunner<FormulaConfig> = {
 
     let value: unknown;
     try {
-      value = sandbox.evaluate(substituteTokens(expression, row), row);
+      value = sandbox.evaluate(substituteTokens(expression, row, session?.textKeys as Set<string> | undefined), row);
     } catch (err) {
       // A broken expression is broken for every row, so retrying it just burns
       // the queue — surface it as permanent.
@@ -86,11 +96,12 @@ export async function evaluateOnce(
   expression: string,
   row: CellValues,
   lookupRegistry: FormulaLookupRegistry = {},
+  textKeys?: ReadonlySet<string>,
 ): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
   let sandbox: Sandbox | null = null;
   try {
     sandbox = await createSandbox(lookupRegistry);
-    return { ok: true, value: sandbox.evaluate(substituteTokens(expression, row), row) };
+    return { ok: true, value: sandbox.evaluate(substituteTokens(expression, row, textKeys), row) };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
@@ -107,9 +118,10 @@ export async function evaluateCondition(
   expression: string,
   row: CellValues,
   sandbox: Sandbox,
+  textKeys?: ReadonlySet<string>,
 ): Promise<boolean> {
   try {
-    return Boolean(sandbox.evaluate(substituteTokens(expression, row), row));
+    return Boolean(sandbox.evaluate(substituteTokens(expression, row, textKeys), row));
   } catch {
     return false;
   }

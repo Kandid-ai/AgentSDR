@@ -350,7 +350,7 @@ export default function ImportDialog({
                                       return copy;
                                     })
                                   }
-                                  className="w-[150px] min-w-0 rounded-lg border border-stroke-soft-200 bg-bg-white-0 px-2 py-1 text-[13px] text-text-strong-950 outline-none focus:border-blue-500"
+                                  title={m.name} className="w-[200px] min-w-0 flex-1 rounded-lg border border-stroke-soft-200 bg-bg-white-0 px-2 py-1 text-[13px] text-text-strong-950 outline-none focus:border-blue-500"
                                 />
                               )}
 
