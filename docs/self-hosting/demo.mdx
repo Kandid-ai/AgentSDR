@@ -39,21 +39,25 @@ The LinkedIn, WhatsApp, email and R2 integrations are stored with placeholder cr
     Leave every integration and AI key unset. Do not run the cron service or Dokploy schedule jobs for this deployment.
   </Step>
   <Step title="Create the schema and seed it">
-    From a checkout of the repository, with `DATABASE_URL` pointing at the demo database (for example through an SSH tunnel) and the deployment's `INTEGRATION_CREDENTIALS_KEY` and `BETTER_AUTH_SECRET`:
+    The seed is not in the Docker image, so it runs from a checkout of the repository on your machine. Give the demo database a temporary **External Port** (on Dokploy: the database's page), then, with the deployment's own values:
 
     ```sh
+    export DATABASE_URL=postgres://USER:PASSWORD@SERVER_IP:EXTERNAL_PORT/DATABASE
+    export DATABASE_SSL=disable
+    export INTEGRATION_CREDENTIALS_KEY=SAME_AS_THE_DEPLOYMENT
+    export BETTER_AUTH_SECRET=SAME_AS_THE_DEPLOYMENT
     bun run db:setup
     DEMO_MODE=true bun run db:seed:demo
     ```
 
-    `DEMO_MODE=true` tells the seed it may write to a database that is not on localhost. The seed takes a few seconds.
+    Variables you export win over the repository's `.env.local`. The key must match the deployment's, because the seed encrypts the placeholder integrations with it. `DEMO_MODE=true` lets the seed write to a database that is not on localhost; it prints the host it writes to, and refuses a database that already holds a real organization. The seed takes a few seconds. Remove the external port afterwards.
   </Step>
   <Step title="Open it">
     Open the deployment's address. You land on Analytics, signed in, with the banner at the top.
   </Step>
 </Steps>
 
-To start over, drop and recreate the database, then run both commands again.
+To start over, drop and recreate the database, then run both commands again. Deploys of new code keep the data; the seed only needs re-running when you want a fresh one.
 
 ## Try it locally
 

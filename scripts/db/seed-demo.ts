@@ -29,7 +29,8 @@ import { createRng, type DemoContext } from "./demo/context";
 
 const DEMO_PASSWORD = process.env.DEMO_PASSWORD || DEMO_DEFAULT_PASSWORD;
 
-function guard(): void {
+/** Returns true when DEMO_MODE is what lets the seed write to a non-local database. */
+function guard(): boolean {
   const demoDeployment = ["1", "true", "yes", "on"].includes((process.env.DEMO_MODE ?? "").trim().toLowerCase());
   if (process.env.NODE_ENV === "production" && !demoDeployment) {
     console.error("Refusing to seed demo data: NODE_ENV=production.");
@@ -55,15 +56,33 @@ function guard(): void {
     );
     process.exit(1);
   }
+  console.log(`Seeding the database on ${host}.`);
+  return !local && demoDeployment && !process.argv.includes("--allow-remote");
 }
 
 async function main() {
-  guard();
+  const viaDemoMode = guard();
 
   const { db } = await import("@/lib/db");
   const { auth } = await import("@/lib/auth/server");
   const { organizations, users } = await import("@/lib/auth/schema");
-  const { eq } = await import("drizzle-orm");
+  const { eq, sql } = await import("drizzle-orm");
+
+  // DEMO_MODE only vouches for a demo deployment's own database. If this one
+  // holds any real organization, DATABASE_URL is pointing somewhere else —
+  // e.g. a production URL picked up from .env.local — so stop.
+  if (viaDemoMode) {
+    const [{ real }] = (await db.execute(sql`
+      select count(*)::int as real from organizations
+       where metadata is null or (metadata::jsonb ->> 'demo') is distinct from 'true'`)) as unknown as { real: number }[];
+    if (real > 0) {
+      console.error(
+        `Refusing to seed: this database already holds ${real} real organization${real === 1 ? "" : "s"}. ` +
+          "A demo deployment's database holds nothing but the demo. Check DATABASE_URL.",
+      );
+      process.exit(1);
+    }
+  }
 
   const [existingOrg] = await db.select({ id: organizations.id }).from(organizations).where(eq(organizations.slug, ORG_SLUG)).limit(1);
   if (existingOrg) {
