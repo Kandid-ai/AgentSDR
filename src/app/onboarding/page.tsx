@@ -2,18 +2,9 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { authClient, useListOrganizations, useSession } from "@/lib/auth/client";
+import { slugify } from "@/lib/auth/slug";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { ErrorCallout, Field, SecondaryButton, SubmitButton } from "@/components/auth/fields";
-
-function slugify(s: string) {
-  return s
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-}
 
 export default function OnboardingPage() {
   const { data: session, isPending } = useSession();

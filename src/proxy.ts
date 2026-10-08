@@ -17,6 +17,9 @@ const PUBLIC = [
   "/login",
   "/sign-in",
   "/sign-up",
+  // First-run setup of an empty instance; the page and route refuse once a user exists.
+  "/setup",
+  "/api/setup",
   "/forgot-password",
   "/reset-password",
   "/accept-invitation",
