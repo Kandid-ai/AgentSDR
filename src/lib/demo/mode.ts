@@ -35,18 +35,13 @@ export const DEMO_READ_ONLY_MESSAGE = "This is a read-only demo, so changes are 
 const AUTH_SCREENS = ["/login", "/sign-in", "/sign-up", "/forgot-password", "/reset-password", "/accept-invitation", "/onboarding"];
 
 /**
- * Better Auth endpoints a demo visitor may call. Everything else under
- * /api/auth (sign-up, sign-out, password and profile changes, creating or
- * inviting to organizations) is refused.
+ * Better Auth: its GET endpoints read (session, organization, members,
+ * teams), except these, which act on a token or start a sign-in.
  */
-const AUTH_ALLOWED = [
-  "/api/auth/get-session",
-  "/api/auth/organization/list",
-  "/api/auth/organization/get-full-organization",
-  "/api/auth/organization/get-active-member",
-  "/api/auth/organization/set-active",
-  "/api/auth/list-sessions",
-];
+const AUTH_ACTIVE_GETS = ["/api/auth/verify-email", "/api/auth/callback/", "/api/auth/reset-password/", "/api/auth/magic-link", "/api/auth/delete-user"];
+
+/** The one Better Auth write a demo visitor may make: switching organization. */
+const AUTH_ALLOWED_POSTS = ["/api/auth/organization/set-active"];
 
 /** POSTs that only read or render: they are let through. */
 const READ_ONLY_POSTS: RegExp[] = [
@@ -93,7 +88,8 @@ export function demoRequestBlock(pathname: string, method: string, env: Environm
   if (AUTH_SCREENS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return { kind: "enter" };
 
   if (pathname.startsWith("/api/auth/")) {
-    return AUTH_ALLOWED.some((p) => pathname === p) ? null : { kind: "refuse" };
+    if (m === "GET" || m === "HEAD") return AUTH_ACTIVE_GETS.some((p) => pathname.startsWith(p)) ? { kind: "refuse" } : null;
+    return AUTH_ALLOWED_POSTS.includes(pathname) ? null : { kind: "refuse" };
   }
 
   if (m === "GET" || m === "HEAD" || m === "OPTIONS") {

@@ -44,8 +44,12 @@ describe("demoRequestBlock", () => {
     expect(demoRequestBlock("/api/campaigns/123/stream", "GET", demo)).toEqual({ kind: "refuse" });
   });
 
-  test("allows only session reads and organization switching from Better Auth", () => {
+  test("allows Better Auth's reads and organization switching, nothing else", () => {
     expect(demoRequestBlock("/api/auth/get-session", "GET", demo)).toBeNull();
+    expect(demoRequestBlock("/api/auth/organization/list-members", "GET", demo)).toBeNull();
+    expect(demoRequestBlock("/api/auth/organization/list-teams", "GET", demo)).toBeNull();
+    expect(demoRequestBlock("/api/auth/verify-email", "GET", demo)).toEqual({ kind: "refuse" });
+    expect(demoRequestBlock("/api/auth/callback/google", "GET", demo)).toEqual({ kind: "refuse" });
     expect(demoRequestBlock("/api/auth/organization/set-active", "POST", demo)).toBeNull();
     for (const path of ["/api/auth/sign-out", "/api/auth/sign-up/email", "/api/auth/change-password", "/api/auth/organization/create", "/api/auth/organization/invite-member"]) {
       expect(demoRequestBlock(path, "POST", demo)).toEqual({ kind: "refuse" });

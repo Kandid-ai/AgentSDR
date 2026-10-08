@@ -11,7 +11,7 @@ export default async function CampaignsPage() {
   const campaigns = await runInOrganization(ctx.organizationId, () => listCampaigns());
 
   return (
-    <div className="h-screen flex overflow-hidden bg-bg-weak-50">
+    <div className="h-full flex overflow-hidden bg-bg-weak-50">
       <div className="flex-1 flex min-w-0 overflow-hidden">
         {/* Create form — left */}
         <aside className="w-80 shrink-0 border-r border-stroke-soft-200 bg-bg-white-0 overflow-y-auto">

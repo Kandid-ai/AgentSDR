@@ -48,7 +48,7 @@ export default async function DomainsPage({ searchParams }: { searchParams: Sear
 
   return (
     <NavigationProvider>
-      <div className="flex h-screen overflow-hidden bg-bg-weak-50">
+      <div className="flex h-full overflow-hidden bg-bg-weak-50">
         <div className="flex min-w-0 flex-1 overflow-hidden">
           <aside className="w-64 shrink-0 overflow-y-auto border-r border-stroke-soft-200 bg-bg-white-0">
             <div className="border-b border-stroke-soft-200 px-4 py-4">

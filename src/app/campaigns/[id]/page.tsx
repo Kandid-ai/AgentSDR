@@ -23,7 +23,7 @@ export default async function CampaignDetailPage({
   if (!campaign) notFound();
 
   return (
-    <div className="h-screen flex overflow-hidden bg-bg-weak-50">
+    <div className="h-full flex overflow-hidden bg-bg-weak-50">
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <div className="px-6 py-4 border-b border-stroke-soft-200 bg-bg-white-0 flex items-center gap-3">
           <Link href="/campaigns" className="text-text-strong-950/40 hover:text-text-strong-950 transition-colors">

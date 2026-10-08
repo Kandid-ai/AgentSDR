@@ -60,7 +60,7 @@ export default async function WorkbookPage({
     ]);
 
     return (
-      <div className="h-screen flex overflow-hidden bg-bg-white-0">
+      <div className="h-full flex overflow-hidden bg-bg-white-0">
         <div className="min-w-0 flex-1 overflow-hidden">
           <GridLoader
             workbook={workbook}
