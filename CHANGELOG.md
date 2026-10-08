@@ -9,6 +9,8 @@ Each release lists the database migrations it needs; see
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-08
+
 ### Changed
 
 - **Scheduled jobs run inside the app.** There is no cron container any more:
@@ -171,6 +173,7 @@ The first public release.
   before deploying). The `WHATSAPP_*` sending variables are no longer read —
   set those limits in Settings → WhatsApp → Sending rules.
 
-[Unreleased]: https://github.com/Kandid-ai/AgentSDR/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Kandid-ai/AgentSDR/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Kandid-ai/AgentSDR/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Kandid-ai/AgentSDR/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Kandid-ai/AgentSDR/releases/tag/v0.1.0
