@@ -1,5 +1,6 @@
 import "server-only";
 
+import { resolveTimeZone } from "@/lib/timeZone";
 import { sql, type SQL } from "drizzle-orm";
 import {
   dayCount,
@@ -19,15 +20,7 @@ export class AnalyticsRangeError extends Error {}
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** The IANA zone if the runtime knows it, else UTC. */
-export function resolveTimeZone(value: string | null | undefined): string {
-  if (!value) return "UTC";
-  try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: value }).resolvedOptions().timeZone;
-  } catch {
-    return "UTC";
-  }
-}
+export { resolveTimeZone };
 
 /** Validates ?from&to&tz into a range; weekly buckets past WEEKLY_BUCKET_AFTER_DAYS. */
 export function parseAnalyticsRange(params: URLSearchParams): AnalyticsRange {

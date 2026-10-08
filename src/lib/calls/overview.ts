@@ -1,5 +1,6 @@
 import "server-only";
 
+import { resolveTimeZone } from "@/lib/timeZone";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { currentOrganizationId } from "@/lib/tenancy/scope";
@@ -17,15 +18,7 @@ import {
   type CallingOverviewTotals,
 } from "./overviewContract";
 
-/** The IANA zone if the runtime knows it, else UTC. */
-export function resolveTimeZone(value: string | null | undefined): string {
-  if (!value) return "UTC";
-  try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: value }).resolvedOptions().timeZone;
-  } catch {
-    return "UTC";
-  }
-}
+export { resolveTimeZone };
 
 /** One outcome bucket of a finished call, for the overview. */
 export type CallOutcome = "connected" | "didNotPickUp" | "notOnWhatsApp" | "failed" | "inProgress";
