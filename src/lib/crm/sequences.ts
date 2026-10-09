@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   assertExactKeys,
@@ -157,6 +157,22 @@ export async function interruptActiveSequenceRunInTransaction(
 }
 
 /**
+ * Frees a step run's slot in crm_drafts_step_run_uq (one draft per step) from
+ * any draft other than `keepDraftId`. A step reset by pausing used to clear
+ * its own `draftId` but leave the stale draft pointing back at it, so the
+ * next draft linked to that step — adopted reply or regenerated AI draft —
+ * failed the unique index. The orphan is already stale; only the link goes.
+ */
+export async function releaseStepRunDraftLinks(tx: CrmTransaction, stepRunId: string, keepDraftId?: string) {
+  await tx.update(crmDrafts)
+    .set({ sequenceStepRunId: null, updatedAt: new Date() })
+    .where(and(
+      eq(crmDrafts.sequenceStepRunId, stepRunId),
+      ...(keepDraftId ? [ne(crmDrafts.id, keepDraftId)] : []),
+    ));
+}
+
+/**
  * Makes a hand-written draft the delivery for the run's current pending step.
  *
  * A reply typed in the LinkedIn or email inbox (or the CRM page's "Create
@@ -220,6 +236,7 @@ export async function adoptCurrentSequenceStepInTransaction(
       })
       .where(eq(crmDrafts.id, replacedDraftId));
   }
+  await releaseStepRunDraftLinks(tx, current.stepRun.id, input.draftId);
   await tx
     .update(crmSequenceStepRuns)
     .set({ draftId: input.draftId, status: "awaiting_review", lastError: null, updatedAt: now })
@@ -472,6 +489,10 @@ export async function pauseSequence(input: { recordId: string; actorRef?: string
     if (pendingDraftIds.length) {
       await tx.update(crmDrafts).set({ status: "stale", updatedAt: now })
         .where(and(inArray(crmDrafts.id, pendingDraftIds), inArray(crmDrafts.status, ["generating", "awaiting_review", "failed"])));
+      // The step forgets its draft below, so the draft must let go of the step
+      // too, or the step's next draft collides with it in crm_drafts_step_run_uq.
+      await tx.update(crmDrafts).set({ sequenceStepRunId: null })
+        .where(inArray(crmDrafts.id, pendingDraftIds));
       await tx.update(crmSequenceStepRuns).set({ status: "scheduled", draftId: null, expectedContextVersion: nextContextVersion, updatedAt: now })
         .where(inArray(crmSequenceStepRuns.id, pending.map((step) => step.id)));
     }

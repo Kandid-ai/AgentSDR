@@ -149,7 +149,9 @@ export function crmConfigurationErrorResponse(error: unknown): Response {
   if (error instanceof CrmConflictError) {
     return Response.json({ error: error.message, code: "CONFLICT" }, { status: 409 });
   }
-  const code = (error as { code?: string })?.code;
+  // Drizzle wraps driver errors in DrizzleQueryError; the Postgres code is on its cause.
+  const pgError = error as { code?: string; cause?: { code?: string } } | null;
+  const code = pgError?.code ?? pgError?.cause?.code;
   if (code === "23505") {
     return Response.json({ error: "That configuration already exists", code: "CONFLICT" }, { status: 409 });
   }

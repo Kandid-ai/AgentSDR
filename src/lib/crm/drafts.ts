@@ -15,6 +15,7 @@ import {
   withCrmTransaction,
 } from "./repository";
 import { draftInOrg, lockCrmRecord } from "./records";
+import { releaseStepRunDraftLinks } from "./sequences";
 import { currentStageMoveInTransaction } from "./stageMove";
 import {
   crmClassifications,
@@ -204,6 +205,7 @@ async function loadDraftContext(
   }
   const now = new Date();
   if (!draft) {
+    await releaseStepRunDraftLinks(tx, scope.stepRun.id);
     [draft] = await tx.insert(crmDrafts).values({
       crmRecordId: record.id,
       conversationId: scope.conversation.id,
