@@ -28,7 +28,9 @@ export function DemoProvider({ enabled, children }: { enabled: boolean; children
     if (!enabled) return;
     const original = window.fetch;
     const watched = async (...args: Parameters<typeof fetch>) => {
-      const response = await original(...args);
+      // Called on window: WebKit (Safari, every iPhone browser) may refuse a
+      // detached fetch, and then every request on the page fails.
+      const response = await original.apply(window, args);
       // Only a change the visitor asked for: a read the demo refuses (a
       // page's background request) is the page's own business to show.
       const [input, init] = args;
