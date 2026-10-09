@@ -266,7 +266,9 @@ export default function ReplyComposer({
       className={cn(
         // A column whose body is the only part that gives way, so the footer
         // with Send stays in view however little room the dock leaves.
-        "flex flex-col rounded-2xl bg-bg-white-0 shadow-regular-md ring-1 ring-inset",
+        // min-h-0 lets it shrink inside the capped dock; without it a long
+        // body pushes the footer past the dock and the pane clips it.
+        "flex min-h-0 flex-col rounded-2xl bg-bg-white-0 shadow-regular-md ring-1 ring-inset",
         isDraftApproval ? "ring-primary-alpha-24" : "ring-stroke-soft-200",
       )}
     >
