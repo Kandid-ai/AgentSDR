@@ -10,6 +10,7 @@ import * as Input from "@/components/alignui/input";
 import * as Modal from "@/components/alignui/modal";
 import * as Textarea from "@/components/alignui/textarea";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
+import { DocsLink } from "@/components/page/DocsLink";
 import { useDialogs } from "@/components/DialogProvider";
 import { Callout, Field } from "@/components/settings/SettingsKit";
 import { PLATFORM_INTEGRATIONS, type PlatformIntegration, type PlatformKey, type PlatformStatus, type SetupStep, type UnipileWebhookRegistration } from "@/lib/platform/catalog";
@@ -123,9 +124,15 @@ function PlatformCard({
               </div>
               <p className="mt-1 text-paragraph-sm text-text-sub-600">{integration.description}</p>
               <p className="mt-1 text-paragraph-xs text-text-soft-400">Powers: {integration.enables.join(", ")}</p>
+              {connected && integration.guideUrl && (
+                <DocsLink href={integration.guideUrl} appearance="inline" className="mt-1.5 text-paragraph-xs">
+                  Setup guide
+                </DocsLink>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {!connected && integration.guideUrl && <DocsLink href={integration.guideUrl} />}
             {connected && (
               <Button.Root variant="error" mode="ghost" size="small" disabled={busy} onClick={disconnect}>
                 Disconnect

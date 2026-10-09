@@ -6,6 +6,7 @@ import { RiErrorWarningLine, RiMailCheckLine, RiMailLine, RiMailSendLine, RiSpee
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
 import { KpiCell, KpiStrip } from "@/components/analytics/kit/KpiStrip";
 import { formatPercent } from "@/components/analytics/theme";
+import { DocsLink } from "@/components/page/DocsLink";
 import { EmptyState } from "@/components/page/EmptyState";
 import { ACCOUNTS_PAGE_SIZE, AccountsFrame, AccountsNoMatch, AccountsPager, type AccountFilter } from "@/components/settings/AccountsOverview";
 import AddMailboxButton from "./AddMailboxButton";
@@ -55,7 +56,12 @@ export default function MailboxesPageClient({ mailboxes }: { mailboxes: Mailbox[
             icon={RiMailLine}
             title="No mailboxes yet"
             description="Add a Google Workspace address authorised for sending, and campaigns can start sending from it."
-            action={<AddMailboxButton />}
+            action={
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <AddMailboxButton />
+                <DocsLink page="email/connect#add-a-mailbox" />
+              </div>
+            }
           />
         </FramePanel>
       </Frame>

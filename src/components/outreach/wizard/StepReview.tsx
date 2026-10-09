@@ -10,7 +10,10 @@ import {
   RiTeamLine,
 } from "@remixicon/react";
 
+import Link from "next/link";
+
 import * as Button from "@/components/alignui/button";
+import { DocsLink } from "@/components/page/DocsLink";
 import type { SequenceStep } from "@/lib/outreach/schema";
 
 type MailboxSummary = { status: string };
@@ -94,7 +97,7 @@ export default function StepReview({
         ))}
       </div>
 
-      <div className={`mt-4 flex items-center gap-3 rounded-xl px-4 py-3 text-paragraph-sm ${
+      <div className={`mt-4 flex flex-wrap items-center gap-3 rounded-xl px-4 py-3 text-paragraph-sm ${
         connectedMailboxes === null
           ? "bg-bg-weak-50 text-text-sub-600 ring-1 ring-inset ring-stroke-soft-200"
           : connectedMailboxes > 0
@@ -106,7 +109,17 @@ export default function StepReview({
           ? "Checking mailboxes…"
           : connectedMailboxes > 0
             ? `${connectedMailboxes} mailbox${connectedMailboxes === 1 ? "" : "es"} connected and ready to send — round-robin assignment`
-            : "No connected mailboxes — connect one before launching"}
+            : (
+              <>
+                <span className="min-w-0 flex-1">No connected mailboxes — connect one before launching</span>
+                <span className="flex flex-wrap items-center gap-3 text-paragraph-xs">
+                  <Link href="/settings/email-accounts" className="font-medium underline underline-offset-2">
+                    Add a mailbox
+                  </Link>
+                  <DocsLink page="email/connect#add-a-mailbox" appearance="inline" className="text-current underline" />
+                </span>
+              </>
+            )}
       </div>
 
       {leadCount === 0 && <p className="mt-3 text-paragraph-xs text-away-base">No leads are enrolled yet. Save as draft, or go back and add recipients before launching.</p>}

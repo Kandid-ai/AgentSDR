@@ -14,6 +14,7 @@ import {
 } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Select from "@/components/alignui/select";
+import { DocsLink } from "@/components/page/DocsLink";
 import { EmptyState } from "@/components/page/EmptyState";
 import { PageHeader } from "@/components/page/PageHeader";
 import { Skeleton } from "@/components/page/Skeletons";
@@ -349,9 +350,12 @@ export function WhatsappMessagesClient({ initialChatId = null }: { initialChatId
                   : "Chats appear as leads reply, or import recent ones from your linked numbers."
               }
               action={
-                <Button.Root variant="neutral" mode="stroke" size="xsmall" asChild>
-                  <Link href="/settings/whatsapp-accounts">{accounts.length === 0 ? "Link a number" : "WhatsApp numbers"}</Link>
-                </Button.Root>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button.Root variant="neutral" mode="stroke" size="xsmall" asChild>
+                    <Link href="/settings/whatsapp-accounts">{accounts.length === 0 ? "Link a number" : "WhatsApp numbers"}</Link>
+                  </Button.Root>
+                  {accounts.length === 0 && <DocsLink page="whatsapp/accounts#link-a-number" size="xsmall" />}
+                </div>
               }
             />
           )

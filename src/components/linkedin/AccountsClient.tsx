@@ -24,6 +24,7 @@ import * as Table from "@/components/alignui/table";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
 import { KpiCell, KpiStrip } from "@/components/analytics/kit/KpiStrip";
 import { CHANNEL_META, HUE, formatPercent } from "@/components/analytics/theme";
+import { DocsLink } from "@/components/page/DocsLink";
 import { EmptyState } from "@/components/page/EmptyState";
 import {
   AccountIdentity,
@@ -527,7 +528,12 @@ export function AccountsClient({
             icon={RiLinkedinBoxFill}
             title="No LinkedIn accounts yet"
             description="Connect one through Unipile — it syncs back here as soon as you finish."
-            action={<ConnectAccountButton />}
+            action={
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <ConnectAccountButton />
+                <DocsLink page="linkedin/accounts#add-a-linkedin-account" />
+              </div>
+            }
           />
         </FramePanel>
       </Frame>

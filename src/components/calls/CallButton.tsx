@@ -6,7 +6,9 @@ import { RiArrowDownSLine, RiLoader4Line, RiPhoneLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Modal from "@/components/alignui/modal";
+import { DocsLink } from "@/components/page/DocsLink";
 import { MIN_RECORDER_VERSION } from "@/lib/calls/contract";
+import type { DocsPage } from "@/lib/support";
 import { RECORDER_SETUP_PATH } from "@/lib/calls/recorderRelease";
 import { abandonCall, isRecorderInstalled, isRecorderOutdated, recorderVersion, sendToRecorder, startCall } from "@/lib/calls/client";
 import { cn } from "@/utils/cn";
@@ -28,8 +30,8 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
   // Anything that is not about the number itself — no extension, an
   // outdated one, the extension refusing — is a notice, not the number modal:
   // opening "Change number" for those sends the rep fixing the wrong thing.
-  /** `download`: the fix is getting the extension, so the notice links to it. */
-  const [notice, setNotice] = useState<{ title: string; description: string; download?: boolean } | null>(null);
+  /** `download`: the fix is getting the extension, so the notice links to it (and `guide`, our docs on it). */
+  const [notice, setNotice] = useState<{ title: string; description: string; download?: boolean; guide?: { page: DocsPage; label: string } } | null>(null);
   const [numberOpen, setNumberOpen] = useState(false);
   const [numberValue, setNumberValue] = useState("");
   const [modalError, setModalError] = useState("");
@@ -111,6 +113,7 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
         title: "Call recorder not found",
         description: "Install the AgentSDR Call Recorder extension to call from here.",
         download: true,
+        guide: { page: "whatsapp/calling#install-the-extension", label: "How to install" },
       });
       return false;
     }
@@ -120,6 +123,7 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
         title: "Reload the call recorder",
         description: `Chrome is running version ${version ?? "unknown"} of the extension; this page needs ${MIN_RECORDER_VERSION} or newer. Download the latest, replace the extension's folder with it, then click the reload arrow on AgentSDR Call Recorder in chrome://extensions and reload this page.`,
         download: true,
+        guide: { page: "whatsapp/calling#update-the-extension", label: "How to update" },
       });
       return false;
     }
@@ -187,6 +191,7 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
             <Modal.Description>{notice?.description}</Modal.Description>
           </Modal.Header>
           <Modal.Footer>
+            {notice?.guide && <DocsLink page={notice.guide.page}>{notice.guide.label}</DocsLink>}
             {notice?.download && (
               <Button.Root asChild variant="neutral" mode="stroke" size="small">
                 <Link href={RECORDER_SETUP_PATH} onClick={() => setNotice(null)}>Get the extension</Link>

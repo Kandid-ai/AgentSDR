@@ -30,6 +30,7 @@ import {
 } from "@/lib/ai/catalog";
 import type { AiModelChoice } from "@/lib/ai/catalog";
 import { AiBrandIcon } from "@/components/ai/AiBrandIcon";
+import { DocsLink } from "@/components/page/DocsLink";
 import * as Select from "@/components/alignui/select";
 
 type OpenRouterChoice = AiModelChoice & { upstreamProvider: string; upstreamProviderName: string };
@@ -582,7 +583,8 @@ export default function AiDialog({
 
           {provider && !connectionId && (
             <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4 text-[13px] text-amber-900 dark:text-amber-400">
-              OpenRouter is not configured. Connect it and choose allowed BYOK models in <Link className="font-semibold underline" href="/settings/ai">AI Settings</Link>.
+              OpenRouter is not configured. Connect it and choose allowed BYOK models in <Link className="font-semibold underline" href="/settings/ai">AI Settings</Link>.{" "}
+              <DocsLink page="integrations/openrouter#set-it-up" appearance="inline" className="ml-1 text-current underline" />
             </div>
           )}
 

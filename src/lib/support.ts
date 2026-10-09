@@ -13,6 +13,34 @@ export const SUPPORT_LINKS = {
 } as const;
 
 /**
+ * The pages of our own docs (docs/*.mdx, served at SUPPORT_LINKS.docs) the
+ * app links to, optionally with a section anchor (Mintlify slugifies the
+ * heading). Listed here so a link cannot point at a page that does not
+ * exist: support.test.ts checks every entry against docs/.
+ */
+export const DOCS_PAGES = [
+  "email/connect#add-a-mailbox",
+  "integrations/google-workspace",
+  "integrations/unipile",
+  "integrations/cloudflare-r2",
+  "linkedin/accounts#add-a-linkedin-account",
+  "whatsapp/accounts",
+  "whatsapp/accounts#link-a-number",
+  "whatsapp/calling#what-you-need",
+  "whatsapp/calling#install-the-extension",
+  "whatsapp/calling#update-the-extension",
+  "integrations/openrouter#set-it-up",
+  "integrations/enrichment-providers#connect-a-provider-account",
+] as const;
+
+export type DocsPage = (typeof DOCS_PAGES)[number];
+
+/** The public URL of one of our docs pages, e.g. `docsPageUrl("integrations/unipile")`. */
+export function docsPageUrl(page: DocsPage): string {
+  return `${SUPPORT_LINKS.docs}/${page}`;
+}
+
+/**
  * The bug form, with its `version` field prefilled (GitHub issue forms read a
  * query param named after the field id). Only the app version goes in the
  * link: never the page, the person or their organization.

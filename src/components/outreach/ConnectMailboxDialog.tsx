@@ -8,6 +8,7 @@ import * as Button from "@/components/alignui/button";
 import * as Input from "@/components/alignui/input";
 import * as Modal from "@/components/alignui/modal";
 import * as Textarea from "@/components/alignui/textarea";
+import { DocsLink } from "@/components/page/DocsLink";
 import { Callout, Field } from "@/components/settings/SettingsKit";
 
 type Stage = "form" | "testing" | "success" | "failed";
@@ -61,6 +62,7 @@ export default function ConnectMailboxDialog({ onClose }: { onClose: () => void 
         <Modal.Header icon={RiMailAddLine}>
           <Modal.Title>Add a mailbox</Modal.Title>
           <Modal.Description>A Google Workspace address already authorised for sending. It is tested before it is saved.</Modal.Description>
+          <DocsLink page="email/connect#add-a-mailbox" appearance="inline" className="mt-1.5 text-paragraph-xs" />
         </Modal.Header>
 
         {(stage === "form" || stage === "failed") && (

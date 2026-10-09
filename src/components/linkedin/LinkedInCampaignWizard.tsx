@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, FileSpreadsheet, Loader2, Rocket, Users } from "lucide-react";
 import { RiCheckLine, RiDraftLine, RiStackLine, RiTeamLine } from "@remixicon/react";
@@ -13,6 +14,7 @@ import CampaignCsvMappingDialog from "@/components/leads/CampaignCsvMappingDialo
 import { LinkedInAccountTag } from "@/components/linkedin/LinkedInAccountTag";
 import { LinkedInSequenceEditor } from "@/components/linkedin/LinkedInSequenceEditor";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
+import { DocsLink } from "@/components/page/DocsLink";
 import { PageHeader } from "@/components/page/PageHeader";
 import { EMPTY_LINKEDIN_SEQUENCE, type LinkedinCampaignSequence } from "@/lib/linkedin/campaignSequence";
 import { cn } from "@/utils/cn";
@@ -214,7 +216,15 @@ export function LinkedInCampaignWizard({ accounts }: { accounts: Account[] }) {
                   <fieldset>
                     <legend className="mb-2 block text-label-sm text-text-strong-950">LinkedIn senders</legend>
                     {accounts.length === 0 ? (
-                      <p className="rounded-xl bg-warning-lighter p-3 text-paragraph-sm text-warning-dark">Connect a LinkedIn account before launching. You can still save this campaign paused.</p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-warning-lighter p-3 text-paragraph-sm text-warning-dark">
+                        <span className="min-w-0 flex-1">Connect a LinkedIn account before launching. You can still save this campaign paused.</span>
+                        <span className="flex flex-wrap items-center gap-3 text-paragraph-xs">
+                          <Link href="/settings/linkedin-accounts" className="font-medium underline underline-offset-2">
+                            Connect an account
+                          </Link>
+                          <DocsLink page="linkedin/accounts#add-a-linkedin-account" appearance="inline" className="text-current underline" />
+                        </span>
+                      </div>
                     ) : (
                       <div className="grid gap-2 sm:grid-cols-2">
                         {accounts.map((account) => {

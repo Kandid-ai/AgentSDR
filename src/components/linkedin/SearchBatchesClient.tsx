@@ -27,6 +27,7 @@ import * as Table from "@/components/alignui/table";
 import { CapacityMeter } from "@/components/analytics/kit/CapacityMeter";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
 import { useDialogs } from "@/components/DialogProvider";
+import { DocsLink } from "@/components/page/DocsLink";
 import { EmptyState } from "@/components/page/EmptyState";
 import { PageHeader } from "@/components/page/PageHeader";
 import { DAILY_SEARCH_LEAD_LIMIT, getSearchUsage } from "@/lib/linkedin/searchLeadLimit";
@@ -161,9 +162,12 @@ function CapacityCard({ accounts }: { accounts: SearchAccount[] }) {
             title="No connected LinkedIn accounts"
             description="Connect an account to run searches with it."
             action={
-              <AlignButton.Root variant="neutral" mode="stroke" size="xsmall" asChild>
-                <Link href="/settings/linkedin-accounts">LinkedIn accounts</Link>
-              </AlignButton.Root>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <AlignButton.Root variant="neutral" mode="stroke" size="xsmall" asChild>
+                  <Link href="/settings/linkedin-accounts">LinkedIn accounts</Link>
+                </AlignButton.Root>
+                <DocsLink page="linkedin/accounts#add-a-linkedin-account" size="xsmall" />
+              </div>
             }
           />
         ) : (

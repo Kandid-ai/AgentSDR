@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { SequenceStep } from "@/lib/outreach/schema";
 import * as Select from "@/components/alignui/select";
@@ -174,7 +175,14 @@ export default function PreviewModal({
               <p className="text-sm text-text-strong-950 mb-3">
                 {preview.mailbox
                   ? `${preview.mailbox.displayName ? `${preview.mailbox.displayName} · ` : ""}${preview.mailbox.emailAddress}`
-                  : "No mailbox connected"}
+                  : (
+                    <>
+                      No mailbox connected ·{" "}
+                      <Link href="/settings/email-accounts" className="text-primary-base underline-offset-2 hover:underline">
+                        Add a mailbox
+                      </Link>
+                    </>
+                  )}
               </p>
 
               <div className="mb-1 text-[11px] uppercase tracking-wide text-text-strong-950/35">To</div>

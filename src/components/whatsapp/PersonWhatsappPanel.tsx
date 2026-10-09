@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RiLoader4Line } from "@remixicon/react";
+import { DocsLink } from "@/components/page/DocsLink";
 import { WhatsappComposer, WhatsappMessageList } from "@/components/whatsapp/WhatsappThread";
 import { useVisiblePolling, WHATSAPP_POLL_INTERVAL_MS } from "@/components/whatsapp/usePolling";
 import { errorMessage } from "@/components/crm/crm-utils";
@@ -100,6 +101,8 @@ export function PersonWhatsappPanel({
         <p className="text-paragraph-xs text-text-sub-600">
           {fallbackSend ? "No WhatsApp number is linked, so this opens WhatsApp Web instead. " : "No WhatsApp number is linked, so messages cannot be sent from here. "}
           <Link href="/settings/whatsapp-accounts" className="text-primary-base hover:underline">Link a number</Link>
+          {" · "}
+          <DocsLink page="whatsapp/accounts#link-a-number" appearance="inline" className="font-normal" />
         </p>
       )}
       <WhatsappComposer

@@ -18,6 +18,7 @@ import type { GridColumn } from "@/lib/grid/schema";
 import type { IntegrationConnection } from "@/lib/grid/providers";
 import type { EnrichmentConfig } from "@/lib/grid/types";
 import { effectiveColumnType, inputAcceptsColumnType } from "@/lib/grid/value-types";
+import { DocsLink } from "@/components/page/DocsLink";
 import IntegrationIcon from "./IntegrationIcon";
 import {
   ACTION_CATEGORIES,
@@ -801,7 +802,10 @@ function Catalog({
               {!addingAccount ? (
                 <div>
                   <p className="text-[13px] font-semibold text-text-strong-950">Connect {integration?.name} to use its actions</p>
-                  <p className="mt-1 text-[12px] text-text-sub-600">Your credentials will be verified before the integration is enabled.</p>
+                  <p className="mt-1 text-[12px] text-text-sub-600">
+                    Your credentials will be verified before the integration is enabled.{" "}
+                    <DocsLink page="integrations/enrichment-providers#connect-a-provider-account" appearance="inline" className="ml-1 text-[12px]" />
+                  </p>
                 </div>
               ) : (
                 <div className="rounded-xl border border-blue-200 dark:border-blue-500/30 bg-bg-white-0 p-4">

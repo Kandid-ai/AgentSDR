@@ -14,6 +14,8 @@
  * `credentials.ts`.
  */
 
+import { docsPageUrl } from "@/lib/support";
+
 export type PlatformKey = "unipile" | "google" | "r2";
 
 /** The decrypted credential object stored for each platform. */
@@ -73,7 +75,7 @@ export type PlatformIntegration = {
   iconUrl: string;
   /** Numbered "How to connect" steps at the top of the connect dialog. */
   setupSteps: SetupStep[];
-  /** Our own written walkthrough, once there is one. */
+  /** Our own written walkthrough (docs.agentsdr.ai), shown as "How to connect" wherever it is connected. */
   guideUrl?: string;
   /** Our own video walkthrough, once there is one. */
   videoUrl?: string;
@@ -102,6 +104,7 @@ export const PLATFORM_INTEGRATIONS: readonly PlatformIntegration[] = [
     enables: ["LinkedIn accounts and campaigns", "WhatsApp messaging and calling"],
     websiteUrl: "https://www.unipile.com",
     iconUrl: "/Integrations - Icon/unipile.png",
+    guideUrl: docsPageUrl("integrations/unipile"),
     docsUrl: "https://developer.unipile.com/docs/getting-started",
     setupSteps: [
       "Sign in to the Unipile dashboard at dashboard.unipile.com.",
@@ -144,6 +147,7 @@ export const PLATFORM_INTEGRATIONS: readonly PlatformIntegration[] = [
     enables: ["Email accounts", "Email campaigns and reply sync"],
     websiteUrl: "https://workspace.google.com",
     iconUrl: "/Integrations - Icon/google.svg",
+    guideUrl: docsPageUrl("integrations/google-workspace"),
     docsUrl: "https://developers.google.com/identity/protocols/oauth2/service-account#delegatingauthority",
     setupSteps: [
       "In the Google Cloud console, open APIs & Services → Library and enable the Gmail API.",
@@ -209,6 +213,7 @@ export const PLATFORM_INTEGRATIONS: readonly PlatformIntegration[] = [
     enables: ["Call recordings", "Contact photos"],
     websiteUrl: "https://www.cloudflare.com/developer-platform/products/r2/",
     iconUrl: "/Integrations - Icon/cloudflare.svg",
+    guideUrl: docsPageUrl("integrations/cloudflare-r2"),
     docsUrl: "https://developers.cloudflare.com/r2/api/tokens/",
     setupSteps: [
       "In the Cloudflare dashboard, open R2 Object Storage and create a bucket for recordings (or pick an existing one).",

@@ -5,6 +5,7 @@ import { RiChromeLine, RiDownload2Line, RiRefreshLine } from "@remixicon/react";
 import * as Badge from "@/components/alignui/badge";
 import * as Button from "@/components/alignui/button";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
+import { DocsLink } from "@/components/page/DocsLink";
 import { isRecorderInstalled, recorderVersion, sendToRecorder } from "@/lib/calls/client";
 import { RECORDER_INSTALLED_ATTRIBUTE } from "@/lib/calls/contract";
 import {
@@ -83,25 +84,31 @@ export function RecorderExtensionCard() {
               <p className="mt-1 text-paragraph-xs text-text-soft-400">Latest version: {LATEST_RECORDER_VERSION}</p>
             </div>
           </div>
-          {outdated && canSelfUpdate ? (
-            <Button.Root variant="primary" mode="filled" size="small" className="shrink-0" onClick={() => void openUpdater()}>
-              <Button.Icon as={RiRefreshLine} />
-              Update
-            </Button.Root>
-          ) : (
-            <Button.Root
-              asChild
-              variant={outdated || installed.state === "missing" ? "primary" : "neutral"}
-              mode={outdated || installed.state === "missing" ? "filled" : "stroke"}
-              size="small"
-              className="shrink-0"
-            >
-              <a href={RECORDER_DOWNLOAD_PATH} download>
-                <Button.Icon as={RiDownload2Line} />
-                Download
-              </a>
-            </Button.Root>
-          )}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {outdated ? (
+              <DocsLink page="whatsapp/calling#update-the-extension">How to update</DocsLink>
+            ) : (
+              <DocsLink page="whatsapp/calling#install-the-extension">{installed.state === "missing" ? "How to install" : "Setup guide"}</DocsLink>
+            )}
+            {outdated && canSelfUpdate ? (
+              <Button.Root variant="primary" mode="filled" size="small" onClick={() => void openUpdater()}>
+                <Button.Icon as={RiRefreshLine} />
+                Update
+              </Button.Root>
+            ) : (
+              <Button.Root
+                asChild
+                variant={outdated || installed.state === "missing" ? "primary" : "neutral"}
+                mode={outdated || installed.state === "missing" ? "filled" : "stroke"}
+                size="small"
+              >
+                <a href={RECORDER_DOWNLOAD_PATH} download>
+                  <Button.Icon as={RiDownload2Line} />
+                  Download
+                </a>
+              </Button.Root>
+            )}
+          </div>
         </div>
         {updateError && <p className="text-paragraph-sm text-error-base">{updateError}</p>}
 

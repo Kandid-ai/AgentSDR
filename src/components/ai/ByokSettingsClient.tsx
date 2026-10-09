@@ -17,6 +17,7 @@ import * as Checkbox from "@/components/alignui/checkbox";
 import * as Input from "@/components/alignui/input";
 import * as Select from "@/components/alignui/select";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
+import { DocsLink } from "@/components/page/DocsLink";
 import { EmptyState } from "@/components/page/EmptyState";
 import { PlatformLogo } from "@/components/settings/PlatformConnection";
 import { Callout, Field } from "@/components/settings/SettingsKit";
@@ -598,6 +599,7 @@ export default function ByokSettingsClient() {
               <Button.Icon as={RiKey2Line} />
               {connections.length ? "Connect another account" : "Connect OpenRouter"}
             </Button.Root>
+            {!connections.length && <DocsLink page="integrations/openrouter#set-it-up" />}
             {!selectedConnection && <p className="text-paragraph-xs text-text-sub-600">Connect an account to choose providers and models.</p>}
           </div>
         ) : (
@@ -607,7 +609,10 @@ export default function ByokSettingsClient() {
                 <h4 className="text-label-sm text-text-strong-950">Connect OpenRouter</h4>
                 <p className="mt-0.5 text-paragraph-xs text-text-sub-600">Create or copy both keys from the OpenRouter dashboard. They are verified before they are saved.</p>
               </div>
-              <a href={KEYS_URL} target="_blank" rel="noreferrer" className={linkClass}>Open dashboard<RiExternalLinkLine className="size-3.5" aria-hidden="true" /></a>
+              <div className="flex flex-wrap items-center gap-3">
+                <DocsLink page="integrations/openrouter#set-it-up" appearance="inline" className={linkClass} />
+                <a href={KEYS_URL} target="_blank" rel="noreferrer" className={linkClass}>Open dashboard<RiExternalLinkLine className="size-3.5" aria-hidden="true" /></a>
+              </div>
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-3">
               <Field label="Account name" htmlFor="or-name" optional>
