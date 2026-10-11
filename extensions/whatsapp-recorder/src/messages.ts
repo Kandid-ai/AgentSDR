@@ -8,7 +8,13 @@
  * the rest.
  */
 
-import type { RecorderBridgeRequest, RecorderCallPhase, RecorderLead } from "../../../src/lib/calls/contract";
+import type {
+  AgentTokenResponse,
+  RecorderAgent,
+  RecorderBridgeRequest,
+  RecorderCallPhase,
+  RecorderLead,
+} from "../../../src/lib/calls/contract";
 
 /** A call placed from the app, which the next recording belongs to. */
 export type ActiveCall = {
@@ -27,13 +33,18 @@ export type ActiveCall = {
   lead?: RecorderLead | null;
   /** The AgentSDR tab the call was placed from — "Back to AgentSDR" returns there. */
   appTabId?: number;
+  /** Set: the AI voice agent talks in this call instead of the rep. */
+  agent?: RecorderAgent | null;
 };
 
 /** What the service worker keeps after a call ends, for the call card's status checks. */
 export type RecentCall = Pick<ActiveCall, "callId" | "recorderToken" | "apiBase" | "appTabId"> & { endedAt: number };
 
 /** What wa-agent is told about the call to place in its tab — never the token. */
-export type WaCall = { callId: string; phone: string; lead: RecorderLead | null };
+export type WaCall = { callId: string; phone: string; lead: RecorderLead | null; agent: boolean };
+
+/** The service worker's answer to wa:agent-token. */
+export type AgentTokenResult = ({ ok: true } & AgentTokenResponse) | { ok: false; error: string };
 
 /**
  * Service worker → wa-agent in an already-loaded WhatsApp tab: open this chat
@@ -87,7 +98,9 @@ export type BackgroundMessage =
   /** The call card's phase changed; forwarded to the AgentSDR tab that placed the call. */
   | { target: "background"; type: "wa:phase"; callId: string; phase: RecorderCallPhase }
   /** A timed step of a call, for the timing table printed in the AgentSDR tab's console. */
-  | { target: "background"; type: "wa:trace"; callId: string; step: string };
+  | { target: "background"; type: "wa:trace"; callId: string; step: string }
+  /** A Gemini Live token for the AI agent on this call; answered with an AgentTokenResult. */
+  | { target: "background"; type: "wa:agent-token"; callId: string };
 
 /** The "wa-recording" port: wa-agent streams the file to the service worker. */
 export const WA_RECORDING_PORT = "wa-recording";

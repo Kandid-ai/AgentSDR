@@ -16,14 +16,21 @@ export const AGENT_SOURCE = "agentsdr-wa-agent";
 
 export type AgentToHook =
   /** Record the next call in this tab; nothing is recorded unless armed. */
-  | { source: typeof AGENT_SOURCE; type: "arm"; callId: string }
+  /** `agent`: the AI voice agent talks in this call — WhatsApp gets its voice as the microphone. */
+  | { source: typeof AGENT_SOURCE; type: "arm"; callId: string; agent?: boolean }
   | { source: typeof AGENT_SOURCE; type: "disarm" }
   /** The rep clicked the "turn on call audio" prompt — resume suspended audio. */
   | { source: typeof AGENT_SOURCE; type: "resume-audio" }
   /** Press WhatsApp's End call, wherever it is — the page or its picture-in-picture window. */
   | { source: typeof AGENT_SOURCE; type: "end-call"; callId: string }
   /** Which call, if any, wa-hook is recording or finishing off — answered with probe-result. */
-  | { source: typeof AGENT_SOURCE; type: "probe" };
+  | { source: typeof AGENT_SOURCE; type: "probe" }
+  /** The agent's voice: mono 16-bit PCM at `rate` Hz, queued after what is already playing. */
+  | { source: typeof AGENT_SOURCE; type: "agent-play"; callId: string; pcm: ArrayBuffer; rate: number }
+  /** The lead talked over the agent: drop the agent's voice still queued. */
+  | { source: typeof AGENT_SOURCE; type: "agent-interrupt"; callId: string }
+  /** The agent ended the call: hang up once its goodbye has finished playing. */
+  | { source: typeof AGENT_SOURCE; type: "agent-hangup"; callId: string };
 
 export type HookToAgent =
   /** WhatsApp opened the microphone for the call: it is dialing or ringing. */
@@ -54,4 +61,6 @@ export type HookToAgent =
   | { source: typeof HOOK_SOURCE; type: "diag"; callId: string; text: string }
   | { source: typeof HOOK_SOURCE; type: "probe-result"; callId: string | null }
   /** WhatsApp's call screen appeared for this call — the rep can go back to AgentSDR. */
-  | { source: typeof HOOK_SOURCE; type: "call-ui"; callId: string };
+  | { source: typeof HOOK_SOURCE; type: "call-ui"; callId: string }
+  /** The lead's side of an agent call, from the pick-up on: mono 16-bit PCM at 16 kHz. */
+  | { source: typeof HOOK_SOURCE; type: "agent-audio"; callId: string; pcm: ArrayBuffer };

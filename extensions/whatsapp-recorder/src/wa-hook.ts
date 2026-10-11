@@ -32,6 +32,14 @@
  *
  * Nothing is recorded unless wa-agent armed this tab for a call placed from
  * AgentSDR — the rep's own calls are never touched.
+ *
+ * An agent call (trial) is armed with `agent`: the AI voice agent talks
+ * instead of the rep. WhatsApp's getUserMedia then gets a microphone track
+ * that carries the agent's voice (a MediaStreamAudioDestinationNode) in place
+ * of the real one, which is released at once; the lead's side, from the
+ * pick-up on, goes to wa-agent as 16 kHz PCM for the model (live-agent.ts).
+ * The rep hears both sides through the speakers, and the recording keeps the
+ * agent left and the lead right, as it would the rep.
  */
 
 import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from "./wa-protocol";
@@ -73,6 +81,30 @@ type Connect = (this: AudioNode, destination: AudioNode | AudioParam, output?: n
 type Disconnect = (this: AudioNode, destination: AudioNode) => void;
 
 type Recording = { recorder: MediaRecorder; chunks: Blob[]; startedAt: number };
+
+/** The audio graph of an agent call: the agent's voice in, the lead's side out. */
+type AgentRig = {
+  callId: string;
+  context: AudioContext;
+  /** The agent's voice, fanned out to the call's microphone tracks and the rep's speakers. */
+  voice: GainNode;
+  /** The agent's voice scheduled to play, stopped when the lead talks over it. */
+  queued: Set<AudioBufferSourceNode>;
+  /** Context time the queued voice runs to. */
+  playHead: number;
+  /** Set at the pick-up: from then on the lead's side goes to the model. */
+  listening: boolean;
+  hangupTimer: number;
+};
+
+/** The sample rate Gemini Live takes its input at. */
+const AGENT_INPUT_RATE = 16_000;
+/** ScriptProcessor block size: ~85 ms at 48 kHz, within the 20–100 ms chunks Live wants. */
+const AGENT_CAPTURE_FRAMES = 4096;
+/** Small lead so the first chunk of a reply does not start mid-render. */
+const AGENT_PLAY_LEAD_S = 0.03;
+/** After the agent's goodbye has played, this long before End call is pressed. */
+const AGENT_HANGUP_GRACE_MS = 800;
 
 type Session = {
   callId: string;
@@ -119,6 +151,9 @@ function install(): void {
   /** Nodes WhatsApp routes to the speakers, per context: the other side of the call. */
   const playback = new Map<BaseAudioContext, Set<AudioNode>>();
   let armedCallId: string | null = null;
+  /** The armed call is an agent call. */
+  let armedAgent = false;
+  let agentRig: AgentRig | null = null;
   let session: Session | null = null;
   /** A call whose recording is being stopped and handed over (end() until "recording" is posted). */
   let finishingCallId: string | null = null;
@@ -155,7 +190,10 @@ function install(): void {
   if (mediaDevices?.getUserMedia) {
     const getUserMedia = mediaDevices.getUserMedia.bind(mediaDevices);
     mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints) => {
-      const stream = await getUserMedia(constraints);
+      let stream = await getUserMedia(constraints);
+      // The real microphone is still asked for, so WhatsApp's permission
+      // flow is unchanged; on an agent call it is released straight away.
+      if (armedCallId && armedAgent && stream.getAudioTracks().length > 0) stream = agentMicrophone(armedCallId, stream);
       const track = stream.getAudioTracks()[0];
       if (track) setTimeout(() => begin(track), MIC_SETTLE_MS);
       return stream;
@@ -166,8 +204,19 @@ function install(): void {
     if (event.source !== window) return;
     const data = event.data as Partial<AgentToHook> | null;
     if (data?.source !== AGENT_SOURCE) return;
-    if (data.type === "arm" && data.callId) arm(data.callId);
-    else if (data.type === "disarm") armedCallId = null;
+    if (data.type === "arm" && data.callId) arm(data.callId, data.agent === true);
+    else if (data.type === "disarm") {
+      armedCallId = null;
+      if (!session) dropAgentRig();
+    }
+    else if (data.type === "agent-play" || data.type === "agent-interrupt" || data.type === "agent-hangup") {
+      // The agent's voice and controls, for the agent call this tab is on.
+      const rig = agentRig;
+      if (!rig || data.callId !== rig.callId) return;
+      if (data.type === "agent-play" && data.pcm) agentPlay(rig, data.pcm, data.rate ?? 24_000);
+      else if (data.type === "agent-interrupt") agentSilence(rig);
+      else if (data.type === "agent-hangup") agentHangup(rig);
+    }
     else if (data.type === "resume-audio") resumeAudio();
     else if (data.type === "probe") post({ source: HOOK_SOURCE, type: "probe-result", callId: session?.callId ?? finishingCallId });
     else if (data.type === "end-call" && data.callId) {
@@ -191,10 +240,12 @@ function install(): void {
   let armSawCallUi = false;
   let armCallUiMissing = 0;
 
-  function arm(callId: string): void {
+  function arm(callId: string, agent: boolean): void {
     // A session whose call ended unseen would block this call's session.
     if (session && !readCallUi().present) end();
+    if (!session) dropAgentRig();
     armedCallId = callId;
+    armedAgent = agent;
     armedAt = Date.now();
     armSawCallUi = false;
     armCallUiMissing = 0;
@@ -222,6 +273,7 @@ function install(): void {
     const callId = armedCallId;
     armedCallId = null;
     window.clearInterval(armWatch);
+    if (!session) dropAgentRig();
     if (callId) post({ source: HOOK_SOURCE, type: "not-answered", callId, dialedAt: armedAt, endedAt: Date.now() });
   }
 
@@ -240,7 +292,9 @@ function install(): void {
     const callId = armedCallId;
     let started: Recording | null = null;
     try {
-      const context = newestPlaybackContext() ?? new AudioContext();
+      const rig = agentRig?.callId === callId ? agentRig : null;
+      // An agent call's graph lives where its microphone track was made.
+      const context = rig?.context ?? newestPlaybackContext() ?? new AudioContext();
       const remoteBus = context.createGain();
       const merger = context.createChannelMerger(2);
       const output = context.createMediaStreamDestination();
@@ -277,6 +331,7 @@ function install(): void {
       link(next, leveled(next, micSource), merger, 0);
       link(next, leveled(next, remoteBus), merger, 1);
       link(next, merger, output);
+      if (rig) captureLead(next, rig);
       for (const [playbackContext, nodes] of playback) {
         if (playbackContext.state !== "closed") for (const node of nodes) tap(next, node);
       }
@@ -367,6 +422,7 @@ function install(): void {
    */
   function answer(current: Session, timerSeen: boolean, answeredAt: number): void {
     current.answeredAt = answeredAt;
+    if (agentRig?.callId === current.callId) agentRig.listening = true;
     current.timerSeen = timerSeen;
     post({ source: HOOK_SOURCE, type: "answered", callId: current.callId, answeredAt, timerSeen });
   }
@@ -439,6 +495,7 @@ function install(): void {
   }
 
   function cleanup(current: Session): void {
+    if (agentRig?.callId === current.callId) dropAgentRig();
     nativeStop.call(current.micClone);
     for (const [from, to] of current.links) {
       try {
@@ -494,6 +551,117 @@ function install(): void {
       if (context instanceof AudioContext && context.state !== "closed") newest = context;
     }
     return newest;
+  }
+
+  // --- the AI voice agent (trial) ---------------------------------------------
+
+  /**
+   * The microphone WhatsApp gets on an agent call: the agent's voice, with
+   * the real microphone released. Any video tracks pass through untouched.
+   */
+  function agentMicrophone(callId: string, real: MediaStream): MediaStream {
+    try {
+      const rig = ensureAgentRig(callId);
+      const destination = rig.context.createMediaStreamDestination();
+      nativeConnect.call(rig.voice, destination, 0, 0);
+      for (const track of real.getAudioTracks()) nativeStop.call(track);
+      return new MediaStream([...destination.stream.getAudioTracks(), ...real.getVideoTracks()]);
+    } catch (error) {
+      // Better the rep's own voice than a dead call.
+      console.warn("[agentsdr agent] could not make the agent's microphone; using the real one", error);
+      return real;
+    }
+  }
+
+  function ensureAgentRig(callId: string): AgentRig {
+    if (agentRig?.callId === callId) return agentRig;
+    dropAgentRig();
+    const context = newestPlaybackContext() ?? new AudioContext();
+    const voice = context.createGain();
+    // The rep hears the agent too. Native connect: this is not WhatsApp's
+    // playback, so it must not be tapped as the lead's side.
+    nativeConnect.call(voice, context.destination, 0, 0);
+    agentRig = { callId, context, voice, queued: new Set(), playHead: 0, listening: false, hangupTimer: 0 };
+    return agentRig;
+  }
+
+  function dropAgentRig(): void {
+    const rig = agentRig;
+    if (!rig) return;
+    agentRig = null;
+    window.clearTimeout(rig.hangupTimer);
+    agentSilence(rig);
+    try {
+      nativeDisconnect.call(rig.voice, rig.context.destination);
+    } catch {
+      // Gone with its context.
+    }
+  }
+
+  /** Sends the lead's side (remoteBus) to wa-agent as 16 kHz mono PCM, once they have picked up. */
+  function captureLead(current: Session, rig: AgentRig): void {
+    const processor = current.context.createScriptProcessor(AGENT_CAPTURE_FRAMES, 1, 1);
+    const sink = current.context.createMediaStreamDestination();
+    const ratio = current.context.sampleRate / AGENT_INPUT_RATE;
+    processor.onaudioprocess = (event) => {
+      if (!rig.listening || agentRig !== rig) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const length = Math.floor(input.length / ratio);
+      const pcm = new Int16Array(length);
+      for (let i = 0; i < length; i++) {
+        const sample = input[Math.min(input.length - 1, Math.round(i * ratio))];
+        pcm[i] = Math.max(-1, Math.min(1, sample)) * 0x7fff;
+      }
+      window.postMessage(
+        { source: HOOK_SOURCE, type: "agent-audio", callId: rig.callId, pcm: pcm.buffer } satisfies HookToAgent,
+        location.origin,
+        [pcm.buffer],
+      );
+    };
+    // A ScriptProcessor only runs while something pulls it; a stream
+    // destination does, without sending anything to the speakers.
+    link(current, current.remoteBus, processor);
+    link(current, processor, sink);
+  }
+
+  /** Queues a chunk of the agent's voice (mono 16-bit PCM) after what is already playing. */
+  function agentPlay(rig: AgentRig, data: ArrayBuffer, rate: number): void {
+    const samples = new Int16Array(data);
+    if (samples.length === 0) return;
+    const buffer = rig.context.createBuffer(1, samples.length, rate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < samples.length; i++) channel[i] = samples[i] / 0x8000;
+    const source = rig.context.createBufferSource();
+    source.buffer = buffer;
+    nativeConnect.call(source, rig.voice, 0, 0);
+    const startAt = Math.max(rig.context.currentTime + AGENT_PLAY_LEAD_S, rig.playHead);
+    source.start(startAt);
+    rig.playHead = startAt + buffer.duration;
+    rig.queued.add(source);
+    source.onended = () => rig.queued.delete(source);
+  }
+
+  function agentSilence(rig: AgentRig): void {
+    for (const source of rig.queued) {
+      try {
+        source.stop();
+      } catch {
+        // Never started or already ended.
+      }
+    }
+    rig.queued.clear();
+    rig.playHead = 0;
+  }
+
+  /** Presses End call once the agent's goodbye has finished playing. */
+  function agentHangup(rig: AgentRig): void {
+    const remainingMs = Math.max(0, rig.playHead - rig.context.currentTime) * 1000;
+    window.clearTimeout(rig.hangupTimer);
+    rig.hangupTimer = window.setTimeout(() => {
+      const button = readCallUi().endButton;
+      if (button) button.click();
+      else if (session) end();
+    }, remainingMs + AGENT_HANGUP_GRACE_MS);
   }
 
   // --- audio that Chrome's autoplay policy held back --------------------------

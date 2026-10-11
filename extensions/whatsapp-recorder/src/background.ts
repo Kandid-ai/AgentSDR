@@ -9,6 +9,8 @@
  */
 
 import type {
+  AgentTokenRequest,
+  AgentTokenResponse,
   FinishCallRequest,
   RecorderBridgeRequest,
   RecorderCallPhase,
@@ -19,6 +21,7 @@ import {
   WA_RECORDING_PORT,
   type ActiveCall,
   type AgentCommand,
+  type AgentTokenResult,
   type BackgroundMessage,
   type BridgeCommand,
   type BridgeResult,
@@ -199,6 +202,9 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
       void forwardPhase(message.callId, message.phase);
       if (TIMING_REPORT_PHASES.has(message.phase.kind)) void reportTiming(message.callId);
       break;
+    case "wa:agent-token":
+      void agentToken(message.callId).then(sendResponse);
+      return true;
     case "wa:trace":
       trace(message.callId, message.step);
       if (/^WhatsApp shows "Ringing/i.test(message.step)) {
@@ -278,6 +284,7 @@ async function startCall(request: RecorderCallRequest, digits: string, appTabId:
     requestedAt: Date.now(),
     lead: request.lead,
     appTabId,
+    agent: request.agent?.brief?.trim() ? { brief: request.agent.brief.trim() } : null,
   };
   await rememberCall(call);
   startTiming(call.callId, request.clickedAt);
@@ -289,7 +296,7 @@ async function startCall(request: RecorderCallRequest, digits: string, appTabId:
   // take several seconds to confirm, and the page gives up on a silent
   // extension after 5 s and marks the call failed — after which the app
   // refuses its recording. From here on the card, not the page, reports.
-  void openChat(digits, { call: { callId: call.callId, phone: call.phone, lead: call.lead ?? null }, focus: true })
+  void openChat(digits, { call: waCall(call), focus: true })
     .then((tabId) => updateActiveCall(call.callId, { tabId }))
     .catch((error) => console.warn("[recorder] could not open the chat", error));
   return { ok: true };
@@ -407,6 +414,25 @@ async function openInPlace(tabId: number, digits: string, options: { call?: WaCa
 }
 
 /** wa-agent's hello: the call to place in its tab, if one was just opened there. */
+/** What wa-agent is told about a call — never its token or the agent's brief. */
+function waCall(call: ActiveCall): WaCall {
+  return { callId: call.callId, phone: call.phone, lead: call.lead ?? null, agent: Boolean(call.agent) };
+}
+
+/** Asks AgentSDR for the AI agent's Gemini Live token, with the call's own bearer token. */
+async function agentToken(callId: string): Promise<AgentTokenResult> {
+  const call = await getActiveCall();
+  if (!call || call.callId !== callId || !call.agent) return { ok: false, error: "This call has no AI agent" };
+  try {
+    const request: AgentTokenRequest = { brief: call.agent.brief, lead: call.lead ?? null };
+    const token = await callApi<AgentTokenResponse>(call, "agent-token", request);
+    trace(callId, "AI agent: token minted");
+    return { ok: true, ...token };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function callForTab(tabId: number | undefined): Promise<WaCall | null> {
   const call = await getActiveCall();
   if (!call || tabId === undefined || call.dialedAt) return null;
@@ -414,7 +440,7 @@ async function callForTab(tabId: number | undefined): Promise<WaCall | null> {
   // it (or comes from the only WhatsApp tab) is still this call's.
   if (call.tabId !== undefined && call.tabId !== tabId) return null;
   if (Date.now() - call.requestedAt >= ACTIVE_CALL_TTL_MS) return null;
-  return { callId: call.callId, phone: call.phone, lead: call.lead ?? null };
+  return waCall(call);
 }
 
 /**

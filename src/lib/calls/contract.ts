@@ -538,6 +538,9 @@ export const RECORDER_INSTALLED_ATTRIBUTE = "data-agentsdr-recorder";
  */
 export const MIN_RECORDER_VERSION = "0.7.0";
 
+/** The oldest extension version that can hand a call to the AI voice agent. */
+export const MIN_AGENT_RECORDER_VERSION = "0.16.0";
+
 export type RecorderBridgeRequest = RecorderCallRequest | RecorderMessageRequest | RecorderEndCallRequest | RecorderUpdateRequest;
 
 export type RecorderCallRequest = {
@@ -554,7 +557,33 @@ export type RecorderCallRequest = {
   lead: RecorderLead | null;
   /** Epoch ms of the rep's click, so the extension can time each step from it. */
   clickedAt?: number;
+  /** Set: the AI voice agent talks to the lead instead of the rep (trial). */
+  agent?: RecorderAgent | null;
 };
+
+// --- AI voice agent (trial) --------------------------------------------------
+
+/**
+ * What the rep asks of the AI voice agent for one call. The agent speaks in
+ * the call through Gemini Live: the lead's audio goes to the model and the
+ * model's voice is what WhatsApp sends as the "microphone".
+ */
+export type RecorderAgent = {
+  /** The rep's instructions: who the agent is, what it is calling about, what it should get. */
+  brief: string;
+};
+
+/** The longest brief the agent-token route accepts. */
+export const MAX_AGENT_BRIEF_CHARS = 4_000;
+
+/** POST /api/call-recorder/calls/:id/agent-token — from the extension's service worker. */
+export type AgentTokenRequest = { brief: string; lead: RecorderLead | null };
+
+/**
+ * A single-use Gemini Live token with the session (model, voice, instructions,
+ * tools) locked into it server-side; the API key never leaves the server.
+ */
+export type AgentTokenResponse = { token: string; model: string; websocketUrl: string };
 
 /** Opens the chat with `text` typed in; the rep reads it and presses Enter. */
 export type RecorderMessageRequest = {

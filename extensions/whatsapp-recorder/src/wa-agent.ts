@@ -22,10 +22,12 @@
 import type { RecorderCallPhase, RecorderCallStatus } from "../../../src/lib/calls/contract";
 import { digitsOnly } from "../../../src/lib/calls/digits";
 import { whatsappContactName, type WhatsappContactName } from "../../../src/lib/calls/whatsappContact";
+import { LiveAgent } from "./live-agent";
 import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from "./wa-protocol";
 import {
   WA_RECORDING_PORT,
   type AgentCommand,
+  type AgentTokenResult,
   type BackgroundMessage,
   type BridgeResult,
   type ProbeResult,
@@ -60,6 +62,8 @@ const RETURN_DELAY_WITH_POPUP_MS = 2_500;
 const TRANSCRIPT_WATCH_MS = 3 * 60 * 1000;
 
 let call: WaCall | null = null;
+/** The AI voice agent's session on the current call, when it is an agent call. */
+let agent: LiveAgent | null = null;
 /** Calls whose recording is on its way to the service worker. */
 const shipping = new Set<string>();
 /**
@@ -144,7 +148,7 @@ chrome.runtime.onMessage.addListener((message: AgentCommand, _sender, sendRespon
 async function placeCall(next: WaCall): Promise<void> {
   call = next;
   trace(next.callId, "WhatsApp tab: looking for the Voice call button");
-  toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId });
+  toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent });
   phase({ kind: "opening" });
 
   const savedName = whatsappContactName(next.lead)?.display ?? null;
@@ -623,6 +627,10 @@ function onHookMessage(event: MessageEvent): void {
   switch (data.type) {
     case "dialing":
       phase({ kind: "ringing" });
+      if (call.agent) startAgent(callId);
+      break;
+    case "agent-audio":
+      agent?.sendAudio(data.pcm);
       break;
     case "call-status":
       trace(callId, `WhatsApp shows "${data.text}"`);
@@ -635,6 +643,7 @@ function onHookMessage(event: MessageEvent): void {
       trace(callId, `hook: ${data.text}`);
       break;
     case "answered":
+      agent?.greet();
       void send({ target: "background", type: "wa:answered", callId, answeredAt: data.answeredAt });
       phase({ kind: "on-call", answeredAt: data.answeredAt, timerSeen: data.timerSeen });
       break;
@@ -648,17 +657,20 @@ function onHookMessage(event: MessageEvent): void {
       });
       break;
     case "not-answered":
+      stopAgent();
       void send({ target: "background", type: "wa:not-answered", callId, dialedAt: data.dialedAt, endedAt: data.endedAt });
       phase({ kind: "not-answered" });
       returnToApp(callId, RETURN_DELAY_MS);
       break;
     case "recording":
+      stopAgent();
       // The upload and transcription carry on in this tab while the rep is
       // back in AgentSDR, whose contact panel shows them arriving.
       void ship(callId, data.blob, data.startedAt, data.answeredAt, data.endedAt);
       returnToApp(callId, RETURN_DELAY_MS);
       break;
     case "recording-failed":
+      stopAgent();
       void send({ target: "background", type: "wa:recording-failed", callId, error: data.error });
       phase({ kind: "error", message: `Recording failed: ${data.error}`, savedLocally: false });
       break;
@@ -780,10 +792,31 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// --- the AI voice agent (trial) ------------------------------------------------
+
+/** Opened while the call rings, so the agent is ready to speak the moment the lead picks up. */
+function startAgent(callId: string): void {
+  stopAgent();
+  const session = new LiveAgent({
+    play: (pcm, rate) => toHook({ source: AGENT_SOURCE, type: "agent-play", callId, pcm, rate }, [pcm]),
+    interrupt: () => toHook({ source: AGENT_SOURCE, type: "agent-interrupt", callId }),
+    hangup: () => toHook({ source: AGENT_SOURCE, type: "agent-hangup", callId }),
+    trace: (step) => trace(callId, step),
+    token: () => send<AgentTokenResult>({ target: "background", type: "wa:agent-token", callId }),
+  });
+  agent = session;
+  session.start().catch((error: unknown) => trace(callId, `AI agent: failed to start — ${String(error)}`));
+}
+
+function stopAgent(): void {
+  agent?.close();
+  agent = null;
+}
+
 // --- plumbing ------------------------------------------------------------------
 
-function toHook(message: AgentToHook): void {
-  window.postMessage(message, location.origin);
+function toHook(message: AgentToHook, transfer: Transferable[] = []): void {
+  window.postMessage(message, location.origin, transfer);
 }
 
 function send<T = unknown>(message: BackgroundMessage): Promise<T> {

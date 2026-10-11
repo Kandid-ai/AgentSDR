@@ -2,20 +2,32 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { RiArrowDownSLine, RiLoader4Line, RiPhoneLine } from "@remixicon/react";
+import { RiArrowDownSLine, RiLoader4Line, RiPhoneLine, RiRobot2Line } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Modal from "@/components/alignui/modal";
+import * as Textarea from "@/components/alignui/textarea";
 import { DocsLink } from "@/components/page/DocsLink";
-import { MIN_RECORDER_VERSION } from "@/lib/calls/contract";
+import { MAX_AGENT_BRIEF_CHARS, MIN_AGENT_RECORDER_VERSION, MIN_RECORDER_VERSION, type RecorderAgent } from "@/lib/calls/contract";
 import type { DocsPage } from "@/lib/support";
-import { RECORDER_SETUP_PATH } from "@/lib/calls/recorderRelease";
+import { isOlderVersion, RECORDER_SETUP_PATH } from "@/lib/calls/recorderRelease";
 import { abandonCall, isRecorderInstalled, isRecorderOutdated, recorderVersion, sendToRecorder, startCall } from "@/lib/calls/client";
 import { cn } from "@/utils/cn";
 import { errorMessage } from "@/components/crm/crm-utils";
 import { FormError, TextField } from "./fields";
 
 type Phase = "idle" | "starting" | "opening";
+
+/** The AI agent's last brief, kept in this browser so the next agent call starts from it. */
+const AGENT_BRIEF_KEY = "agentsdr.agentBrief";
+
+function savedAgentBrief(): string {
+  try {
+    return window.localStorage.getItem(AGENT_BRIEF_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export function CallButton({ personId, crmRecordId, campaignContactId, phone, onCallStarted, numberMenu = true }: {
   personId: string;
@@ -36,6 +48,8 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
   const [numberValue, setNumberValue] = useState("");
   const [modalError, setModalError] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentBrief, setAgentBrief] = useState("");
   const busy = phase !== "idle";
 
   const openNumberModal = (prefill: string) => {
@@ -46,11 +60,12 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
 
   const failed = (title: string, cause: unknown) => {
     setNumberOpen(false);
+    setAgentOpen(false);
     setNotice({ title, description: errorMessage(cause) });
     setPhase("idle");
   };
 
-  const begin = async (newPhone?: string) => {
+  const begin = async (newPhone?: string, agent?: RecorderAgent) => {
     const clickedAt = Date.now();
     setModalError("");
     setPhase("starting");
@@ -72,9 +87,11 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
           recorderToken: response.recorderToken,
           lead: response.lead,
           clickedAt,
+          agent: agent ?? null,
         });
         if (reply.type === "call:accepted") {
           setNumberOpen(false);
+          setAgentOpen(false);
           setPhase("opening");
           onCallStarted?.(response.call.id);
           // Give the rep a moment of confirmation before the button resets —
@@ -141,6 +158,30 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
     openNumberModal(phone ?? "");
   };
 
+  const handleAgentCall = () => {
+    if (!recorderReady()) return;
+    const version = recorderVersion();
+    if (!version || isOlderVersion(version, MIN_AGENT_RECORDER_VERSION)) {
+      setNotice({
+        title: "Reload the call recorder",
+        description: `AI agent calls need version ${MIN_AGENT_RECORDER_VERSION} of the extension; Chrome is running ${version ?? "an unknown version"}. Rebuild it, click the reload arrow on AgentSDR Call Recorder in chrome://extensions, then reload this page and WhatsApp Web.`,
+      });
+      return;
+    }
+    setAgentBrief((current) => current || savedAgentBrief());
+    setAgentOpen(true);
+  };
+
+  const startAgentCall = () => {
+    const brief = agentBrief.trim();
+    try {
+      window.localStorage.setItem(AGENT_BRIEF_KEY, brief);
+    } catch {
+      // Only a convenience for the next call.
+    }
+    void begin(undefined, { brief });
+  };
+
   const label = phase === "starting" ? "Calling…" : phase === "opening" ? "Opening WhatsApp…" : "Call";
 
   return (
@@ -179,6 +220,10 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
             </Dropdown.Trigger>
             <Dropdown.Content align="end">
               <Dropdown.Item onSelect={handleChangeNumber}>Change number</Dropdown.Item>
+              <Dropdown.Item onSelect={handleAgentCall}>
+                <RiRobot2Line className="size-4" aria-hidden="true" />
+                Call with AI agent (trial)
+              </Dropdown.Item>
             </Dropdown.Content>
           </Dropdown.Root>
         )}
@@ -200,6 +245,43 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
             <Modal.Close asChild>
               <Button.Root variant="primary" mode="filled" size="small">Got it</Button.Root>
             </Modal.Close>
+          </Modal.Footer>
+        </Modal.Content>
+      </Modal.Root>
+
+      <Modal.Root open={agentOpen} onOpenChange={(open) => { if (!busy) setAgentOpen(open); }}>
+        <Modal.Content>
+          <Modal.Header icon={RiRobot2Line}>
+            <Modal.Title>Call with the AI agent</Modal.Title>
+            <Modal.Description>
+              An AI voice talks to {phone ?? "the lead"} over WhatsApp instead of you. You'll hear both sides; it hangs up when it's done.
+            </Modal.Description>
+          </Modal.Header>
+          <Modal.Body className="space-y-1.5">
+            <label htmlFor="agent-brief" className="block text-label-sm text-text-strong-950">Brief for the agent</label>
+            <Textarea.Root
+              id="agent-brief"
+              simple
+              rows={8}
+              autoFocus
+              maxLength={MAX_AGENT_BRIEF_CHARS}
+              value={agentBrief}
+              onChange={(event) => setAgentBrief(event.target.value)}
+              disabled={busy}
+              placeholder={"You are Riya from Acme. We help D2C brands cut shipping costs by 20%.\nGoal: find out who handles logistics and book a 15-minute demo this week.\nIf they're busy, ask for a better time to call back."}
+            />
+            <p className="text-paragraph-xs text-text-sub-600">Who the agent is, what it's calling about, and what it should get out of the call.</p>
+          </Modal.Body>
+          <Modal.Footer>
+            <Modal.Close asChild>
+              <Button.Root variant="neutral" mode="stroke" size="small" disabled={busy}>Cancel</Button.Root>
+            </Modal.Close>
+            <Button.Root variant="primary" mode="filled" size="small" disabled={busy || !agentBrief.trim()} onClick={startAgentCall}>
+              {busy
+                ? <RiLoader4Line className="size-4 animate-spin" aria-hidden="true" />
+                : <RiRobot2Line className="size-4" aria-hidden="true" />}
+              {busy ? label : "Start AI call"}
+            </Button.Root>
           </Modal.Footer>
         </Modal.Content>
       </Modal.Root>

@@ -353,6 +353,17 @@ chosen in Settings → AI provider (stored as `transcriptionModel` in the BYOK
 settings; null means transcription is off). Gemini merges audio channels, so the stereo
 recording does not give speaker labels for free there; rep/lead is inferred.
 
+**AI voice agent (trial).** "Call with AI agent" on the Call button hands the
+call to Gemini Live (`gemini-3.8-live`): wa-hook gives WhatsApp a fake
+microphone that carries the model's voice and streams the lead's side out as
+16 kHz PCM. The socket lives in wa-agent (`live-agent.ts`), because WhatsApp's
+CSP blocks it in the page's own world. The server mints a single-use token with
+the whole session locked in (`src/lib/calls/liveAgent.ts`,
+`/api/call-recorder/calls/[id]/agent-token`). Two deliberate trial exceptions:
+the key comes from `GEMINI_API_KEY` in env, and the call skips OpenRouter,
+which has no realtime audio API. Move the key into an organization integration
+before this leaves the trial.
+
 
 ## WhatsApp messaging (Unipile)
 
