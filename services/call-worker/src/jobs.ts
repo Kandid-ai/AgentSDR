@@ -74,6 +74,15 @@ export async function runCall(job: CallJob): Promise<void> {
       return;
     }
     const page = await openWhatsApp(browser.context);
+    // The browser closing or WhatsApp's tab crashing ends the call with no
+    // report from the extension; without this the worker would wait out the
+    // whole call timeout with the station held busy.
+    const lost = new Promise<string>((resolve) => {
+      browser?.context.on("close", () => resolve("The station's browser closed during the call"));
+      page.on("crash", () => resolve("WhatsApp Web crashed during the call"));
+      page.on("close", () => resolve("WhatsApp Web's tab closed during the call"));
+    });
+    watchConsole(browser, tag);
     log(`${tag}: waiting for WhatsApp Web`);
     const state = await waitForWhatsAppState(page, 120_000);
     if (state === "logged_out") {
@@ -114,7 +123,14 @@ export async function runCall(job: CallJob): Promise<void> {
       return;
     }
     log(`${tag}: call running`);
-    let done = await waitDone(call.id, cfg.callTimeoutMs);
+    const outcome = await Promise.race([waitDone(call.id, cfg.callTimeoutMs), lost]);
+    if (typeof outcome === "string") {
+      log(`${tag}: ${outcome}`);
+      // The extension may still have reported the end just before; give it a moment.
+      if (!(await waitDone(call.id, 5_000))) await release(outcome);
+      return;
+    }
+    let done = outcome;
     if (!done) {
       log(`${tag}: timed out, hanging up`);
       await worker.endCall(call.id).catch((e) => log(`${tag}: endCall failed: ${message(e)}`));
@@ -172,6 +188,20 @@ export async function runLink(job: LinkJob): Promise<void> {
   } finally {
     if (browser) await browser.close().catch((e) => log(`${tag}: close failed: ${message(e)}`));
   }
+}
+
+/**
+ * Mirrors the extension's own messages into the worker's log: the AI agent's
+ * steps and transcript ("[agentsdr agent]"), the recorder's warnings, and page
+ * errors — the only record of what happened inside a cloud call.
+ */
+function watchConsole(browser: StationBrowser | null, tag: string): void {
+  if (!browser) return;
+  browser.context.on("console", (msg) => {
+    const text = msg.text();
+    if (/agentsdr|\[recorder\]/i.test(text) || msg.type() === "error") log(`${tag}: [${msg.type()}] ${text.slice(0, 500)}`);
+  });
+  browser.context.on("weberror", (error) => log(`${tag}: page error: ${error.error().message.slice(0, 300)}`));
 }
 
 async function shot(page: Page): Promise<string | null> {

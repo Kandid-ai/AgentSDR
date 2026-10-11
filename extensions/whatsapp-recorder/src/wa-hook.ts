@@ -430,7 +430,10 @@ function install(): void {
       return;
     }
 
-    if (callUiGone) return end();
+    if (callUiGone) {
+      if (agentRig?.callId === current.callId) agentLog("call screen gone — ending");
+      return end();
+    }
     // A running call's timer ticks every second. Where it can be trusted to
     // (see CallUi.timerTrusted), one that stops moving, or disappears, for
     // a few checks means the call ended — hung up anywhere, even when a stale
@@ -442,7 +445,10 @@ function install(): void {
       } else {
         current.timerStill += 1;
       }
-      if (current.timerStill >= TIMER_GONE_CHECKS) end();
+      if (current.timerStill >= TIMER_GONE_CHECKS) {
+        if (agentRig?.callId === current.callId) agentLog(`call timer stopped at ${current.lastTimerText ?? "?"} — ending`);
+        end();
+      }
     }
   }
 
