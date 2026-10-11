@@ -32,6 +32,12 @@ type Handlers = {
 
 const OUTPUT_RATE_PATTERN = /rate=(\d+)/;
 const GREETING_PROMPT = "The call has just connected and the person is on the line. Greet them now.";
+/**
+ * People pick up and say "Hello?" first; a greeting started at the pick-up
+ * gets talked over (seen 11 Oct 2026: three restarts). So the agent waits
+ * this long for them, and if they speak, answers them instead.
+ */
+const GREETING_WAIT_MS = 2_500;
 
 export class LiveAgent {
   private socket: WebSocket | null = null;
@@ -40,6 +46,8 @@ export class LiveAgent {
   private greetPending = false;
   private saidThisTurn = "";
   private warnedNotReady = false;
+  private greetTimer: ReturnType<typeof setTimeout> | null = null;
+  private leadSpoke = false;
   private firstReply = true;
   private heardThisTurn = "";
 
@@ -71,9 +79,14 @@ export class LiveAgent {
 
   /** The lead picked up: the model speaks first. */
   greet(): void {
-    this.handlers.trace(`AI agent: lead picked up — ${this.ready ? "greeting" : "greeting once the session is ready"}`);
-    if (this.ready) this.sendGreeting();
-    else this.greetPending = true;
+    this.handlers.trace("AI agent: lead picked up — waiting for their hello");
+    this.greetTimer = setTimeout(() => {
+      this.greetTimer = null;
+      if (this.leadSpoke) return;
+      this.handlers.trace("AI agent: lead said nothing — greeting");
+      if (this.ready) this.sendGreeting();
+      else this.greetPending = true;
+    }, GREETING_WAIT_MS);
   }
 
   /** The lead's side of the call: mono 16-bit PCM at 16 kHz. */
@@ -89,6 +102,7 @@ export class LiveAgent {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    if (this.greetTimer) clearTimeout(this.greetTimer);
     this.ready = false;
     try {
       this.socket?.close(1000);
@@ -125,7 +139,12 @@ export class LiveAgent {
         this.handlers.interrupt();
         this.flushTranscript("interrupted");
       }
-      if (content.inputTranscription?.text) this.heardThisTurn += content.inputTranscription.text;
+      if (content.inputTranscription?.text) {
+        // They spoke first: the model answers that turn itself, greeting included.
+        if (!this.leadSpoke && this.greetTimer) this.handlers.trace("AI agent: lead said hello first — answering them");
+        this.leadSpoke = true;
+        this.heardThisTurn += content.inputTranscription.text;
+      }
       if (content.outputTranscription?.text) {
         if (this.heardThisTurn) this.flushHeard();
         this.saidThisTurn += content.outputTranscription.text;

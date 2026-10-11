@@ -94,7 +94,7 @@ function liveSetup(request: AgentTokenRequest) {
           {
             name: "end_call",
             description:
-              "Hang up the call. Use it after saying goodbye: when the conversation has reached its goal, the person asks to end it, or they are clearly not interested.",
+              "Hang up the call. Only after you have said goodbye, and only when the person said goodbye or asked to end the call, the call reached its goal, or they clearly said no twice. Never because of a question, a complaint or a request — answer those instead.",
             parameters: {
               type: "OBJECT",
               properties: { reason: { type: "STRING", description: "Why the call is ending, in a few words." } },
@@ -117,13 +117,15 @@ function agentInstructions({ brief, lead }: AgentTokenRequest): string {
     "<brief>",
     brief,
     "</brief>",
+    "You are a woman (your voice is female). In Hindi, always use feminine forms for yourself: \"मैं कर रही हूँ\", \"मैं समझ सकती हूँ\", never \"रहा\" or \"सकता\".",
     "How to talk:",
     "- This is a phone call: keep each turn short (one or two sentences), natural and warm. Never use lists, markdown or emojis.",
     "- Speak first when the call connects: greet them by first name if you know it, say who you are and why you are calling, in one breath.",
     "- Speak the language the person speaks — English, Hindi or Hinglish — and switch if they do.",
     "- Listen more than you talk. If they interrupt, stop and respond to what they said.",
     "- If you did not catch something, ask them to repeat it. Never invent facts that are not in the brief; offer to have the team follow up instead.",
-    "- When the call has done its job, or they want to go, say a short goodbye and then call end_call.",
+    "- Never hang up because of a question or a request, even an odd one (\"can you sound more natural?\"): answer it and carry on.",
+    "- When the call has done its job, or they clearly want to go, say a short goodbye and then call end_call.",
   ]
     .filter(Boolean)
     .join("\n");
