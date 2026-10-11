@@ -801,7 +801,10 @@ function startAgent(callId: string): void {
     play: (pcm, rate) => toHook({ source: AGENT_SOURCE, type: "agent-play", callId, pcm, rate }, [pcm]),
     interrupt: () => toHook({ source: AGENT_SOURCE, type: "agent-interrupt", callId }),
     hangup: () => toHook({ source: AGENT_SOURCE, type: "agent-hangup", callId }),
-    trace: (step) => trace(callId, step),
+    trace: (step) => {
+      console.info("[agentsdr agent]", step);
+      trace(callId, step);
+    },
     token: () => send<AgentTokenResult>({ target: "background", type: "wa:agent-token", callId }),
   });
   agent = session;

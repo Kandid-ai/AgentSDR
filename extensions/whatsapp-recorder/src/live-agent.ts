@@ -39,6 +39,8 @@ export class LiveAgent {
   private closed = false;
   private greetPending = false;
   private saidThisTurn = "";
+  private warnedNotReady = false;
+  private firstReply = true;
   private heardThisTurn = "";
 
   constructor(private readonly handlers: Handlers) {}
@@ -69,13 +71,18 @@ export class LiveAgent {
 
   /** The lead picked up: the model speaks first. */
   greet(): void {
+    this.handlers.trace(`AI agent: lead picked up — ${this.ready ? "greeting" : "greeting once the session is ready"}`);
     if (this.ready) this.sendGreeting();
     else this.greetPending = true;
   }
 
   /** The lead's side of the call: mono 16-bit PCM at 16 kHz. */
   sendAudio(pcm: ArrayBuffer): void {
-    if (!this.ready || !this.socket) return;
+    if (!this.ready || !this.socket) {
+      if (!this.warnedNotReady) this.handlers.trace("AI agent: lead audio arrived before the session was ready — dropped");
+      this.warnedNotReady = true;
+      return;
+    }
     this.socket.send(JSON.stringify({ realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: toBase64(pcm) } } }));
   }
 
@@ -127,6 +134,10 @@ export class LiveAgent {
         const audio = part.inlineData;
         if (!audio?.data || !audio.mimeType?.startsWith("audio/pcm")) continue;
         const rate = Number(OUTPUT_RATE_PATTERN.exec(audio.mimeType)?.[1] ?? 24_000);
+        if (this.firstReply) {
+          this.firstReply = false;
+          this.handlers.trace("AI agent: first audio from Gemini");
+        }
         this.handlers.play(fromBase64(audio.data), rate);
       }
       if (content.turnComplete) this.flushTranscript("turn");
