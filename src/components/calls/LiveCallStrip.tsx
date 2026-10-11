@@ -6,14 +6,17 @@ import * as Button from "@/components/alignui/button";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
 import { FormError } from "./fields";
 import { cancelCall, endCallViaRecorder } from "@/lib/calls/client";
-import type { CallStatus, RecorderCallPhase } from "@/lib/calls/contract";
+import type { CallStatus } from "@/lib/calls/contract";
+import type { CloudCallPhase } from "@/lib/calls/stationContract";
 import { formatElapsed } from "./formatElapsed";
-import { useLiveCall } from "./useLiveCall";
+import { useLiveCallState } from "./useLiveCall";
 
 /** A connected call: hanging up from AgentSDR ends it, and its recording is kept. */
-const END_CALL_PHASES: ReadonlySet<RecorderCallPhase["kind"]> = new Set(["on-call"]);
+const END_CALL_PHASES: ReadonlySet<CloudCallPhase["kind"]> = new Set(["on-call"]);
 /** A call not yet connected: the rep can cancel it. */
-const CANCEL_PHASES: ReadonlySet<RecorderCallPhase["kind"]> = new Set([
+const CANCEL_PHASES: ReadonlySet<CloudCallPhase["kind"]> = new Set([
+  "queued",
+  "starting-browser",
   "opening",
   "calling",
   "ringing",
@@ -37,7 +40,7 @@ export function LiveCallStrip({
   /** After a cancel, so the parent can reload the call. */
   onCancelled?: () => void;
 }) {
-  const phase = useLiveCall(callId);
+  const { phase, cloud } = useLiveCallState(callId);
   const [ending, setEnding] = useState(false);
   const [endError, setEndError] = useState("");
 
@@ -63,7 +66,8 @@ export function LiveCallStrip({
     try {
       // Hang up in WhatsApp if the call is still there — it may not be,
       // which is often why it is being cancelled — then close it out here.
-      await endCallViaRecorder(callId).catch(() => {});
+      // (A cloud call has no extension in this browser to ask.)
+      if (!cloud) await endCallViaRecorder(callId).catch(() => {});
       await cancelCall(callId);
       onCancelled?.();
     } catch (cause) {
@@ -95,8 +99,13 @@ export function LiveCallStrip({
             <p aria-live="polite" className="min-w-0 text-label-sm text-text-strong-950">
               <PhaseStatus phase={phase} />
             </p>
+            {cloud && (
+              <span className="shrink-0 text-paragraph-xs text-text-soft-400">
+                AI agent{cloud.stationName ? ` · ${cloud.stationName}` : ""}
+              </span>
+            )}
           </div>
-          {END_CALL_PHASES.has(phase.kind) && (
+          {END_CALL_PHASES.has(phase.kind) && !cloud && (
             <Button.Root
               variant="error"
               mode="stroke"
@@ -134,8 +143,10 @@ export function LiveCallStrip({
   );
 }
 
-function PhaseDot({ phase }: { phase: RecorderCallPhase }) {
+function PhaseDot({ phase }: { phase: CloudCallPhase }) {
   switch (phase.kind) {
+    case "queued":
+    case "starting-browser":
     case "opening":
     case "calling":
     case "ringing":
@@ -160,8 +171,12 @@ function PhaseDot({ phase }: { phase: RecorderCallPhase }) {
   }
 }
 
-function PhaseStatus({ phase }: { phase: RecorderCallPhase }) {
+function PhaseStatus({ phase }: { phase: CloudCallPhase }) {
   switch (phase.kind) {
+    case "queued":
+      return <>Waiting for a cloud number…</>;
+    case "starting-browser":
+      return <>Opening WhatsApp in the cloud…</>;
     case "opening":
       return <>Opening WhatsApp…</>;
     case "calling":
@@ -191,7 +206,7 @@ function PhaseStatus({ phase }: { phase: RecorderCallPhase }) {
   }
 }
 
-function PhaseDetail({ phase }: { phase: RecorderCallPhase }) {
+function PhaseDetail({ phase }: { phase: CloudCallPhase }) {
   switch (phase.kind) {
     case "on-call":
       return (

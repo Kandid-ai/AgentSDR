@@ -66,6 +66,8 @@ describe("toCallSummary", () => {
       transcript: null,
       transcriptError: null,
       transcribedAt: null,
+      mode: "rep",
+      livePhase: null,
       createdAt: now,
       updatedAt: now,
     } as never);
@@ -85,6 +87,8 @@ describe("toCallSummary", () => {
       disposition: "interested",
       transcriptStatus: "done",
       createdAt: "2026-01-15T10:00:00.000Z",
+      mode: "rep",
+      livePhase: null,
     });
   });
 

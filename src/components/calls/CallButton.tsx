@@ -6,17 +6,22 @@ import { RiArrowDownSLine, RiLoader4Line, RiPhoneLine, RiRobot2Line } from "@rem
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Modal from "@/components/alignui/modal";
+import * as Select from "@/components/alignui/select";
 import * as Textarea from "@/components/alignui/textarea";
 import { DocsLink } from "@/components/page/DocsLink";
 import { MAX_AGENT_BRIEF_CHARS, MIN_AGENT_RECORDER_VERSION, MIN_RECORDER_VERSION, type RecorderAgent } from "@/lib/calls/contract";
 import type { DocsPage } from "@/lib/support";
 import { isOlderVersion, RECORDER_SETUP_PATH } from "@/lib/calls/recorderRelease";
-import { abandonCall, isRecorderInstalled, isRecorderOutdated, recorderVersion, sendToRecorder, startCall } from "@/lib/calls/client";
+import { abandonCall, isRecorderInstalled, isRecorderOutdated, listCallingStations, recorderVersion, sendToRecorder, startCall } from "@/lib/calls/client";
+import type { CallingStation } from "@/lib/calls/stationContract";
 import { cn } from "@/utils/cn";
 import { errorMessage } from "@/components/crm/crm-utils";
 import { FormError, TextField } from "./fields";
 
 type Phase = "idle" | "starting" | "opening";
+
+/** The "Call from" choice that places the call from this browser through the extension. */
+const THIS_BROWSER = "browser";
 
 /** The AI agent's last brief, kept in this browser so the next agent call starts from it. */
 const AGENT_BRIEF_KEY = "agentsdr.agentBrief";
@@ -50,6 +55,9 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
   const [phase, setPhase] = useState<Phase>("idle");
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentBrief, setAgentBrief] = useState("");
+  /** Active cloud calling stations, fetched when the agent modal opens; `null` until then. */
+  const [stations, setStations] = useState<CallingStation[] | null>(null);
+  const [callFrom, setCallFrom] = useState<string>(THIS_BROWSER);
   const busy = phase !== "idle";
 
   const openNumberModal = (prefill: string) => {
@@ -158,18 +166,55 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
     openNumberModal(phone ?? "");
   };
 
-  const handleAgentCall = () => {
-    if (!recorderReady()) return;
+  /** The extension is installed and new enough for AI agent calls; otherwise says why in a notice. */
+  const agentRecorderReady = (): boolean => {
+    if (!recorderReady()) return false;
     const version = recorderVersion();
     if (!version || isOlderVersion(version, MIN_AGENT_RECORDER_VERSION)) {
       setNotice({
         title: "Reload the call recorder",
-        description: `AI agent calls need version ${MIN_AGENT_RECORDER_VERSION} of the extension; Chrome is running ${version ?? "an unknown version"}. Rebuild it, click the reload arrow on AgentSDR Call Recorder in chrome://extensions, then reload this page and WhatsApp Web.`,
+        description: `AI agent calls from this browser need version ${MIN_AGENT_RECORDER_VERSION} of the extension; Chrome is running ${version ?? "an unknown version"}. Rebuild it, click the reload arrow on AgentSDR Call Recorder in chrome://extensions, then reload this page and WhatsApp Web.`,
       });
-      return;
+      return false;
     }
+    return true;
+  };
+
+  // The extension is only needed when "This browser" is chosen, so the modal
+  // opens without it and the readiness checks run at Start.
+  const handleAgentCall = () => {
     setAgentBrief((current) => current || savedAgentBrief());
+    setStations(null);
+    setCallFrom(THIS_BROWSER);
     setAgentOpen(true);
+    void listCallingStations()
+      .then(({ stations: all }) => {
+        const active = all.filter((station) => station.status === "active");
+        setStations(active);
+        if (active.length > 0) setCallFrom(active[0].id);
+      })
+      .catch(() => setStations([]));
+  };
+
+  const beginCloud = async (brief: string, stationId: string) => {
+    setModalError("");
+    setPhase("starting");
+    try {
+      const response = await startCall({
+        personId,
+        crmRecordId: crmRecordId ?? null,
+        campaignContactId: campaignContactId ?? null,
+        mode: "agent_cloud",
+        agentBrief: brief,
+        stationId,
+      });
+      setAgentOpen(false);
+      setPhase("opening");
+      onCallStarted?.(response.call.id);
+      setTimeout(() => setPhase("idle"), 1500);
+    } catch (cause) {
+      failed("Couldn't start the call", cause);
+    }
   };
 
   const startAgentCall = () => {
@@ -179,6 +224,11 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
     } catch {
       // Only a convenience for the next call.
     }
+    if (callFrom !== THIS_BROWSER) {
+      void beginCloud(brief, callFrom);
+      return;
+    }
+    if (!agentRecorderReady()) return;
     void begin(undefined, { brief });
   };
 
@@ -254,10 +304,26 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
           <Modal.Header icon={RiRobot2Line}>
             <Modal.Title>Call with the AI agent</Modal.Title>
             <Modal.Description>
-              An AI voice talks to {phone ?? "the lead"} over WhatsApp instead of you. You'll hear both sides; it hangs up when it's done.
+              An AI voice talks to {phone ?? "the lead"} over WhatsApp instead of you. From this browser you'll hear both sides; it hangs up when it's done.
             </Modal.Description>
           </Modal.Header>
-          <Modal.Body className="space-y-1.5">
+          <Modal.Body className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="block text-label-sm text-text-strong-950">Call from</label>
+              <Select.Root size="small" value={callFrom} onValueChange={setCallFrom} disabled={busy}>
+                <Select.Trigger aria-label="Call from"><Select.Value /></Select.Trigger>
+                <Select.Content>
+                  <Select.Item value={THIS_BROWSER}>This browser (extension)</Select.Item>
+                  {(stations ?? []).map((station) => (
+                    <Select.Item key={station.id} value={station.id}>{station.name} · {station.phone} (cloud)</Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Root>
+              {callFrom !== THIS_BROWSER && (
+                <p className="text-paragraph-xs text-text-sub-600">A call worker opens WhatsApp in the cloud and places the call; nothing runs in your browser.</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
             <label htmlFor="agent-brief" className="block text-label-sm text-text-strong-950">Brief for the agent</label>
             <Textarea.Root
               id="agent-brief"
@@ -271,6 +337,7 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
               placeholder={"You are Riya from Acme. We help D2C brands cut shipping costs by 20%.\nGoal: find out who handles logistics and book a 15-minute demo this week.\nIf they're busy, ask for a better time to call back."}
             />
             <p className="text-paragraph-xs text-text-sub-600">Who the agent is, what it's calling about, and what it should get out of the call.</p>
+            </div>
           </Modal.Body>
           <Modal.Footer>
             <Modal.Close asChild>

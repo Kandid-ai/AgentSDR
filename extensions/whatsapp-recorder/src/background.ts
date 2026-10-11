@@ -257,7 +257,12 @@ async function handleBridge(
  * A call placed from the app: remember it, and open the chat. wa-agent in
  * that tab then dials it and wa-hook records it (see wa-hook.ts).
  */
-async function startCall(request: RecorderCallRequest, digits: string, appTabId: number | undefined): Promise<BridgeResult> {
+async function startCall(
+  request: RecorderCallRequest,
+  digits: string,
+  appTabId: number | undefined,
+  station = false,
+): Promise<BridgeResult> {
   const previous = await getActiveCall();
   if (previous?.answeredAt) {
     if (await stillBusy(previous)) {
@@ -285,6 +290,7 @@ async function startCall(request: RecorderCallRequest, digits: string, appTabId:
     lead: request.lead,
     appTabId,
     agent: request.agent?.brief?.trim() ? { brief: request.agent.brief.trim() } : null,
+    station,
   };
   await rememberCall(call);
   startTiming(call.callId, request.clickedAt);
@@ -382,6 +388,11 @@ async function endCall(callId: string): Promise<BridgeResult> {
 /** Sends a call's phase to the AgentSDR tab that placed it. */
 async function forwardPhase(callId: string, phase: RecorderCallPhase): Promise<void> {
   const call = await recentCall(callId);
+  if (call?.station) {
+    // No AgentSDR tab in a cloud browser: the rep's page reads it from the server.
+    await callApi(call, "phase", { phase }).catch(() => {});
+    return;
+  }
   if (call?.appTabId === undefined) return;
   const update: BridgeCommand = { target: "bridge", type: "call:update", callId, phase };
   await chrome.tabs.sendMessage(call.appTabId, update).catch(() => {
@@ -457,6 +468,7 @@ async function rememberCall(call: ActiveCall): Promise<void> {
     recorderToken: call.recorderToken,
     apiBase: call.apiBase,
     appTabId: call.appTabId,
+    station: call.station,
     endedAt: now,
   };
   await chrome.storage.session.set({ [RECENT_CALLS_KEY]: recent });
@@ -475,6 +487,8 @@ async function statusFor(callId: string) {
 /** "Back to AgentSDR": the tab the call came from, else any AgentSDR tab, else a new one. */
 async function focusApp(callId: string): Promise<void> {
   const call = await recentCall(callId);
+  // A cloud browser has no rep to bring back to AgentSDR.
+  if (call?.station) return;
   const tab =
     (call?.appTabId !== undefined ? await chrome.tabs.get(call.appTabId).catch(() => null) : null) ??
     (await chrome.tabs.query({ url: (await allowedOrigins()).map(originPattern) }))[0] ??
@@ -624,3 +638,34 @@ async function setBadge(text: string, color: string, title: string): Promise<voi
   await chrome.action.setBadgeBackgroundColor({ color });
   await chrome.action.setTitle({ title });
 }
+
+// --- station mode (cloud calling) ---------------------------------------------
+
+/** What the call worker passes to start a call: a bridge call request without the page's envelope. */
+type StationCallRequest = Omit<RecorderCallRequest, "source" | "type" | "requestId">;
+
+/**
+ * A calling station: this browser runs in the cloud and AgentSDR's call
+ * worker drives it over CDP (Playwright's serviceWorker.evaluate), so calls
+ * arrive here rather than through an AgentSDR page's bridge. Everything after
+ * startCall is the path a rep's call takes. Only whoever controls the browser
+ * can reach this, so there is no origin check — the call's own bearer token
+ * still authorizes everything it reports.
+ */
+const station = {
+  async startCall(request: StationCallRequest): Promise<BridgeResult> {
+    const digits = digitsOnly(request.phone);
+    if (digits.length < 7) return { ok: false, error: `"${request.phone}" is not a dialable number` };
+    const call: RecorderCallRequest = { ...request, source: "agentsdr-app", type: "call:start", requestId: crypto.randomUUID() };
+    return startCall(call, digits, undefined, true);
+  },
+  endCall,
+  /** The call this browser is on, if any — for the worker's watch. */
+  async activeCall(): Promise<Pick<ActiveCall, "callId" | "dialedAt" | "answeredAt"> | null> {
+    const call = await getActiveCall();
+    return call ? { callId: call.callId, dialedAt: call.dialedAt, answeredAt: call.answeredAt } : null;
+  },
+  version: chrome.runtime.getManifest().version,
+};
+
+(globalThis as unknown as { agentsdrStation?: typeof station }).agentsdrStation = station;

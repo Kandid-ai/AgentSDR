@@ -62,6 +62,7 @@ export const SCOPED_TABLES: readonly ScopedTable[] = [
   // Calling and WhatsApp
   snake("call_campaigns"),
   snake("call_sessions"),
+  snake("calling_stations"),
   snake("call_messages"),
   snake("whatsapp_accounts"),
   snake("whatsapp_campaigns"),

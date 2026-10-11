@@ -17,6 +17,7 @@ export async function verifyPlatformCredentials<K extends PlatformKey>(
   if (key === "unipile") return verifyUnipile(credentials as PlatformCredentials["unipile"]);
   if (key === "google") return verifyGoogle(credentials as PlatformCredentials["google"]);
   if (key === "r2") return verifyR2(credentials as PlatformCredentials["r2"]);
+  if (key === "gologin") return verifyGoLogin(credentials as PlatformCredentials["gologin"]);
   throw new Error("Unknown integration");
 }
 
@@ -34,6 +35,19 @@ async function verifyUnipile({ baseUrl, apiKey }: PlatformCredentials["unipile"]
     throw new Error("Unipile rejected the access token");
   }
   if (!response.ok) throw new Error(`Unipile answered ${response.status}`);
+}
+
+async function verifyGoLogin({ apiToken }: PlatformCredentials["gologin"]): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch("https://api.gologin.com/browser/v2?page=1", {
+      headers: { Authorization: `Bearer ${apiToken}`, accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    throw new Error("Could not reach GoLogin");
+  }
+  if (!response.ok) throw new Error(`GoLogin didn't accept this token (HTTP ${response.status})`);
 }
 
 async function verifyGoogle(credentials: PlatformCredentials["google"]): Promise<void> {

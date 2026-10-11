@@ -41,6 +41,10 @@ const PUBLIC = [
   // under this prefix authenticates itself with authorizeRecorder() (see
   // src/lib/calls/sessions.ts) — never add a route here that doesn't.
   "/api/call-recorder/",
+  // Called by the cloud call worker (services/call-worker), which holds
+  // CALL_WORKER_SECRET, not a session. Every route under this prefix starts
+  // with authorizeWorker() (src/lib/calls/stations.ts) — never add one that doesn't.
+  "/api/call-worker/",
 ];
 
 /**

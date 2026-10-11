@@ -35,10 +35,16 @@ export type ActiveCall = {
   appTabId?: number;
   /** Set: the AI voice agent talks in this call instead of the rep. */
   agent?: RecorderAgent | null;
+  /**
+   * Started by AgentSDR's call worker in a cloud browser (station mode), not
+   * by a rep: there is no AgentSDR tab to return to or report phases to, so
+   * phases go to the server instead.
+   */
+  station?: boolean;
 };
 
 /** What the service worker keeps after a call ends, for the call card's status checks. */
-export type RecentCall = Pick<ActiveCall, "callId" | "recorderToken" | "apiBase" | "appTabId"> & { endedAt: number };
+export type RecentCall = Pick<ActiveCall, "callId" | "recorderToken" | "apiBase" | "appTabId" | "station"> & { endedAt: number };
 
 /** What wa-agent is told about the call to place in its tab — never the token. */
 export type WaCall = { callId: string; phone: string; lead: RecorderLead | null; agent: boolean };

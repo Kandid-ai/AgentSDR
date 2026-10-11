@@ -16,7 +16,7 @@
 
 import { docsPageUrl } from "@/lib/support";
 
-export type PlatformKey = "unipile" | "google" | "r2";
+export type PlatformKey = "unipile" | "google" | "r2" | "gologin";
 
 /** The decrypted credential object stored for each platform. */
 export type PlatformCredentials = {
@@ -43,6 +43,10 @@ export type PlatformCredentials = {
     accessKeyId: string;
     secretAccessKey: string;
     bucket: string;
+  };
+  gologin: {
+    /** A GoLogin API token (Settings → API). */
+    apiToken: string;
   };
 };
 
@@ -255,6 +259,32 @@ export const PLATFORM_INTEGRATIONS: readonly PlatformIntegration[] = [
       },
     ],
   },
+  {
+    key: "gologin",
+    name: "GoLogin",
+    description: "Browser profiles that run cloud calling numbers' WhatsApp Web, so AI agent calls can be placed without anyone's laptop.",
+    enables: ["Cloud calling numbers (GoLogin launchers)"],
+    websiteUrl: "https://gologin.com",
+    // No bundled mark in public/: the favicon, as the grid's integration icons fall back to.
+    iconUrl: "https://www.google.com/s2/favicons?domain=gologin.com&sz=64",
+    guideUrl: docsPageUrl("whatsapp/calling#what-you-need"),
+    docsUrl: "https://gologin.com/docs/api-reference/introduction/quickstart",
+    setupSteps: [
+      "Sign in to GoLogin and open Settings → API.",
+      "Create a new API token and copy it. It is shown only once.",
+      "Paste it below and save. Then add a calling number under Settings → WhatsApp → Calling numbers.",
+    ],
+    fields: [
+      {
+        key: "apiToken",
+        label: "API token",
+        help: "GoLogin → Settings → API → New token. Copy it right away; GoLogin shows it only once.",
+        inputType: "password",
+        required: true,
+        secret: true,
+      },
+    ],
+  },
 ];
 
 /** OpenRouter is connected on the AI provider page; the Integrations page only shows its card. */
@@ -269,6 +299,7 @@ export const PLATFORM_SETTINGS_HREF: Record<PlatformKey, string> = {
   google: "/settings/email-connection",
   unipile: "/settings/linkedin-connection",
   r2: "/settings/whatsapp-connection",
+  gologin: "/settings/whatsapp-connection",
 };
 
 /** Where that page sits in the Settings sidebar, for messages. */
@@ -276,6 +307,7 @@ export const PLATFORM_SETTINGS_LABEL: Record<PlatformKey, string> = {
   google: "Settings → Email → Connection",
   unipile: "Settings → LinkedIn → Connection",
   r2: "Settings → WhatsApp → Integrations",
+  gologin: "Settings → WhatsApp → Integrations",
 };
 
 export function getPlatformIntegration(key: string): PlatformIntegration | null {

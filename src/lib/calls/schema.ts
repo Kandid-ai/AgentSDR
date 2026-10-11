@@ -23,6 +23,52 @@ import type {
   TranscriptStatus,
 } from "./contract";
 import { organizations } from "@/lib/auth/schema";
+import type { CloudCallPhase, StationLauncher, StationStatus } from "./stationContract";
+
+/** Who talks on a call: the rep, the AI agent in the rep's browser, or the AI agent on a cloud station. */
+export type CallMode = "rep" | "agent" | "agent_cloud";
+
+/**
+ * A cloud calling station: one WhatsApp number whose WhatsApp Web runs in a
+ * remote browser that the call worker opens (services/call-worker). Created by
+ * scripts/create-calling-stations.ts; see src/lib/calls/stationContract.ts.
+ */
+export const callingStations = pgTable(
+  "calling_stations",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    /** E.164. */
+    phone: text("phone").notNull(),
+    launcher: text("launcher").notNull().default("gologin_cloud").$type<StationLauncher>(),
+    gologinProfileId: text("gologin_profile_id"),
+    status: text("status").notNull().default("onboarding").$type<StationStatus>(),
+    /** Set while the operator wants WhatsApp Web linked; the worker shows its login screen. */
+    linkRequestedAt: timestamp("link_requested_at", { withTimezone: true }),
+    linkCode: text("link_code"),
+    /** PNG data URL of the login screen (QR or code), cleared once linked. */
+    linkScreenshot: text("link_screenshot"),
+    linkUpdatedAt: timestamp("link_updated_at", { withTimezone: true }),
+    workerId: text("worker_id"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    lastCallAt: timestamp("last_call_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("calling_stations_organization_idx").on(table.organizationId),
+    unique("calling_stations_org_phone_uq").on(table.organizationId, table.phone),
+    check("calling_stations_launcher_chk", sql`${table.launcher} IN ('local', 'gologin_sdk', 'gologin_cloud')`),
+    check(
+      "calling_stations_status_chk",
+      sql`${table.status} IN ('onboarding', 'active', 'paused', 'logged_out', 'banned')`,
+    ),
+  ],
+);
 
 /**
  * A cold-calling campaign: the list of people a rep works through. Created
@@ -143,11 +189,34 @@ export const callSessions = pgTable(
     transcript: jsonb("transcript").$type<CallTranscript>(),
     transcriptError: text("transcript_error"),
     transcribedAt: timestamp("transcribed_at", { withTimezone: true }),
+    /**
+     * Who talks: the rep, the AI agent in the rep's own browser, or the AI
+     * agent on a cloud calling station. scripts/create-calling-stations.ts.
+     */
+    mode: text("mode").notNull().default("rep").$type<CallMode>(),
+    /** The calling station a cloud call runs on. */
+    stationId: uuid("station_id"),
+    /** The rep's brief for the AI agent (cloud calls; a laptop agent call keeps it in the extension). */
+    agentBrief: text("agent_brief"),
+    /** A cloud call's latest phase, as the extension reports it — the rep's page polls it. */
+    livePhase: jsonb("live_phase").$type<CloudCallPhase>(),
+    /** When a call worker took the cloud call, and which. Null while it waits in the queue. */
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    claimedBy: text("claimed_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("call_sessions_organization_idx").on(table.organizationId),
+    foreignKey({
+      columns: [table.stationId],
+      foreignColumns: [callingStations.id],
+      name: "call_sessions_station_fk",
+    }).onDelete("set null"),
+    check("call_sessions_mode_chk", sql`${table.mode} IN ('rep', 'agent', 'agent_cloud')`),
+    index("call_sessions_cloud_open_idx")
+      .on(table.createdAt)
+      .where(sql`${table.mode} = 'agent_cloud' AND ${table.status} IN ('pending', 'in_progress')`),
     foreignKey({
       columns: [table.personId],
       foreignColumns: [people.id],

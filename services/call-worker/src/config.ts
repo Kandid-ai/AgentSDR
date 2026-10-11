@@ -1,0 +1,69 @@
+import { hostname, homedir } from "node:os";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { STATION_LAUNCHERS, type StationLauncher } from "../../../src/lib/calls/stationContract";
+
+function required(name: string): string {
+  const v = process.env[name]?.trim();
+  if (!v) throw new Error(`${name} is required`);
+  return v;
+}
+
+function int(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`${name} must be a positive number, got "${raw}"`);
+  return n;
+}
+
+function launchers(): StationLauncher[] {
+  const list = (process.env.LAUNCHERS ?? "local").split(",").map((s) => s.trim()).filter(Boolean);
+  for (const l of list) {
+    if (!(STATION_LAUNCHERS as readonly string[]).includes(l)) {
+      throw new Error(`LAUNCHERS: unknown launcher "${l}" (expected ${STATION_LAUNCHERS.join(", ")})`);
+    }
+  }
+  return list as StationLauncher[];
+}
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+export type Config = {
+  agentsdrUrl: string;
+  secret: string;
+  workerId: string;
+  launchers: StationLauncher[];
+  extensionPath: string;
+  profilesDir: string;
+  headless: boolean;
+  claimIntervalMs: number;
+  callTimeoutMs: number;
+  chromiumPath: string | undefined;
+};
+
+export function loadConfig(): Config {
+  return {
+    agentsdrUrl: required("AGENTSDR_URL").replace(/\/+$/, ""),
+    secret: required("CALL_WORKER_SECRET"),
+    workerId: process.env.WORKER_ID?.trim() || hostname(),
+    launchers: launchers(),
+    extensionPath: resolve(process.env.EXTENSION_PATH?.trim() || join(here, "../../../extensions/whatsapp-recorder/dist")),
+    profilesDir: resolve(process.env.PROFILES_DIR?.trim() || join(homedir(), ".agentsdr-call-worker", "profiles")),
+    headless: process.env.HEADLESS?.trim().toLowerCase() === "true",
+    claimIntervalMs: int("CLAIM_INTERVAL_MS", 3000),
+    callTimeoutMs: int("CALL_TIMEOUT_MS", 30 * 60 * 1000),
+    chromiumPath: process.env.CHROMIUM_PATH?.trim() || undefined,
+  };
+}
+
+let cached: Config | null = null;
+/** Read lazily so a module can be imported (e.g. by a test) before env is set. */
+export function config(): Config {
+  return (cached ??= loadConfig());
+}
+
+/** For tests and scripts that build their own config. */
+export function setConfig(c: Config): void {
+  cached = c;
+}

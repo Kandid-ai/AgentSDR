@@ -32,6 +32,7 @@ import type {
   UpdateCampaignContactRequest,
   UpdateCampaignRequest,
 } from "./contract";
+import type { CreateStationRequest, ListStationsResponse, StationResponse, UpdateStationRequest } from "./stationContract";
 import { MIN_RECORDER_VERSION, RECORDER_INSTALLED_ATTRIBUTE } from "./contract";
 import { isOlderVersion } from "./recorderRelease";
 
@@ -367,4 +368,39 @@ export function subscribeToCallUpdates(listener: (update: RecorderCallUpdate) =>
   }
   window.addEventListener("message", handleMessage);
   return () => window.removeEventListener("message", handleMessage);
+}
+
+// --- Cloud calling stations ----------------------------------------------
+
+/** GET /api/calling/stations — the organization's cloud calling numbers. */
+export function listCallingStations(): Promise<ListStationsResponse> {
+  return callingFetch<ListStationsResponse>("/stations");
+}
+
+/** POST /api/calling/stations */
+export function createCallingStation(request: CreateStationRequest): Promise<StationResponse> {
+  return callingFetch<StationResponse>("/stations", { method: "POST", body: JSON.stringify(request) });
+}
+
+/** PATCH /api/calling/stations/:id */
+export function updateCallingStation(stationId: string, request: UpdateStationRequest): Promise<StationResponse> {
+  return callingFetch<StationResponse>(`/stations/${encodeURIComponent(stationId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(request),
+  });
+}
+
+/** DELETE /api/calling/stations/:id */
+export function deleteCallingStation(stationId: string): Promise<{ ok: true }> {
+  return callingFetch<{ ok: true }>(`/stations/${encodeURIComponent(stationId)}`, { method: "DELETE" });
+}
+
+/** POST /api/calling/stations/:id/link — asks a worker to open WhatsApp Web's login. */
+export function startStationLink(stationId: string): Promise<StationResponse> {
+  return callingFetch<StationResponse>(`/stations/${encodeURIComponent(stationId)}/link`, { method: "POST" });
+}
+
+/** DELETE /api/calling/stations/:id/link — cancels linking. */
+export function cancelStationLink(stationId: string): Promise<StationResponse> {
+  return callingFetch<StationResponse>(`/stations/${encodeURIComponent(stationId)}/link`, { method: "DELETE" });
 }

@@ -364,6 +364,26 @@ the key comes from `GEMINI_API_KEY` in env, and the call skips OpenRouter,
 which has no realtime audio API. Move the key into an organization integration
 before this leaves the trial.
 
+**Cloud calling stations.** The same agent call can run with no rep's laptop.
+A *calling station* (`calling_stations`, Settings → WhatsApp → Calling numbers)
+is one WhatsApp number whose WhatsApp Web lives in a browser profile: GoLogin
+(the `gologin` platform integration) or Playwright's own Chromium (`local`, for
+testing). "AI agent → Call from: <station>" queues a `call_sessions` row with
+`mode = 'agent_cloud'`. The call worker (`services/call-worker`, its own
+package; Playwright) claims it over `/api/call-worker/*` (Bearer
+`CALL_WORKER_SECRET`, public in `proxy.ts`), opens the station's browser, and
+starts the call through the extension's **station mode**
+(`globalThis.agentsdrStation` in `background.ts`, reached with
+`serviceWorker.evaluate`). From there it is the laptop flow, except that phases
+go to `/api/call-recorder/calls/:id/phase`, because no AgentSDR tab sits beside
+the cloud browser; the rep's page polls them. The claim mints the call's
+recorder token, and holds the station's row lock so one station runs one call.
+Linking a number is a worker job too: it opens WhatsApp Web's "Log in with
+phone number" and posts the code and a screenshot to the station. Shapes are in
+`src/lib/calls/stationContract.ts`; logic is in `src/lib/calls/stations.ts`.
+Headless Chromium must not say "HeadlessChrome": WhatsApp Web refuses to load
+for it (`launchers.ts` sets a desktop user agent).
+
 
 ## WhatsApp messaging (Unipile)
 

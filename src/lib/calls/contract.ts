@@ -14,6 +14,8 @@
  *      The recording goes straight to R2 through a presigned PUT URL.
  */
 
+import type { CloudCallPhase } from "./stationContract";
+
 export const CALL_STATUSES = ["pending", "in_progress", "recorded", "no_recording", "failed"] as const;
 export type CallStatus = (typeof CALL_STATUSES)[number];
 
@@ -230,6 +232,15 @@ export type StartCallRequest = {
    * corrected — and the call dials it.
    */
   phone?: string | null;
+  /**
+   * "agent_cloud": the AI agent places the call from a cloud calling station
+   * instead of the rep's browser — queued for the call worker, which opens the
+   * station's WhatsApp Web (see stationContract.ts). Needs `agentBrief`.
+   */
+  mode?: "agent_cloud" | null;
+  agentBrief?: string | null;
+  /** The station to call from; null or absent = any free active station. */
+  stationId?: string | null;
 };
 
 export type StartCallResponse = {
@@ -271,6 +282,12 @@ export type CallSummary = {
   disposition: CallDisposition | null;
   transcriptStatus: TranscriptStatus;
   createdAt: string;
+  /** Who talks: the rep, the AI agent in the rep's browser, or the AI agent on a cloud station. Absent = rep. */
+  mode?: "rep" | "agent" | "agent_cloud";
+  /** A cloud call's latest phase (the rep's browser hears nothing from the extension for those). */
+  livePhase?: CloudCallPhase | null;
+  /** The cloud calling station's name, for a cloud call. */
+  stationName?: string | null;
 };
 
 /** GET /api/calls/:id — a call with its transcript. */

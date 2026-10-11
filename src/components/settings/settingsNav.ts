@@ -8,6 +8,7 @@ import {
   RiLayoutColumnLine,
   RiLinkedinBoxLine,
   RiMailLine,
+  RiPhoneLine,
   RiPlugLine,
   RiPaletteLine,
   RiPriceTag3Line,
@@ -71,6 +72,7 @@ export const SETTINGS_NAV: { label: string; items: SettingsNavItem[] }[] = [
         icon: RiWhatsappLine,
         tabs: [
           { href: "/settings/whatsapp-accounts", label: "Numbers", icon: RiWhatsappLine },
+          { href: "/settings/whatsapp-stations", label: "Calling numbers", icon: RiPhoneLine },
           { href: "/settings/whatsapp-connection", label: "Integrations", icon: RiPlugLine },
           { href: "/settings/whatsapp-rules", label: "Sending rules", icon: RiEqualizerLine },
         ],

@@ -29,7 +29,8 @@ import {
   type UploadUrlRequest,
   type UploadUrlResponse,
 } from "./contract";
-import { callCampaignContacts, callCampaigns, callSessions } from "./schema";
+import { callCampaignContacts, callCampaigns, callSessions, callingStations } from "./schema";
+import { expireStaleCloudCalls, QUEUED_PHASE, stationForCloudCall } from "./stations";
 import { applyCallResultToContactSafely } from "./contactCallStatus";
 import { normalizePhone } from "./phone";
 import { isPlatformNotConnectedError } from "@/lib/platform/credentials";
@@ -101,6 +102,8 @@ export function toCallSummary(row: CallSessionRow): CallSummary {
     disposition: row.disposition,
     transcriptStatus: row.transcriptStatus,
     createdAt: row.createdAt.toISOString(),
+    mode: row.mode,
+    livePhase: row.livePhase ?? null,
   };
 }
 
@@ -115,9 +118,14 @@ export function toCallDetail(row: CallSessionRow): CallDetail {
 /** GET /api/calls/:id — proxy-gated like every other GET route here. */
 export async function getCall(callId: string): Promise<CallDetail> {
   if (!UUID_PATTERN.test(callId)) throw new CallApiError(404, "Call not found");
-  const [row] = await db.select().from(callSessions).where(and(inOrg(callSessions), eq(callSessions.id, callId))).limit(1);
-  if (!row) throw new CallApiError(404, "Call not found");
-  return toCallDetail(row);
+  const [found] = await db
+    .select({ row: callSessions, stationName: callingStations.name })
+    .from(callSessions)
+    .leftJoin(callingStations, eq(callingStations.id, callSessions.stationId))
+    .where(and(inOrg(callSessions), eq(callSessions.id, callId)))
+    .limit(1);
+  if (!found) throw new CallApiError(404, "Call not found");
+  return { ...toCallDetail(found.row), stationName: found.stationName };
 }
 
 // --- startCall ---------------------------------------------------------------
@@ -191,6 +199,8 @@ export async function startCall(input: StartCallRequest): Promise<StartCallRespo
   }
 
   const { phone, changed } = resolveStartPhone(person.phone, input.phone);
+  // A cloud call waits in the queue for a call worker; see stations.ts.
+  const cloud = input.mode === "agent_cloud" ? await stationForCloudCall(input.stationId, input.agentBrief) : null;
   const { token, hash } = createRecorderToken();
   const now = new Date();
   const [[row]] = await Promise.all([
@@ -205,6 +215,9 @@ export async function startCall(input: StartCallRequest): Promise<StartCallRespo
         status: "pending",
         uploadTokenHash: hash,
         tokenExpiresAt: new Date(now.getTime() + TOKEN_TTL_MS),
+        ...(cloud
+          ? { mode: "agent_cloud" as const, stationId: cloud.station.id, agentBrief: cloud.brief, livePhase: QUEUED_PHASE }
+          : {}),
       })
       .returning(),
     changed ? db.update(people).set({ phone, updatedAt: now }).where(and(inOrg(people), eq(people.id, person.id))) : null,
@@ -284,7 +297,15 @@ export async function expireStaleCalls(): Promise<void> {
     db
       .update(callSessions)
       .set({ status: "no_recording", error: NEVER_CONNECTED_ERROR, updatedAt: now })
-      .where(and(inOrg(callSessions), eq(callSessions.status, "pending"), lt(callSessions.createdAt, PENDING_EXPIRES_AFTER)))
+      .where(
+        and(
+          inOrg(callSessions),
+          eq(callSessions.status, "pending"),
+          lt(callSessions.createdAt, PENDING_EXPIRES_AFTER),
+          // A cloud call can wait for a worker longer; expireStaleCloudCalls has its own rules.
+          ne(callSessions.mode, "agent_cloud"),
+        ),
+      )
       .returning(),
     db
       .update(callSessions)
@@ -292,9 +313,10 @@ export async function expireStaleCalls(): Promise<void> {
       .where(and(inOrg(callSessions), eq(callSessions.status, "in_progress"), lt(callSessions.updatedAt, IN_PROGRESS_EXPIRES_AFTER)))
       .returning(),
   ]);
+  const cloudLost = await expireStaleCloudCalls();
   // Only the request whose update closed a call gets it back, so each
   // closed call moves its lead once.
-  await Promise.all([...neverConnected, ...recorderLost].map(applyCallResultToContactSafely));
+  await Promise.all([...neverConnected, ...recorderLost, ...cloudLost].map(applyCallResultToContactSafely));
 }
 
 /**
