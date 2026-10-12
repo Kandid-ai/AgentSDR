@@ -5,7 +5,7 @@ import { config } from "./config";
 import { stationWorker, type StationWorker } from "./extension";
 import { openStationBrowser, type StationBrowser } from "./launchers";
 import { log } from "./log";
-import { openWhatsApp, screenshotDataUrl, startPhoneNumberLogin, waitForReady, waitForWhatsAppState } from "./whatsapp";
+import { isLoginScreen, openWhatsApp, screenshotDataUrl, startPhoneNumberLogin, waitForReady, waitForWhatsAppState } from "./whatsapp";
 
 type CallJob = Extract<WorkerJob, { kind: "call" }>;
 type LinkJob = Extract<WorkerJob, { kind: "link" }>;
@@ -162,14 +162,24 @@ export async function runLink(job: LinkJob): Promise<void> {
       await safeState(station.id, { status: "active", linkDone: true, link: null, error: null });
       return;
     }
-    if (state === "timeout") {
+    // Neither the chats nor a login screen: an earlier link is still loading the chats.
+    const resumingSync = state === "timeout" && !(await isLoginScreen(page));
+    if (state === "timeout" && !resumingSync) {
       await safeState(station.id, { linkDone: true, link: null, error: "WhatsApp Web did not load" });
       return;
     }
-    const code = await startPhoneNumberLogin(page, station.phone);
+    const code = resumingSync ? null : await startPhoneNumberLogin(page, station.phone);
     log(`${tag}: code ${code ?? "not found (QR only)"}`);
-    const deadline = Date.now() + 4 * 60_000;
-    while (Date.now() < deadline && !stopping) {
+    // Four minutes to link; once the login screen has gone (the phone linked
+    // and WhatsApp is loading the chats), up to twelve for the first sync,
+    // which is slow in a cloud browser with a long history (12 Oct 2026).
+    const startedAt = Date.now();
+    let syncing = resumingSync;
+    while (Date.now() - startedAt < (syncing ? 12 : 4) * 60_000 && !stopping) {
+      if (!syncing && !(await isLoginScreen(page))) {
+        syncing = true;
+        log(`${tag}: phone linked — waiting for WhatsApp to load the chats`);
+      }
       await safeState(station.id, { link: { code, screenshot: await shot(page) } });
       // Waits the whole 8 s unless the chats appear: the login screen stays up until the code is typed.
       if (await waitForReady(page, 8_000)) {
@@ -180,8 +190,12 @@ export async function runLink(job: LinkJob): Promise<void> {
         return;
       }
     }
-    log(`${tag}: gave up`);
-    await safeState(station.id, { linkDone: true, link: null, error: "Linking timed out" });
+    log(`${tag}: gave up${syncing ? " (linked, but the chats never finished loading)" : ""}`);
+    await safeState(station.id, {
+      linkDone: true,
+      link: null,
+      error: syncing ? "Linked, but WhatsApp Web didn't finish loading the chats — try Relink to let it continue" : "Linking timed out",
+    });
   } catch (e) {
     log(`${tag}: error: ${message(e)}`);
     await safeState(station.id, { linkDone: true, link: null, error: `Linking failed: ${message(e)}` });

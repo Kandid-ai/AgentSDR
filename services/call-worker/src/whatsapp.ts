@@ -7,11 +7,32 @@ export type WhatsAppState = "ready" | "logged_out" | "timeout";
 export async function openWhatsApp(context: BrowserContext): Promise<Page> {
   const existing = context.pages().find((p) => p.url().startsWith(WA_URL));
   const page = existing ?? context.pages().find((p) => p.url() === "about:blank" || p.url() === "chrome://newtab/") ?? (await context.newPage());
+  await forceEnglish(context, page);
   await page.goto(WA_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
   return page;
 }
 
-const READY_SELECTOR = '#pane-side, [aria-label="Chat list"], #side div[role="grid"]';
+/**
+ * WhatsApp Web in English, whatever the profile's language. The extension
+ * finds "Voice call" and "End call" by their English labels, and the linking
+ * flow its "Log in with phone number" link — a GoLogin profile set its
+ * language from the IP and WhatsApp came up in Hindi (12 Oct 2026). Applied
+ * to the tab over CDP before WhatsApp loads, so it works for every launcher.
+ */
+async function forceEnglish(context: BrowserContext, page: Page): Promise<void> {
+  try {
+    const session = await context.newCDPSession(page);
+    const userAgent = await page.evaluate(() => navigator.userAgent);
+    await session.send("Network.setUserAgentOverride", { userAgent, acceptLanguage: "en-US,en;q=0.9" });
+    await session.send("Emulation.setLocaleOverride", { locale: "en-US" });
+  } catch {
+    // Older browsers without these commands keep their own language.
+  }
+}
+
+/** The chat list's pane — present in every language, unlike its aria-label. */
+const READY_SELECTOR = '#pane-side, #side div[role="grid"], [aria-label="Chat list"]';
+/** The login QR — a canvas with an aria-label in whatever language WhatsApp is in. */
 const LOGIN_SELECTOR = "canvas[aria-label]";
 const LOGIN_TEXT = /log in with phone number|link with phone number|steps to log in|scan the qr code/i;
 
@@ -29,6 +50,15 @@ export async function waitForWhatsAppState(page: Page, timeoutMs: number): Promi
     await page.waitForTimeout(1000).catch(() => {});
   }
   return "timeout";
+}
+
+/** The login screen is up: its QR, or the phone-number form. Gone once the phone has linked. */
+export async function isLoginScreen(page: Page): Promise<boolean> {
+  return (
+    (await isVisible(page, LOGIN_SELECTOR)) ||
+    (await isVisible(page, 'input[aria-label*="phone number" i]')) ||
+    LOGIN_TEXT.test(await page.evaluate(() => document.body?.innerText ?? "").catch(() => ""))
+  );
 }
 
 /** Waits up to `timeoutMs` for the chat list — WhatsApp Web logged in and loaded. */

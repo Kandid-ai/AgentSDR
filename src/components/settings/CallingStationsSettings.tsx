@@ -348,8 +348,9 @@ function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, on
 }
 
 function LinkPanel({ link }: { link: NonNullable<CallingStation["link"]> }) {
+  const [zoomed, setZoomed] = useState(false);
   return (
-    <div className="grid gap-4 rounded-xl bg-bg-weak-50 p-4 ring-1 ring-inset ring-stroke-soft-200 md:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
+    <div className="space-y-4 rounded-xl bg-bg-weak-50 p-4 ring-1 ring-inset ring-stroke-soft-200">
       <div className="space-y-3">
         <p className="text-label-sm text-text-strong-950">Link this number to WhatsApp Web</p>
         {link.code ? (
@@ -370,10 +371,30 @@ function LinkPanel({ link }: { link: NonNullable<CallingStation["link"]> }) {
         </p>
       </div>
       {link.screenshot && (
-        <div className="overflow-hidden rounded-lg bg-bg-white-0 ring-1 ring-inset ring-stroke-soft-200">
-          {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL screenshot from the worker */}
-          <img src={link.screenshot} alt="WhatsApp Web's login screen in the cloud browser" className="block w-full" />
-        </div>
+        <>
+          {/* Full width, so a QR is scannable straight off the screen; click for full size. */}
+          <button
+            type="button"
+            onClick={() => setZoomed(true)}
+            aria-label="Open WhatsApp Web's login screen full size"
+            className="block w-full cursor-zoom-in overflow-hidden rounded-lg bg-bg-white-0 ring-1 ring-inset ring-stroke-soft-200"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL screenshot from the worker */}
+            <img src={link.screenshot} alt="WhatsApp Web's login screen in the cloud browser" className="block w-full" />
+          </button>
+          <p className="text-paragraph-xs text-text-soft-400">The screenshot refreshes every few seconds. Click it to open it full size.</p>
+          <Modal.Root open={zoomed} onOpenChange={setZoomed}>
+            <Modal.Content className="max-w-[min(96vw,1400px)]">
+              <Modal.Header>
+                <Modal.Title>WhatsApp Web login screen</Modal.Title>
+              </Modal.Header>
+              <Modal.Body>
+                {/* eslint-disable-next-line @next/next/no-img-element -- a data: URL screenshot from the worker */}
+                <img src={link.screenshot} alt="WhatsApp Web's login screen in the cloud browser, full size" className="block w-full rounded-lg" />
+              </Modal.Body>
+            </Modal.Content>
+          </Modal.Root>
+        </>
       )}
     </div>
   );
