@@ -5,7 +5,19 @@ import { config } from "./config";
 import { stationWorker, type StationWorker } from "./extension";
 import { openStationBrowser, type StationBrowser } from "./launchers";
 import { log } from "./log";
-import { isLoginScreen, openWhatsApp, screenshotDataUrl, startPhoneNumberLogin, waitForReady, waitForWhatsAppState } from "./whatsapp";
+import {
+  isEnglish,
+  isLoginScreen,
+  openWhatsApp,
+  screenshotDataUrl,
+  startPhoneNumberLogin,
+  waitForReady,
+  waitForWhatsAppState,
+  whatsAppLanguage,
+} from "./whatsapp";
+
+const NOT_ENGLISH = (language: string) =>
+  `WhatsApp Web is in "${language}" — set this profile's browser language to English (in GoLogin: profile → Navigator → Language, not based on IP)`;
 
 type CallJob = Extract<WorkerJob, { kind: "call" }>;
 type LinkJob = Extract<WorkerJob, { kind: "link" }>;
@@ -97,6 +109,14 @@ export async function runCall(job: CallJob): Promise<void> {
       await release(`WhatsApp Web on ${station.name} did not load in time`);
       return;
     }
+    const language = await whatsAppLanguage(page);
+    if (!isEnglish(language)) {
+      // The extension cannot find WhatsApp's buttons in another language.
+      log(`${tag}: WhatsApp Web is in ${language}`);
+      await safeState(station.id, { error: NOT_ENGLISH(language) });
+      await release(NOT_ENGLISH(language));
+      return;
+    }
     await safeState(station.id, { status: "active", error: null });
 
     let worker: StationWorker;
@@ -168,7 +188,13 @@ export async function runLink(job: LinkJob): Promise<void> {
       await safeState(station.id, { linkDone: true, link: null, error: "WhatsApp Web did not load" });
       return;
     }
-    const code = resumingSync ? null : await startPhoneNumberLogin(page, station.phone);
+    const language = await whatsAppLanguage(page);
+    // The QR in the screenshot works in any language; the code and calls need English.
+    if (!isEnglish(language)) {
+      log(`${tag}: WhatsApp Web is in ${language}`);
+      await safeState(station.id, { error: NOT_ENGLISH(language) });
+    }
+    const code = resumingSync || !isEnglish(language) ? null : await startPhoneNumberLogin(page, station.phone);
     log(`${tag}: code ${code ?? "not found (QR only)"}`);
     // Four minutes to link; once the login screen has gone (the phone linked
     // and WhatsApp is loading the chats), up to twelve for the first sync,

@@ -7,27 +7,24 @@ export type WhatsAppState = "ready" | "logged_out" | "timeout";
 export async function openWhatsApp(context: BrowserContext): Promise<Page> {
   const existing = context.pages().find((p) => p.url().startsWith(WA_URL));
   const page = existing ?? context.pages().find((p) => p.url() === "about:blank" || p.url() === "chrome://newtab/") ?? (await context.newPage());
-  await forceEnglish(context, page);
   await page.goto(WA_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
   return page;
 }
 
 /**
- * WhatsApp Web in English, whatever the profile's language. The extension
- * finds "Voice call" and "End call" by their English labels, and the linking
- * flow its "Log in with phone number" link — a GoLogin profile set its
- * language from the IP and WhatsApp came up in Hindi (12 Oct 2026). Applied
- * to the tab over CDP before WhatsApp loads, so it works for every launcher.
+ * The language WhatsApp Web came up in ("en", "hi", …). It follows the
+ * browser profile's language, and the extension finds "Voice call" and "End
+ * call" by their English labels, as the link flow does "Log in with phone
+ * number" — so a profile must be set to English. A GoLogin profile set its
+ * language from the IP and WhatsApp came up in Hindi (12 Oct 2026); the
+ * worker reports that rather than override the profile's fingerprint.
  */
-async function forceEnglish(context: BrowserContext, page: Page): Promise<void> {
-  try {
-    const session = await context.newCDPSession(page);
-    const userAgent = await page.evaluate(() => navigator.userAgent);
-    await session.send("Network.setUserAgentOverride", { userAgent, acceptLanguage: "en-US,en;q=0.9" });
-    await session.send("Emulation.setLocaleOverride", { locale: "en-US" });
-  } catch {
-    // Older browsers without these commands keep their own language.
-  }
+export async function whatsAppLanguage(page: Page): Promise<string> {
+  return page.evaluate(() => document.documentElement.lang || navigator.language || "").catch(() => "");
+}
+
+export function isEnglish(language: string): boolean {
+  return language === "" || /^en\b/i.test(language);
 }
 
 /** The chat list's pane — present in every language, unlike its aria-label. */
