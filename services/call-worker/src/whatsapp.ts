@@ -114,26 +114,44 @@ async function readLinkCode(page: Page): Promise<string | null> {
  * has a country picker, one text field labelled "Type your phone number to log
  * in to WhatsApp" (pre-filled "+91 "), and Next.
  */
-export async function startPhoneNumberLogin(page: Page, phoneE164: string): Promise<string | null> {
+export async function startPhoneNumberLogin(page: Page, phoneE164: string, note: (step: string) => void = () => {}): Promise<string | null> {
   try {
-    await page.locator(LOGIN_SELECTOR).first().waitFor({ state: "visible", timeout: 30_000 }).catch(() => {});
-    await page.getByText(/log in with phone number|link with phone number/i).filter({ visible: true }).first().click({ timeout: 15_000 });
+    // The phone-number link appears beside the QR once the QR has loaded.
+    const qr = await page.locator(LOGIN_SELECTOR).first().waitFor({ state: "visible", timeout: 20_000 }).then(() => true, () => false);
+    note(qr ? "QR showing" : "no QR after 30 s");
+    const link = page.getByText(/log in with phone number|link with phone number/i).filter({ visible: true }).first();
+    note(`phone-number links visible: ${await page.getByText(/log in with phone number|link with phone number/i).filter({ visible: true }).count()}`);
+    await link.click({ timeout: 8_000 });
+    note("clicked Log in with phone number");
     const input = page.locator('input[aria-label*="phone number" i], input[type="tel"]').filter({ visible: true }).first();
-    await input.waitFor({ state: "visible", timeout: 10_000 });
+    await input.waitFor({ state: "visible", timeout: 8_000 });
     await input.fill(phoneE164.startsWith("+") ? phoneE164 : `+${phoneE164}`);
+    note(`typed the number (field now "${await input.inputValue().catch(() => "?")}")`);
     await page.waitForTimeout(500);
     const next = page.getByRole("button", { name: /^next$/i }).filter({ visible: true }).first();
     if (await next.isVisible().catch(() => false)) await next.click();
     else await input.press("Enter");
+    note("pressed Next");
     for (let i = 0; i < 15; i++) {
       await page.waitForTimeout(1000);
       const code = await readLinkCode(page);
       if (code) return code;
     }
-  } catch {
-    /* defensive: the screenshot still shows what happened */
+    note("no code on the page after 15 s");
+  } catch (error) {
+    note(`stopped: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
   }
   return null;
+}
+
+/** From the phone-number form back to the QR ("Log in with QR code"), if the form is up. */
+export async function backToQr(page: Page): Promise<void> {
+  await page
+    .getByText(/log in with qr code|link with qr code/i)
+    .filter({ visible: true })
+    .first()
+    .click({ timeout: 3_000 })
+    .catch(() => {});
 }
 
 export async function screenshotDataUrl(page: Page): Promise<string> {

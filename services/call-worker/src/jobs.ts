@@ -3,9 +3,10 @@ import type { WorkerJob } from "../../../src/lib/calls/stationContract";
 import { getCallStatus, releaseCall, reportStationState } from "./api";
 import { config } from "./config";
 import { stationWorker, type StationWorker } from "./extension";
-import { openStationBrowser, type StationBrowser } from "./launchers";
+import { firstLine, openStationBrowser, type StationBrowser } from "./launchers";
 import { log } from "./log";
 import {
+  backToQr,
   isEnglish,
   isLoginScreen,
   openWhatsApp,
@@ -23,7 +24,8 @@ type CallJob = Extract<WorkerJob, { kind: "call" }>;
 type LinkJob = Extract<WorkerJob, { kind: "link" }>;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** One readable line for the app; the full error goes to the log. */
+const message = (e: unknown) => firstLine(e);
 
 /** Set while a call runs, so a shutdown can hang it up. */
 let current: { callId: string; worker: StationWorker | null } | null = null;
@@ -194,7 +196,9 @@ export async function runLink(job: LinkJob): Promise<void> {
       log(`${tag}: WhatsApp Web is in ${language}`);
       await safeState(station.id, { error: NOT_ENGLISH(language) });
     }
-    const code = resumingSync || !isEnglish(language) ? null : await startPhoneNumberLogin(page, station.phone);
+    const code = resumingSync || !isEnglish(language) ? null : await startPhoneNumberLogin(page, station.phone, (step) => log(`${tag}: phone login: ${step}`));
+    // No code: back to the QR, which the screenshot then shows.
+    if (!code && !resumingSync) await backToQr(page);
     log(`${tag}: code ${code ?? "not found (QR only)"}`);
     // Four minutes to link; once the login screen has gone (the phone linked
     // and WhatsApp is loading the chats), up to twelve for the first sync,
@@ -223,7 +227,7 @@ export async function runLink(job: LinkJob): Promise<void> {
       error: syncing ? "Linked, but WhatsApp Web didn't finish loading the chats — try Relink to let it continue" : "Linking timed out",
     });
   } catch (e) {
-    log(`${tag}: error: ${message(e)}`);
+    log(`${tag}: error: ${e instanceof Error ? e.message : String(e)}`);
     await safeState(station.id, { linkDone: true, link: null, error: `Linking failed: ${message(e)}` });
   } finally {
     if (browser) await browser.close().catch((e) => log(`${tag}: close failed: ${message(e)}`));

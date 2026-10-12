@@ -48,6 +48,13 @@ export function chromiumArgs(extensionPath: string): string[] {
   ];
 }
 
+const CLOUD_START_ATTEMPTS = 3;
+
+/** An error's first line — Playwright appends its whole call log to the message. */
+export function firstLine(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).split("\n")[0]!.slice(0, 300);
+}
+
 export async function openStationBrowser(station: WorkerStation): Promise<StationBrowser> {
   switch (station.launcher) {
     case "local":
@@ -98,16 +105,26 @@ async function openGologinCloud(station: WorkerStation): Promise<StationBrowser>
     });
     if (!response.ok && response.status !== 404) throw new Error(`GoLogin refused to stop the cloud profile (HTTP ${response.status})`);
   };
-  let browser: Browser;
-  try {
-    browser = await chromium.connectOverCDP(url);
-  } catch (error) {
-    await stop().catch(() => {});
-    throw error;
+  // GoLogin answers "503 Failed to start browser" while a profile is still
+  // stopping from its last session (seen 12 Oct 2026, seconds after a stop);
+  // it starts on a retry a few seconds later.
+  let browser: Browser | null = null;
+  for (let attempt = 1; !browser; attempt++) {
+    try {
+      browser = await chromium.connectOverCDP(url);
+    } catch (error) {
+      const busy = /\b503\b|failed to start browser/i.test(String(error));
+      if (!busy || attempt >= CLOUD_START_ATTEMPTS) {
+        await stop().catch(() => {});
+        throw new Error(busy ? "GoLogin's cloud could not start this profile's browser (503) — try again in a minute" : firstLine(error));
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 5_000));
+    }
   }
-  const context = browser.contexts()[0];
+  const connected = browser;
+  const context = connected.contexts()[0];
   if (!context) {
-    await browser.close().catch(() => {});
+    await connected.close().catch(() => {});
     await stop().catch(() => {});
     throw new Error("GoLogin cloud browser opened without a browser context");
   }
@@ -115,7 +132,7 @@ async function openGologinCloud(station: WorkerStation): Promise<StationBrowser>
   return {
     context,
     close: async () => {
-      await browser.close().catch(() => {});
+      await connected.close().catch(() => {});
       await stop();
     },
   };
