@@ -33,7 +33,9 @@ One job at a time per worker. Run several workers for more concurrency.
 bun run build:recorder                      # from the repo root, builds the extension
 cd services/call-worker && bun install
 bunx playwright-core install chromium       # once; Playwright's bundled Chromium (needed for extensions)
-AGENTSDR_URL=http://localhost:3000 CALL_WORKER_SECRET=… LAUNCHERS=local bun run src/main.ts
+AGENTSDR_URL=http://localhost:3000 CALL_WORKER_SECRET=… LAUNCHERS=local npm start
+# Runs on Node (tsx), not Bun: Bun's WebSocket cannot hold Playwright's connectOverCDP,
+# which the GoLogin launchers use. Bun only installs.
 ```
 
 Link the number once (Settings → WhatsApp → stations → Link); the session persists in
@@ -62,3 +64,12 @@ Run with `-e AGENTSDR_URL=… -e CALL_WORKER_SECRET=… -v profiles:/data`. The 
 PulseAudio with a null sink (so WhatsApp has an audio output to tap) and runs the worker under
 `xvfb-run` with `HEADLESS=false`; extensions and WhatsApp's audio are most reliable headful.
 Give the container `--shm-size=1g` (or `--ipc=host`).
+
+## GoLogin notes (tested 12 Oct 2026)
+
+- **SDK (`gologin_sdk`)**: Orbita starts on this machine in about 5 s; the worker loads the extension
+  from `EXTENSION_PATH`. Do **not** also upload the extension to that GoLogin profile, or two copies run.
+- **Cloud (`gologin_cloud`)**: opens in about 17 s; the extension must be uploaded to the profile
+  (Extensions → Upload custom extension, the built `dist/` folder) and re-uploaded after every change.
+  GoLogin's cloud machines have no audio input; the extension supplies the agent's voice as the only
+  microphone on agent calls (0.17.3+).

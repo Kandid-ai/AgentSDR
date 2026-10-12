@@ -216,15 +216,46 @@ function install(): void {
   if (mediaDevices?.getUserMedia) {
     const getUserMedia = mediaDevices.getUserMedia.bind(mediaDevices);
     mediaDevices.getUserMedia = async (constraints?: MediaStreamConstraints) => {
-      let stream = await getUserMedia(constraints);
       // The real microphone is still asked for, so WhatsApp's permission
       // flow is unchanged; on an agent call WhatsApp gets the agent's voice
       // instead — for every microphone it asks for until the call is over.
       const agentCallId = agentRig?.callId ?? (armedAgent ? armedCallId : null);
-      if (agentCallId && stream.getAudioTracks().length > 0) stream = agentMicrophone(agentCallId, stream);
+      let stream: MediaStream;
+      try {
+        stream = await getUserMedia(constraints);
+      } catch (error) {
+        // A cloud browser may have no audio input at all (GoLogin's Cloud
+        // Browser: "Requested device not found", 12 Oct 2026). An agent call
+        // never uses the real microphone, so it goes ahead without one.
+        if (!agentCallId || !constraints?.audio) throw error;
+        agentLog(`no real microphone (${describe(error)}); the agent's voice is the only one`);
+        stream = new MediaStream();
+      }
+      if (agentCallId && (stream.getAudioTracks().length > 0 || constraints?.audio)) stream = agentMicrophone(agentCallId, stream);
       const track = stream.getAudioTracks()[0];
       if (track) setTimeout(() => begin(track), MIC_SETTLE_MS);
       return stream;
+    };
+  }
+
+  // WhatsApp checks for a microphone before it offers or places a call. On
+  // an agent call with no audio input in the machine, it is shown one.
+  if (mediaDevices?.enumerateDevices) {
+    const enumerateDevices = mediaDevices.enumerateDevices.bind(mediaDevices);
+    mediaDevices.enumerateDevices = async () => {
+      const devices = await enumerateDevices();
+      const agentCallId = agentRig?.callId ?? (armedAgent ? armedCallId : null);
+      if (!agentCallId || devices.some((device) => device.kind === "audioinput")) return devices;
+      const agentInput = {
+        deviceId: "agentsdr-agent",
+        groupId: "agentsdr-agent",
+        kind: "audioinput",
+        label: "AgentSDR agent",
+        toJSON() {
+          return { deviceId: this.deviceId, groupId: this.groupId, kind: this.kind, label: this.label };
+        },
+      } as MediaDeviceInfo;
+      return [...devices, agentInput];
     };
   }
 

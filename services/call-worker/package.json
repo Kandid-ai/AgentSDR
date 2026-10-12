@@ -2,6 +2,13 @@
   "name": "agentsdr-call-worker",
   "private": true,
   "type": "module",
-  "scripts": { "start": "bun run src/main.ts" },
-  "dependencies": { "gologin": "^3.0.6", "playwright-core": "^1.64.0" }
+  "scripts": {
+    "start": "node --import tsx src/main.ts"
+  },
+  "dependencies": {
+    "gologin": "^3.0.6",
+    "playwright-core": "^1.64.0",
+    "tsx": "4"
+  },
+  "//": "Runs on Node, not Bun: Bun's WebSocket cannot hold Playwright's connectOverCDP to an already-running browser, which both GoLogin launchers need (12 Oct 2026). Bun is fine for installing."
 }
