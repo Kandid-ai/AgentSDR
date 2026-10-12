@@ -84,14 +84,41 @@ async function openGologinCloud(station: WorkerStation): Promise<StationBrowser>
   if (!station.gologinToken) throw new Error(`Station ${station.name}: the organization has no GoLogin API token`);
   if (!station.gologinProfileId) throw new Error(`Station ${station.name}: no GoLogin profile id`);
   const url = `wss://cloudbrowser.gologin.com/connect?token=${encodeURIComponent(station.gologinToken)}&profile=${encodeURIComponent(station.gologinProfileId)}`;
-  const browser = await chromium.connectOverCDP(url);
+  const token = station.gologinToken;
+  const profileId = station.gologinProfileId;
+  // Disconnecting does not stop a cloud profile: GoLogin keeps it running
+  // (and billing hours) until it idles out, seen still "running" after a
+  // job on 12 Oct 2026. So every close also stops it through the API.
+  const stop = async () => {
+    const response = await fetch(`https://api.gologin.com/browser/${encodeURIComponent(profileId)}/web`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch((error: unknown) => {
+      throw new Error(`could not stop the GoLogin cloud profile: ${String(error)}`);
+    });
+    if (!response.ok && response.status !== 404) throw new Error(`GoLogin refused to stop the cloud profile (HTTP ${response.status})`);
+  };
+  let browser: Browser;
+  try {
+    browser = await chromium.connectOverCDP(url);
+  } catch (error) {
+    await stop().catch(() => {});
+    throw error;
+  }
   const context = browser.contexts()[0];
   if (!context) {
     await browser.close().catch(() => {});
+    await stop().catch(() => {});
     throw new Error("GoLogin cloud browser opened without a browser context");
   }
   await context.grantPermissions(["microphone"], { origin: "https://web.whatsapp.com" }).catch(() => {});
-  return { context, close: () => browser.close() };
+  return {
+    context,
+    close: async () => {
+      await browser.close().catch(() => {});
+      await stop();
+    },
+  };
 }
 
 async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
