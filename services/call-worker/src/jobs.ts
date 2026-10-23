@@ -89,6 +89,7 @@ export async function runCall(job: CallJob): Promise<void> {
       browser = await openStationBrowser(station);
     } catch (e) {
       log(`${tag}: browser failed: ${message(e)}`);
+      if (e instanceof Error && e.stack) log(`${tag}: ${e.stack.split("\n").slice(0, 8).join("\n  ")}`);
       await release(`Could not open the station's browser: ${message(e)}`);
       return;
     }

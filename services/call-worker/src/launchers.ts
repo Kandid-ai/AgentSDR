@@ -56,7 +56,12 @@ const CLOUD_START_ATTEMPTS = 3;
 
 /** An error's first line — Playwright appends its whole call log to the message. */
 export function firstLine(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error)).split("\n")[0]!.slice(0, 300);
+  const text = (error instanceof Error ? error.message : String(error)).split("\n")[0]!;
+  // Node's fetch says only "fetch failed"; the reason (DNS, refused, TLS,
+  // timeout, and the host) is on its cause — the one useful part.
+  const cause = error instanceof Error ? (error.cause as { code?: string; message?: string; hostname?: string } | undefined) : undefined;
+  const reason = cause ? [cause.code, cause.hostname, cause.message].filter(Boolean).join(" ") : "";
+  return (reason && !text.includes(reason) ? `${text} (${reason})` : text).slice(0, 300);
 }
 
 /** `fresh`: open logged out, discarding the session the profile holds (see WorkerJob "link"). */
