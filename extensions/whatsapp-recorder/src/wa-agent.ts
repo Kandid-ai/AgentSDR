@@ -76,7 +76,7 @@ const confirmedTitles = new Map<string, string>();
 /** Records a timed step for the timing table (the service worker stamps the time). */
 function trace(callId: string, step: string): void {
   void send({ target: "background", type: "wa:trace", callId, step }).catch(() => {});
-  if (call?.station) pageLog(`${new Date().toISOString().slice(11, 23)} ${step}`);
+  if (call?.station || call?.agent) pageLog(`${new Date().toISOString().slice(11, 23)} ${step}`);
 }
 
 /**
@@ -165,6 +165,7 @@ chrome.runtime.onMessage.addListener((message: AgentCommand, _sender, sendRespon
 
 async function placeCall(next: WaCall): Promise<void> {
   call = next;
+  trace(next.callId, `WhatsApp tab: placing the call (agent ${next.agent}, station ${next.station}, speakers ${!next.station})`);
   trace(next.callId, "WhatsApp tab: looking for the Voice call button");
   toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent, monitor: !next.station });
   phase({ kind: "opening" });

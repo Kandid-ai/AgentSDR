@@ -161,20 +161,29 @@ export async function runCall(job: CallJob): Promise<void> {
     // The extension's own log of the call (dialing, the AI's steps, the
     // transcript), fetched — CloakBrowser hides console messages.
     let drained = 0;
-    // The extension's call log, written into the WhatsApp page (wa-agent's pageLog).
+    log(`${tag}: tabs: ${browser.context.pages().map((p) => p.url().slice(0, 60)).join(" | ")}`);
+    // The extension's call log, written into the WhatsApp page (wa-agent's pageLog) —
+    // read from every WhatsApp tab, in case the call runs in one this worker did not open.
     const drain = () =>
-      page
-        .evaluate(() => {
-          const element = document.getElementById("agentsdr-station-log");
-          const text = element?.getAttribute("data-lines") ?? "";
-          element?.setAttribute("data-lines", "");
-          return text.split("\n").filter(Boolean);
-        })
-        .catch(() => [] as string[])
-        .then((lines) => {
-          drained += lines.length;
-          lines.forEach((line) => log(`${tag}: ext ${line}`));
-        });
+      Promise.all(
+        (browser?.context.pages() ?? [])
+          .filter((p) => p.url().startsWith("https://web.whatsapp.com"))
+          .map((p, index) =>
+            p
+              .evaluate(() => {
+                const element = document.getElementById("agentsdr-station-log");
+                const text = element?.getAttribute("data-lines") ?? "";
+                element?.setAttribute("data-lines", "");
+                return text.split("\n").filter(Boolean);
+              })
+              .catch(() => [] as string[])
+              .then((lines) => lines.map((line) => (p === page ? line : `[tab ${index}] ${line}`))),
+          ),
+      ).then((perTab) => {
+        const lines = perTab.flat();
+        drained += lines.length;
+        lines.forEach((line) => log(`${tag}: ext ${line}`));
+      });
     const extensionLog = setInterval(() => void drain(), 2_000);
     stopExtensionLog = async () => {
       clearInterval(extensionLog);
