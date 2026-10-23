@@ -161,11 +161,20 @@ export async function runCall(job: CallJob): Promise<void> {
     // The extension's own log of the call (dialing, the AI's steps, the
     // transcript), fetched — CloakBrowser hides console messages.
     let drained = 0;
+    // The extension's call log, written into the WhatsApp page (wa-agent's pageLog).
     const drain = () =>
-      worker.drainLog().then((lines) => {
-        drained += lines.length;
-        lines.forEach((line) => log(`${tag}: ext ${line}`));
-      });
+      page
+        .evaluate(() => {
+          const element = document.getElementById("agentsdr-station-log");
+          const text = element?.getAttribute("data-lines") ?? "";
+          element?.setAttribute("data-lines", "");
+          return text.split("\n").filter(Boolean);
+        })
+        .catch(() => [] as string[])
+        .then((lines) => {
+          drained += lines.length;
+          lines.forEach((line) => log(`${tag}: ext ${line}`));
+        });
     const extensionLog = setInterval(() => void drain(), 2_000);
     stopExtensionLog = () => {
       clearInterval(extensionLog);

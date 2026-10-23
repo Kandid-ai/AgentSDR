@@ -76,6 +76,24 @@ const confirmedTitles = new Map<string, string>();
 /** Records a timed step for the timing table (the service worker stamps the time). */
 function trace(callId: string, step: string): void {
   void send({ target: "background", type: "wa:trace", callId, step }).catch(() => {});
+  if (call?.station) pageLog(`${new Date().toISOString().slice(11, 23)} ${step}`);
+}
+
+/**
+ * On a cloud station, every step is also written into a hidden element in
+ * the page, which the call worker reads (page.evaluate) and empties.
+ * CloakBrowser hides console messages, and the service worker's own log is
+ * lost whenever Chrome restarts it; the page lives as long as the call.
+ */
+const PAGE_LOG_ID = "agentsdr-station-log";
+function pageLog(line: string): void {
+  let element = document.getElementById(PAGE_LOG_ID);
+  if (!element) {
+    element = document.createElement("template");
+    element.id = PAGE_LOG_ID;
+    document.documentElement.append(element);
+  }
+  element.setAttribute("data-lines", `${element.getAttribute("data-lines") ?? ""}${line}\n`);
 }
 
 /** Sends a phase of the current call on to the AgentSDR tab that placed it. */
