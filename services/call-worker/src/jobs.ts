@@ -160,12 +160,16 @@ export async function runCall(job: CallJob): Promise<void> {
     log(`${tag}: call running`);
     // The extension's own log of the call (dialing, the AI's steps, the
     // transcript), fetched — CloakBrowser hides console messages.
-    const extensionLog = setInterval(() => {
-      void worker.drainLog().then((lines) => lines.forEach((line) => log(`${tag}: ext ${line}`)));
-    }, 2_000);
+    let drained = 0;
+    const drain = () =>
+      worker.drainLog().then((lines) => {
+        drained += lines.length;
+        lines.forEach((line) => log(`${tag}: ext ${line}`));
+      });
+    const extensionLog = setInterval(() => void drain(), 2_000);
     stopExtensionLog = () => {
       clearInterval(extensionLog);
-      void worker.drainLog().then((lines) => lines.forEach((line) => log(`${tag}: ext ${line}`)));
+      void drain().then(() => log(`${tag}: extension log: ${drained} lines`));
     };
     const outcome = await Promise.race([waitDone(call.id, cfg.callTimeoutMs), lost]);
     if (typeof outcome === "string") {

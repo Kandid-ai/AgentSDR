@@ -147,9 +147,12 @@ async function openCloak(station: WorkerStation, fresh: boolean): Promise<Statio
           !arg.startsWith("--lang=") &&
           !arg.startsWith("--disable-blink-features"),
       ),
-      // With an IP assigned, nothing may leave around it: WebRTC would
-      // otherwise send UDP straight from this machine, showing its real IP.
-      ...(relay ? ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] : []),
+      // Call audio is UDP, which no browser proxy carries. Forcing it
+      // through the proxy anyway (disable_non_proxied_udp) killed the audio
+      // both ways while the call itself connected (23 Oct 2026), so it is
+      // opt-in: STRICT_PROXY_UDP=true keeps the real IP hidden at the cost
+      // of the call's audio, until a full tunnel carries UDP.
+      ...(relay && cfg.strictProxyUdp ? ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] : []),
     ],
   }).catch(async (error: unknown) => {
     await relay?.close();

@@ -43,6 +43,8 @@ export type Config = {
   /** CloakBrowser's time zone and language for every station it opens; match them to the IP the calls go out from. */
   cloakTimezone: string;
   cloakLocale: string;
+  /** Keep WebRTC's UDP from leaving around a number's proxy (it then carries no call audio). */
+  strictProxyUdp: boolean;
 };
 
 export function loadConfig(): Config {
@@ -60,6 +62,7 @@ export function loadConfig(): Config {
     cloakTimezone: process.env.CLOAK_TIMEZONE?.trim() || "Asia/Kolkata",
     // English, which the extension needs: it finds WhatsApp's buttons by their English labels.
     cloakLocale: process.env.CLOAK_LOCALE?.trim() || "en-US",
+    strictProxyUdp: process.env.STRICT_PROXY_UDP?.trim().toLowerCase() === "true",
   };
 }
 
