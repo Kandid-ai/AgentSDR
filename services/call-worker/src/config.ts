@@ -56,7 +56,7 @@ export function loadConfig(): Config {
     extensionPath: resolve(process.env.EXTENSION_PATH?.trim() || join(here, "../../../extensions/whatsapp-recorder/dist")),
     profilesDir: resolve(process.env.PROFILES_DIR?.trim() || join(homedir(), ".agentsdr-call-worker", "profiles")),
     headless: process.env.HEADLESS?.trim().toLowerCase() === "true",
-    claimIntervalMs: int("CLAIM_INTERVAL_MS", 3000),
+    claimIntervalMs: int("CLAIM_INTERVAL_MS", 1000),
     callTimeoutMs: int("CALL_TIMEOUT_MS", 30 * 60 * 1000),
     chromiumPath: process.env.CHROMIUM_PATH?.trim() || undefined,
     cloakTimezone: process.env.CLOAK_TIMEZONE?.trim() || "Asia/Kolkata",

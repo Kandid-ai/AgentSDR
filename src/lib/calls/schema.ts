@@ -25,7 +25,7 @@ import type {
   TranscriptStatus,
 } from "./contract";
 import { organizations } from "@/lib/auth/schema";
-import type { CloudCallPhase, ProxyProtocol, StationLauncher, StationStatus } from "./stationContract";
+import type { CallTimelineEntry, CloudCallPhase, ProxyProtocol, StationLauncher, StationStatus } from "./stationContract";
 
 /** Who talks on a call: the rep, the AI agent in the rep's browser, or the AI agent on a cloud station. */
 export type CallMode = "rep" | "agent" | "agent_cloud";
@@ -264,6 +264,8 @@ export const callSessions = pgTable(
     /** When a call worker took the cloud call, and which. Null while it waits in the queue. */
     claimedAt: timestamp("claimed_at", { withTimezone: true }),
     claimedBy: text("claimed_by"),
+    /** A cloud call's timed steps, worker's and extension's, posted by the worker. scripts/add-call-session-timeline.ts. */
+    timeline: jsonb("timeline").$type<CallTimelineEntry[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

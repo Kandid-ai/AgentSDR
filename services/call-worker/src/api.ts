@@ -1,4 +1,5 @@
 import type {
+  CallTimelineEntry,
   WorkerProfileCommitRequest,
   WorkerProfileCommitResponse,
   WorkerProfileUploadResponse,
@@ -54,6 +55,10 @@ export async function reportStationState(stationId: string, body: WorkerStationS
 export async function releaseCall(callId: string, error: string): Promise<void> {
   const body: WorkerReleaseRequest = { error };
   await request<{ ok: true }>("POST", `/api/call-worker/calls/${encodeURIComponent(callId)}/release`, body);
+}
+
+export async function saveTimeline(callId: string, entries: CallTimelineEntry[]): Promise<void> {
+  await request<{ ok: true }>("POST", `/api/call-worker/calls/${encodeURIComponent(callId)}/timeline`, { entries });
 }
 
 export function getCallStatus(callId: string): Promise<WorkerCallStatus> {

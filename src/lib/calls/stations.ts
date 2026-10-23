@@ -16,6 +16,8 @@ import { createRecorderToken } from "./token";
 import {
   STATION_LAUNCHERS,
   usesGoLogin,
+  MAX_TIMELINE_ENTRIES,
+  type CallTimelineEntry,
   type CallingStation,
   type CloudCallPhase,
   type CreateStationRequest,
@@ -640,6 +642,30 @@ export async function releaseCall(id: string, error: string): Promise<void> {
       .set({ livePhase: { kind: "error", message, savedLocally: false }, updatedAt: new Date() })
       .where(and(inOrg(callSessions), eq(callSessions.id, row.id)));
     await finishCall(row, { outcome: "failed", error: message });
+  });
+}
+
+/** POST /api/call-worker/calls/:id/timeline — the worker's record of the call's timed steps. */
+export function parseTimelineRequest(value: unknown): CallTimelineEntry[] {
+  const body = asObject(value);
+  if (!Array.isArray(body.entries)) throw new CallApiError(400, "entries must be a list");
+  if (body.entries.length > MAX_TIMELINE_ENTRIES) throw new CallApiError(400, `At most ${MAX_TIMELINE_ENTRIES} timeline entries`);
+  return body.entries.map((entry: unknown) => {
+    const e = asObject(entry);
+    if (typeof e.at !== "number" || !Number.isFinite(e.at)) throw new CallApiError(400, "Each entry needs a numeric `at`");
+    if (e.source !== "worker" && e.source !== "extension") throw new CallApiError(400, "source must be worker or extension");
+    if (typeof e.text !== "string") throw new CallApiError(400, "Each entry needs `text`");
+    return { at: Math.round(e.at), source: e.source, text: e.text.slice(0, 400) };
+  });
+}
+
+export async function saveCallTimeline(id: string, entries: CallTimelineEntry[]): Promise<void> {
+  const row = await workerCallRow(id);
+  await runInOrganization(row.organizationId, async () => {
+    await db
+      .update(callSessions)
+      .set({ timeline: entries, updatedAt: new Date() })
+      .where(and(inOrg(callSessions), eq(callSessions.id, row.id)));
   });
 }
 

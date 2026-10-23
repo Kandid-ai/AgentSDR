@@ -1,6 +1,7 @@
 import type { Page } from "playwright-core";
 import type { WorkerJob } from "../../../src/lib/calls/stationContract";
-import { getCallStatus, releaseCall, reportStationState } from "./api";
+import { MAX_TIMELINE_ENTRIES, type CallTimelineEntry } from "../../../src/lib/calls/stationContract";
+import { getCallStatus, releaseCall, reportStationState, saveTimeline } from "./api";
 import { config } from "./config";
 import { stationWorker, type StationWorker } from "./extension";
 import { firstLine, openStationBrowser, type StationBrowser } from "./launchers";
@@ -79,21 +80,32 @@ export async function runCall(job: CallJob): Promise<void> {
   let browser: StationBrowser | null = null;
   let released = false;
   let stopExtensionLog = async () => {};
+  // Every timed step of the call, the worker's and the extension's, saved
+  // with the call (call_sessions.timeline) as it goes and at the end.
+  const timeline: CallTimelineEntry[] = [];
+  const step = (text: string) => {
+    log(`${tag}: ${text}`);
+    timeline.push({ at: Date.now(), source: "worker", text });
+  };
+  const flushTimeline = () =>
+    saveTimeline(call.id, timeline.slice(-MAX_TIMELINE_ENTRIES)).catch((e) => log(`${tag}: timeline not saved: ${message(e)}`));
+  step(`claimed by ${cfg.workerId}`);
   const release = async (error: string) => {
     released = true;
     await safeRelease(call.id, error);
   };
   try {
-    log(`${tag}: opening browser (${station.launcher})`);
+    step(`opening browser (${station.launcher})`);
     try {
-      browser = await openStationBrowser(station);
+      browser = await openStationBrowser(station, { note: step });
     } catch (e) {
-      log(`${tag}: browser failed: ${message(e)}`);
+      step(`browser failed: ${message(e)}`);
       if (e instanceof Error && e.stack) log(`${tag}: ${e.stack.split("\n").slice(0, 8).join("\n  ")}`);
       await release(`Could not open the station's browser: ${message(e)}`);
       return;
     }
     const page = await openWhatsApp(browser.context);
+    step("WhatsApp Web page opened");
     // The browser closing or WhatsApp's tab crashing ends the call with no
     // report from the extension; without this the worker would wait out the
     // whole call timeout with the station held busy.
@@ -103,24 +115,25 @@ export async function runCall(job: CallJob): Promise<void> {
       page.on("close", () => resolve("WhatsApp Web's tab closed during the call"));
     });
     watchConsole(browser, tag);
-    log(`${tag}: waiting for WhatsApp Web`);
+    step(`waiting for WhatsApp Web`);
     const state = await waitForWhatsAppState(page, 120_000);
+    if (state === "ready") step("WhatsApp Web ready (chats showing)");
     if (state === "logged_out") {
-      log(`${tag}: WhatsApp Web is logged out`);
+      step(`WhatsApp Web is logged out`);
       const error = `WhatsApp Web on ${station.name} is logged out — link it again`;
       await safeState(station.id, { status: "logged_out", error });
       await release(error);
       return;
     }
     if (state === "timeout") {
-      log(`${tag}: WhatsApp Web did not load`);
+      step(`WhatsApp Web did not load`);
       await release(`WhatsApp Web on ${station.name} did not load in time`);
       return;
     }
     const language = await whatsAppLanguage(page);
     if (!isEnglish(language)) {
       // The extension cannot find WhatsApp's buttons in another language.
-      log(`${tag}: WhatsApp Web is in ${language}`);
+      step(`WhatsApp Web is in ${language}`);
       await safeState(station.id, { error: NOT_ENGLISH(language) });
       await release(NOT_ENGLISH(language));
       return;
@@ -129,14 +142,14 @@ export async function runCall(job: CallJob): Promise<void> {
     const linkedPhone = await loggedInPhone(page);
     if (linkedPhone && digitsOf(linkedPhone) !== digitsOf(station.phone)) {
       const error = `WhatsApp Web is logged in as ${linkedPhone}, not ${station.phone} — not calling from the wrong number`;
-      log(`${tag}: ${error}`);
+      step(`${error}`);
       await safeState(station.id, { linkedPhone });
       await release(error);
       return;
     }
     await safeState(station.id, { status: "active", error: null, ...(linkedPhone ? { linkedPhone } : {}) });
     const dialogs = await dismissDialogs(page);
-    if (dialogs) log(`${tag}: closed ${dialogs} WhatsApp dialog(s) over the chats`);
+    if (dialogs) step(`closed ${dialogs} WhatsApp dialog(s) over the chats`);
 
     let worker: StationWorker;
     try {
@@ -146,7 +159,7 @@ export async function runCall(job: CallJob): Promise<void> {
       return;
     }
     current = { callId: call.id, worker };
-    log(`${tag}: starting call (extension ${worker.version})`);
+    step(`starting call (extension ${worker.version})`);
     const started = await worker.startCall({
       callId: call.id,
       phone: call.phone,
@@ -157,11 +170,11 @@ export async function runCall(job: CallJob): Promise<void> {
       clickedAt: Date.now(),
     });
     if (!started.ok) {
-      log(`${tag}: start refused: ${started.error}`);
+      step(`start refused: ${started.error}`);
       await release(started.error);
       return;
     }
-    log(`${tag}: call running`);
+    step(`call running`);
     // The extension's own log of the call (dialing, the AI's steps, the
     // transcript), fetched — CloakBrowser hides console messages.
     let drained = 0;
@@ -186,39 +199,66 @@ export async function runCall(job: CallJob): Promise<void> {
       ).then((perTab) => {
         const lines = perTab.flat();
         drained += lines.length;
-        lines.forEach((line) => log(`${tag}: ext ${line}`));
+        lines.forEach((line) => {
+          log(`${tag}: ext ${line}`);
+          timeline.push({ at: extensionTime(line), source: "extension", text: line.replace(/^(\[tab \d+\] )?\d\d:\d\d:\d\d\.\d{3} /, "$1") });
+        });
       });
-    const extensionLog = setInterval(() => void drain(), 2_000);
+    let ticks = 0;
+    const extensionLog = setInterval(() => {
+      void drain().then(() => {
+        // Saved every 10 s too, so a call that dies midway still leaves its steps.
+        if (++ticks % 5 === 0) void flushTimeline();
+      });
+    }, 2_000);
     stopExtensionLog = async () => {
       clearInterval(extensionLog);
       // Read the last lines before the browser closes.
       await drain();
-      log(`${tag}: extension log: ${drained} lines`);
+      step(`extension log: ${drained} lines`);
     };
     const outcome = await Promise.race([waitDone(call.id, cfg.callTimeoutMs), lost]);
     if (typeof outcome === "string") {
-      log(`${tag}: ${outcome}`);
+      step(`${outcome}`);
       // The extension may still have reported the end just before; give it a moment.
       if (!(await waitDone(call.id, 5_000))) await release(outcome);
       return;
     }
     let done = outcome;
     if (!done) {
-      log(`${tag}: timed out, hanging up`);
-      await worker.endCall(call.id).catch((e) => log(`${tag}: endCall failed: ${message(e)}`));
+      step(`timed out, hanging up`);
+      await worker.endCall(call.id).catch((e) => step(`endCall failed: ${message(e)}`));
       done = await waitDone(call.id, 30_000);
       if (!done) await release("The call timed out");
     }
-    log(`${tag}: finished`);
+    step(`finished`);
     await sleep(3000);
   } catch (e) {
-    log(`${tag}: error: ${message(e)}`);
+    step(`error: ${message(e)}`);
     if (!released) await release(`Call worker error: ${message(e)}`);
   } finally {
     await stopExtensionLog();
     current = null;
-    if (browser) await browser.close().catch((e) => log(`${tag}: close failed: ${message(e)}`));
+    if (browser) {
+      step("closing the browser");
+      await browser.close().catch((e) => step(`close failed: ${message(e)}`));
+      step("browser closed");
+    }
+    await flushTimeline();
   }
+}
+
+/**
+ * When the extension logged a line: its lines start with the UTC time of day
+ * ("HH:MM:SS.mmm"), dated today — or yesterday, for a line from just before
+ * midnight. Falls back to now.
+ */
+function extensionTime(line: string): number {
+  const match = /^(?:\[tab \d+\] )?(\d\d):(\d\d):(\d\d)\.(\d{3}) /.exec(line);
+  if (!match) return Date.now();
+  const now = new Date();
+  const at = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]));
+  return at > now.getTime() + 60_000 ? at - 86_400_000 : at;
 }
 
 export async function runLink(job: LinkJob): Promise<void> {

@@ -1015,6 +1015,7 @@ CREATE TABLE public.call_sessions (
     live_phase jsonb,
     claimed_at timestamp with time zone,
     claimed_by text,
+    timeline jsonb,
     CONSTRAINT call_sessions_duration_chk CHECK (((duration_ms IS NULL) OR (duration_ms >= 0))),
     CONSTRAINT call_sessions_mode_chk CHECK ((mode = ANY (ARRAY['rep'::text, 'agent'::text, 'agent_cloud'::text]))),
     CONSTRAINT call_sessions_recording_chk CHECK (((status = 'recorded'::text) = (recording_key IS NOT NULL))),

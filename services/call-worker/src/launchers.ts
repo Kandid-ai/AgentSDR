@@ -65,8 +65,15 @@ export function firstLine(error: unknown): string {
   return (reason && !text.includes(reason) ? `${text} (${reason})` : text).slice(0, 300);
 }
 
-/** `fresh`: open logged out, discarding the session the profile holds (see WorkerJob "link"). */
-export async function openStationBrowser(station: WorkerStation, options: { fresh?: boolean } = {}): Promise<StationBrowser> {
+/**
+ * `fresh`: open logged out, discarding the session the profile holds (see WorkerJob "link").
+ * `note`: receives the launcher's own timed steps (GoLogin's start-up phases), for the call's timeline.
+ */
+export async function openStationBrowser(
+  station: WorkerStation,
+  options: { fresh?: boolean; note?: (text: string) => void } = {},
+): Promise<StationBrowser> {
+  timingSink = options.note ?? null;
   switch (station.launcher) {
     case "cloak":
       return openCloak(station, options.fresh === true);
@@ -200,6 +207,13 @@ function directHosts(agentsdrUrl: string): string[] {
     new URL(agentsdrUrl).hostname,
     "generativelanguage.googleapis.com",
     "*.r2.cloudflarestorage.com",
+    // WhatsApp Web's app files — the same public bundle for everyone, 98% of
+    // a load's bytes (6 MB). GoLogin's SDK empties the browser cache when it
+    // saves a profile, so every call fetched them again through the number's
+    // home proxy: 20–60 s before the call could start, sometimes past the
+    // 2-minute limit ("did not load in time", 23 Oct 2026). The account's own
+    // connection (web.whatsapp.com, its /ws/chat socket) stays on the proxy.
+    "static.whatsapp.net",
   ];
 }
 
@@ -271,6 +285,28 @@ async function openGologinCloud(station: WorkerStation): Promise<StationBrowser>
   };
 }
 
+/** Where GoLogin's own start-up timings go while a browser opens (see hookGologinTimings). */
+let timingSink: ((text: string) => void) | null = null;
+let gologinTimingsHooked = false;
+
+/**
+ * The SDK times each start-up phase (getProfile, initProfileStorage — the
+ * profile download — spawnBrowser, …) through the `debug` package, off by
+ * default. Enabled here with its output redirected: only the "[timing]" lines
+ * are kept, for the call's timeline; the SDK's other debug lines (one prints
+ * the API token) are dropped, never printed.
+ */
+function hookGologinTimings(): void {
+  if (gologinTimingsHooked) return;
+  gologinTimingsHooked = true;
+  const debug = createRequire(import.meta.url)("debug") as { enable(namespaces: string): void; log: (...args: unknown[]) => void };
+  debug.log = (...args: unknown[]) => {
+    const match = /\[timing\] ([\w ]+): (\d+)ms/.exec(args.map(String).join(" "));
+    if (match) timingSink?.(`GoLogin ${match[1]}: ${match[2]} ms`);
+  };
+  debug.enable("gologin");
+}
+
 /**
  * The GoLogin SDK, fixed in two places for WhatsApp Web (gologin 3.0.6, 23 Oct 2026):
  *
@@ -292,6 +328,7 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
   if (!station.gologinProfileId) throw new Error(`Station ${station.name}: no GoLogin profile id`);
   const cfg = config();
   // Dynamic import so the local launcher works without the gologin package loaded.
+  hookGologinTimings();
   const { GoLogin } = await import("gologin");
   type Sdk = InstanceType<typeof GoLogin> & { sanitizeProfile(): Promise<void>; processSpawned?: ChildProcess | null };
   const baseSanitize = (GoLogin.prototype as unknown as Sdk).sanitizeProfile;
@@ -395,12 +432,17 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
       process.kill(pid, "SIGKILL");
       await exited(pid, 5_000);
     }
+    const stopAt = Date.now();
     await gl.stop();
+    timingSink?.(`GoLogin profile uploaded in ${Date.now() - stopAt} ms`);
   };
   try {
+    const startedAt = Date.now();
     const { wsUrl } = await gl.start();
     if (!wsUrl) throw new Error("GoLogin started the profile but gave no websocket URL");
+    timingSink?.(`GoLogin profile started in ${Date.now() - startedAt} ms`);
     browser = await chromium.connectOverCDP(wsUrl);
+    timingSink?.("connected to Orbita (CDP)");
     const context = browser.contexts()[0];
     if (!context) throw new Error("GoLogin browser has no browser context");
     await context.grantPermissions(["microphone"], { origin: "https://web.whatsapp.com" }).catch(() => {});

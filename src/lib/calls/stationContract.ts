@@ -250,6 +250,17 @@ export type WorkerStationStateRequest = {
   linkedPhone?: string | null;
 };
 
+/**
+ * One timed step of a cloud call. `at` is epoch milliseconds; `source` says
+ * who saw it — the worker (claim, browser, WhatsApp loading) or the extension
+ * in the station's browser (dialing, ringing, pick-up, the AI agent).
+ */
+export type CallTimelineEntry = { at: number; source: "worker" | "extension"; text: string };
+
+/** POST /api/call-worker/calls/:id/timeline — replaces the call's timeline (sent as the call goes, and at its end). */
+export type WorkerTimelineRequest = { entries: CallTimelineEntry[] };
+export const MAX_TIMELINE_ENTRIES = 800;
+
 /** POST /api/call-worker/calls/:id/release — the worker could not run the call; it is failed with `error`. */
 export type WorkerReleaseRequest = { error: string };
 

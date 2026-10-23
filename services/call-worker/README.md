@@ -23,7 +23,7 @@ One job at a time per worker. Run several workers for more concurrency.
 | `EXTENSION_PATH` | repo `extensions/whatsapp-recorder/dist` | built extension |
 | `PROFILES_DIR` | `~/.agentsdr-call-worker/profiles` | `local` profiles, one folder per station id |
 | `HEADLESS` | `false` | `true` for new headless Chromium |
-| `CLAIM_INTERVAL_MS` | `3000` | poll gap when idle |
+| `CLAIM_INTERVAL_MS` | `1000` | poll gap when idle |
 | `CALL_TIMEOUT_MS` | 30 min | then the worker hangs up |
 | `CHROMIUM_PATH` | – | Chromium executable override |
 
