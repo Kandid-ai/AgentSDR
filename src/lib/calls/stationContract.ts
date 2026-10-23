@@ -53,6 +53,12 @@ export type CallingStation = {
   proxyLabel: string | null;
   /** The saved browser profile (CloakBrowser): WhatsApp Web's login, and so on. version 0 = never saved. */
   profile: { version: number; bytes: number | null; savedAt: string | null };
+  /**
+   * The WhatsApp account its WhatsApp Web is actually logged in as (E.164),
+   * as the worker last read it; null until read. Calls are refused while it
+   * differs from `phone` — they would go out from the other number.
+   */
+  linkedPhone: string | null;
 };
 
 /**
@@ -84,6 +90,8 @@ export type CreateStationRequest = {
 /** PATCH /api/calling/stations/:id — every field optional. */
 export type UpdateStationRequest = {
   name?: string;
+  /** E.164 — e.g. to match the account its WhatsApp Web turned out to be logged in as (linkedPhone). */
+  phone?: string;
   launcher?: StationLauncher;
   gologinProfileId?: string | null;
   /** null takes the proxy away; a proxy belongs to at most one number. */
@@ -222,6 +230,8 @@ export type WorkerStationStateRequest = {
   /** The link attempt is over (linked, or given up); clears the request. */
   linkDone?: boolean;
   error?: string | null;
+  /** The account WhatsApp Web is logged in as (E.164), read whenever the worker finds it logged in. */
+  linkedPhone?: string | null;
 };
 
 /** POST /api/call-worker/calls/:id/release — the worker could not run the call; it is failed with `error`. */

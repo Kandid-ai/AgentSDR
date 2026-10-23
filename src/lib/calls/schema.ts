@@ -105,6 +105,8 @@ export const callingStations = pgTable(
     profileBytes: integer("profile_bytes"),
     profileVersion: integer("profile_version").notNull().default(0),
     profileSavedAt: timestamp("profile_saved_at", { withTimezone: true }),
+    /** The account its WhatsApp Web is logged in as (E.164), as the worker last read it. */
+    linkedPhone: text("linked_phone"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

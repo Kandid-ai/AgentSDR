@@ -327,6 +327,7 @@ export function CallingStationsSettings() {
                 onToggle={() => void act(station, () => updateCallingStation(station.id, { status: station.status === "paused" ? "active" : "paused" }))}
                 onEdit={() => openEdit(station)}
                 onDelete={() => setDeleting(station)}
+                onUseLinkedPhone={() => void act(station, () => updateCallingStation(station.id, { phone: station.linkedPhone! }))}
               />
             ))}
           </div>
@@ -515,7 +516,7 @@ export function CallingStationsSettings() {
   );
 }
 
-function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, onDelete }: {
+function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, onDelete, onUseLinkedPhone }: {
   station: CallingStation;
   busy: boolean;
   onLink: () => void;
@@ -523,8 +524,12 @@ function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, on
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  /** Renumber the card to the account WhatsApp Web is logged in as. */
+  onUseLinkedPhone: () => void;
 }) {
   const linking = station.link !== null;
+  // Calls go out from the logged-in account, so a mismatch blocks calling until fixed.
+  const wrongAccount = station.linkedPhone !== null && station.linkedPhone !== station.phone;
   const pausable = station.status === "active" || station.status === "paused";
   return (
     <Frame>
@@ -550,6 +555,19 @@ function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, on
               {station.lastCallAt ? ` · last call ${timeAgo(station.lastCallAt)}` : ""}
             </p>
             <p className="text-paragraph-xs text-text-sub-600">{station.proxyLabel ? `IP: ${station.proxyLabel}` : "Own IP"}</p>
+            {station.linkedPhone && (
+              <p className={cn("text-paragraph-xs tabular-nums", wrongAccount ? "text-error-base" : "text-text-sub-600")}>
+                WhatsApp: logged in as {station.linkedPhone}
+                {wrongAccount ? " — not this number, so it won't call" : ""}
+              </p>
+            )}
+            {wrongAccount && (
+              <div>
+                <Button.Root variant="neutral" mode="stroke" size="xxsmall" disabled={busy} onClick={onUseLinkedPhone}>
+                  Use {station.linkedPhone} as this number
+                </Button.Root>
+              </div>
+            )}
             {station.launcher === "cloak" && (
               <p className="text-paragraph-xs text-text-soft-400">
                 {station.profile.savedAt

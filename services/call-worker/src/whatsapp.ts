@@ -27,6 +27,19 @@ export function isEnglish(language: string): boolean {
   return language === "" || /^en\b/i.test(language);
 }
 
+/**
+ * The account WhatsApp Web is logged in as, E.164 ("+919876543210"), or null.
+ * WhatsApp keeps it in localStorage as `last-wid-md` ("919876543210:1@c.us",
+ * the ":1" being this linked device), `last-wid` on older builds.
+ */
+export async function loggedInPhone(page: Page): Promise<string | null> {
+  const wid = await page
+    .evaluate(() => localStorage.getItem("last-wid-md") ?? localStorage.getItem("last-wid"))
+    .catch(() => null);
+  const digits = wid ? /(\d{7,15})[:@]/.exec(wid)?.[1] : null;
+  return digits ? `+${digits}` : null;
+}
+
 /** The chat list's pane — present in every language, unlike its aria-label. */
 const READY_SELECTOR = '#pane-side, #side div[role="grid"], [aria-label="Chat list"]';
 /** The login QR — a canvas with an aria-label in whatever language WhatsApp is in. */

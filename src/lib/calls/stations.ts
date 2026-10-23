@@ -90,7 +90,14 @@ export function toCallingStation(row: StationRow, busyCallId: string | null, pro
       bytes: row.profileBytes,
       savedAt: row.profileSavedAt ? row.profileSavedAt.toISOString() : null,
     },
+    linkedPhone: row.linkedPhone,
   };
+}
+
+/** WhatsApp Web is logged in as another account than the number says: its calls would go out from that one. */
+export function wrongAccountError(row: Pick<StationRow, "phone" | "linkedPhone">): string | null {
+  if (!row.linkedPhone || row.linkedPhone === row.phone) return null;
+  return `WhatsApp Web is logged in as ${row.linkedPhone}, not ${row.phone} — unlink it on that phone (Linked devices) and link ${row.phone}, or change this number to ${row.linkedPhone}`;
 }
 
 /** The open, claimed cloud call on each of `stationIds`. */
@@ -191,6 +198,11 @@ export function parseUpdateStationRequest(value: unknown): UpdateStationRequest 
   const body = asObject(value);
   const update: UpdateStationRequest = {};
   if (body.name !== undefined) update.name = parseName(body.name);
+  if (body.phone !== undefined) {
+    const phone = typeof body.phone === "string" ? normalizePhone(body.phone) : null;
+    if (!phone) throw new CallApiError(400, "Enter the number with its country code, e.g. +91…");
+    update.phone = phone;
+  }
   if (body.launcher !== undefined) update.launcher = parseLauncher(body.launcher);
   if (body.gologinProfileId !== undefined) update.gologinProfileId = parseProfileId(body.gologinProfileId);
   if (body.proxyId !== undefined) update.proxyId = parseProxyId(body.proxyId);
@@ -234,9 +246,21 @@ export async function updateStation(id: string, input: UpdateStationRequest): Pr
   if (usesGoLogin(launcher) && !profileId) throw new CallApiError(400, "A GoLogin number needs its GoLogin profile id");
   if (input.status === "active" && current.status === "banned") throw new CallApiError(409, "A banned number can't be resumed");
   if (input.proxyId) await assertProxyFree(input.proxyId, id);
+  const renumbered = input.phone !== undefined && input.phone !== current.phone;
+  if (renumbered) {
+    if ((await busyCalls([id])).size > 0) throw new CallApiError(409, "This number is on a call — wait for it to end");
+    const [other] = await db
+      .select({ name: callingStations.name })
+      .from(callingStations)
+      .where(and(inOrg(callingStations), eq(callingStations.phone, input.phone!), ne(callingStations.id, id)))
+      .limit(1);
+    if (other) throw new CallApiError(409, `${other.name} already has ${input.phone}`);
+  }
+  // A new number that matches the logged-in account clears the wrong-account warning.
+  const fixesWrongAccount = renumbered && wrongAccountError(current) !== null && wrongAccountError({ phone: input.phone!, linkedPhone: current.linkedPhone }) === null;
   const [row] = await db
     .update(callingStations)
-    .set({ ...input, updatedAt: new Date() })
+    .set({ ...input, ...(fixesWrongAccount ? { lastError: null } : {}), updatedAt: new Date() })
     .where(and(inOrg(callingStations), eq(callingStations.id, id)))
     .returning();
   return stationView(row ?? current);
@@ -287,11 +311,19 @@ export async function stationForCloudCall(stationId: string | null | undefined, 
   if (stationId) {
     station = await requireStation(stationId);
     if (station.status !== "active") throw new CallApiError(409, `${station.name} isn't active (${station.status.replace("_", " ")})`);
+    const wrongAccount = wrongAccountError(station);
+    if (wrongAccount) throw new CallApiError(409, `${station.name}: ${wrongAccount}`);
   } else {
     [station] = await db
       .select()
       .from(callingStations)
-      .where(and(inOrg(callingStations), eq(callingStations.status, "active")))
+      .where(
+        and(
+          inOrg(callingStations),
+          eq(callingStations.status, "active"),
+          or(isNull(callingStations.linkedPhone), eq(callingStations.linkedPhone, callingStations.phone)),
+        ),
+      )
       .orderBy(sql`${callingStations.lastCallAt} asc nulls first`)
       .limit(1);
     if (!station) throw new CallApiError(409, "No active cloud calling number — add one in Settings → WhatsApp → Calling numbers");
@@ -429,6 +461,8 @@ async function claimCall({ workerId, launchers }: WorkerClaimRequest): Promise<W
           isNull(callSessions.claimedAt),
           eq(callingStations.status, "active"),
           inArray(callingStations.launcher, launchers),
+          // Never call from a number whose WhatsApp Web is another account.
+          or(isNull(callingStations.linkedPhone), eq(callingStations.linkedPhone, callingStations.phone)),
           stationIsFree,
         ),
       )
@@ -533,6 +567,9 @@ export function parseWorkerStationStateRequest(value: unknown): WorkerStationSta
   }
   if (body.linkDone !== undefined) state.linkDone = body.linkDone === true;
   if (body.error !== undefined) state.error = typeof body.error === "string" ? body.error.slice(0, 500) : null;
+  if (body.linkedPhone !== undefined) {
+    state.linkedPhone = body.linkedPhone === null ? null : typeof body.linkedPhone === "string" ? normalizePhone(body.linkedPhone) : null;
+  }
   return state;
 }
 
@@ -556,6 +593,12 @@ export async function reportStationState(id: string, state: WorkerStationStateRe
   }
   if (state.error !== undefined) set.lastError = state.error;
   else if (state.status === "active") set.lastError = null;
+  if (state.linkedPhone !== undefined) {
+    set.linkedPhone = state.linkedPhone;
+    // The wrong account is the error that matters most: it stays on the card until fixed.
+    const wrongAccount = wrongAccountError({ phone: row.phone, linkedPhone: state.linkedPhone });
+    if (wrongAccount) set.lastError = wrongAccount;
+  }
   await db.update(callingStations).set(set).where(eq(callingStations.id, row.id));
 }
 

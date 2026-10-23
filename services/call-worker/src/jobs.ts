@@ -7,6 +7,7 @@ import { firstLine, openStationBrowser, type StationBrowser } from "./launchers"
 import { log } from "./log";
 import {
   backToQr,
+  loggedInPhone,
   isEnglish,
   isLoginScreen,
   openWhatsApp,
@@ -24,6 +25,8 @@ type CallJob = Extract<WorkerJob, { kind: "call" }>;
 type LinkJob = Extract<WorkerJob, { kind: "link" }>;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const digitsOf = (phone: string) => phone.replace(/\D/g, "");
+
 /** One readable line for the app; the full error goes to the log. */
 const message = (e: unknown) => firstLine(e);
 
@@ -119,7 +122,16 @@ export async function runCall(job: CallJob): Promise<void> {
       await release(NOT_ENGLISH(language));
       return;
     }
-    await safeState(station.id, { status: "active", error: null });
+    // Calls go out from whichever account WhatsApp Web is logged in as.
+    const linkedPhone = await loggedInPhone(page);
+    if (linkedPhone && digitsOf(linkedPhone) !== digitsOf(station.phone)) {
+      const error = `WhatsApp Web is logged in as ${linkedPhone}, not ${station.phone} — not calling from the wrong number`;
+      log(`${tag}: ${error}`);
+      await safeState(station.id, { linkedPhone });
+      await release(error);
+      return;
+    }
+    await safeState(station.id, { status: "active", error: null, ...(linkedPhone ? { linkedPhone } : {}) });
 
     let worker: StationWorker;
     try {
@@ -180,8 +192,9 @@ export async function runLink(job: LinkJob): Promise<void> {
     const page = await openWhatsApp(browser.context);
     const state = await waitForWhatsAppState(page, 90_000);
     if (state === "ready") {
-      log(`${tag}: already linked`);
-      await safeState(station.id, { status: "active", linkDone: true, link: null, error: null });
+      const linkedPhone = await loggedInPhone(page);
+      log(`${tag}: already linked${linkedPhone ? ` as ${linkedPhone}` : ""}`);
+      await safeState(station.id, { status: "active", linkDone: true, link: null, error: null, ...(linkedPhone ? { linkedPhone } : {}) });
       return;
     }
     // Neither the chats nor a login screen: an earlier link is still loading the chats.
@@ -216,7 +229,9 @@ export async function runLink(job: LinkJob): Promise<void> {
         log(`${tag}: linked`);
         // Let WhatsApp finish storing the new session before the browser closes.
         await sleep(15_000);
-        await safeState(station.id, { status: "active", link: null, linkDone: true, error: null });
+        const linkedPhone = await loggedInPhone(page);
+        log(`${tag}: logged in as ${linkedPhone ?? "an unknown account"}`);
+        await safeState(station.id, { status: "active", link: null, linkDone: true, error: null, ...(linkedPhone ? { linkedPhone } : {}) });
         return;
       }
     }
