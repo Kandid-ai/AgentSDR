@@ -77,7 +77,7 @@ export async function runCall(job: CallJob): Promise<void> {
   const tag = `call ${call.id} @ ${station.name}`;
   let browser: StationBrowser | null = null;
   let released = false;
-  let stopExtensionLog = () => {};
+  let stopExtensionLog = async () => {};
   const release = async (error: string) => {
     released = true;
     await safeRelease(call.id, error);
@@ -176,9 +176,11 @@ export async function runCall(job: CallJob): Promise<void> {
           lines.forEach((line) => log(`${tag}: ext ${line}`));
         });
     const extensionLog = setInterval(() => void drain(), 2_000);
-    stopExtensionLog = () => {
+    stopExtensionLog = async () => {
       clearInterval(extensionLog);
-      void drain().then(() => log(`${tag}: extension log: ${drained} lines`));
+      // Read the last lines before the browser closes.
+      await drain();
+      log(`${tag}: extension log: ${drained} lines`);
     };
     const outcome = await Promise.race([waitDone(call.id, cfg.callTimeoutMs), lost]);
     if (typeof outcome === "string") {
@@ -200,7 +202,7 @@ export async function runCall(job: CallJob): Promise<void> {
     log(`${tag}: error: ${message(e)}`);
     if (!released) await release(`Call worker error: ${message(e)}`);
   } finally {
-    stopExtensionLog();
+    await stopExtensionLog();
     current = null;
     if (browser) await browser.close().catch((e) => log(`${tag}: close failed: ${message(e)}`));
   }

@@ -51,19 +51,20 @@ import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from ".
  */
 const MIC_SETTLE_MS = 300;
 /**
- * How often the call UI is read. Fast, because the agent greets the lead
- * only once the pick-up is seen (the call timer appearing): every 0.2 s
- * instead of 0.5 s takes up to 0.3 s off the silence after "hello".
+ * How often the call UI is read. 0.2 s was tried for a faster pick-up
+ * (23 Oct 2026) and cloud calls then crashed while ringing or were taken for
+ * hung up at the pick-up — the moments WhatsApp builds or moves its
+ * picture-in-picture call window, which this reads. Back to 0.5 s.
  */
-const WATCH_INTERVAL_MS = 200;
+const WATCH_INTERVAL_MS = 500;
 const NO_TIMER_FALLBACK_MS = 60_000;
 /**
  * How many checks running the timer, or End call, must be missing before the
  * call counts as over. Background tabs throttle intervals to 1 s, so this is
  * a few seconds — enough to ride out the move into picture-in-picture.
  */
-const TIMER_GONE_CHECKS = 10;
-const END_BUTTON_GONE_CHECKS = 10;
+const TIMER_GONE_CHECKS = 4;
+const END_BUTTON_GONE_CHECKS = 4;
 /** Armed this long with no call UI ever showing: the call was never placed. */
 const ARMED_WITHOUT_CALL_MS = 90_000;
 const TIMER_PATTERN = /^\d{1,2}:\d{2}(?::\d{2})?$/;
