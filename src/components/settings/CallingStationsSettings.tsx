@@ -86,7 +86,7 @@ type ProxyDraft = {
 };
 const EMPTY_PROXY_DRAFT: ProxyDraft = {
   label: "",
-  protocol: "socks5",
+  protocol: "http",
   host: "",
   port: "",
   username: "",
@@ -442,6 +442,7 @@ export function CallingStationsSettings() {
               <TextField label="Host" value={proxyDraft.host} onChange={(host) => setProxyDraft((d) => ({ ...d, host }))} placeholder="203.0.113.10" disabled={saving} />
               <TextField label="Port" inputMode="numeric" value={proxyDraft.port} onChange={(port) => setProxyDraft((d) => ({ ...d, port }))} placeholder="1080" disabled={saving} />
             </div>
+
             <div className="grid grid-cols-2 gap-3">
               <TextField label="Username" autoComplete="off" value={proxyDraft.username} onChange={(username) => setProxyDraft((d) => ({ ...d, username }))} disabled={saving} />
               <TextField

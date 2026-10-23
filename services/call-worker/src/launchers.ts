@@ -5,6 +5,7 @@ import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import type { WorkerStation } from "../../../src/lib/calls/stationContract";
 import { config } from "./config";
 import { restoreProfile, saveProfile } from "./profiles";
+import { startProxyRelay } from "./proxyRelay";
 
 export type StationBrowser = { context: BrowserContext; close(): Promise<void> };
 
@@ -105,6 +106,17 @@ async function openLocal(station: WorkerStation): Promise<StationBrowser> {
 async function openCloak(station: WorkerStation): Promise<StationBrowser> {
   const cfg = config();
   const dir = join(cfg.profilesDir, "cloak", station.id);
+  // The browser reaches the number's proxy through a local, password-free
+  // relay: neither SOCKS5 nor Playwright's HTTP proxy auth works with the
+  // proxies we buy (see proxyRelay.ts).
+  const relay = station.proxy ? await startProxyRelay(station.proxy) : null;
+  if (relay) {
+    // Fail with the proxy's own reason now, not a browser error later.
+    await relay.check().catch(async (error: unknown) => {
+      await relay.close();
+      throw new Error(`This number's IP doesn't work: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
   // The saved profile and the number's fingerprint seed, from AgentSDR.
   await restoreProfile(station, dir);
   const { launchPersistentContext } = await import("cloakbrowser");
@@ -115,31 +127,32 @@ async function openCloak(station: WorkerStation): Promise<StationBrowser> {
     locale: cfg.cloakLocale,
     // The browser's clock follows the number's IP when it has one.
     timezone: station.proxy?.timezone ?? cfg.cloakTimezone,
-    ...(station.proxy
-      ? {
-          proxy: {
-            server: station.proxy.server,
-            ...(station.proxy.username ? { username: station.proxy.username } : {}),
-            ...(station.proxy.password ? { password: station.proxy.password } : {}),
-          },
-        }
-      : {}),
+    ...(relay ? { proxy: { server: relay.server } } : {}),
     // Media and throttling flags only: CloakBrowser supplies its own stealth
     // and extension flags, and our user agent and automation tweaks would
     // contradict its fingerprint.
-    args: chromiumArgs(cfg.extensionPath).filter(
-      (arg) =>
-        !arg.startsWith("--load-extension") &&
-        !arg.startsWith("--disable-extensions-except") &&
-        !arg.startsWith("--lang=") &&
-        !arg.startsWith("--disable-blink-features"),
-    ),
+    args: [
+      ...chromiumArgs(cfg.extensionPath).filter(
+        (arg) =>
+          !arg.startsWith("--load-extension") &&
+          !arg.startsWith("--disable-extensions-except") &&
+          !arg.startsWith("--lang=") &&
+          !arg.startsWith("--disable-blink-features"),
+      ),
+      // With an IP assigned, nothing may leave around it: WebRTC would
+      // otherwise send UDP straight from this machine, showing its real IP.
+      ...(relay ? ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] : []),
+    ],
+  }).catch(async (error: unknown) => {
+    await relay?.close();
+    throw error;
   });
   await context.grantPermissions(["microphone"], { origin: "https://web.whatsapp.com" }).catch(() => {});
   return {
     context,
     close: async () => {
       await context.close();
+      await relay?.close();
       // Only once closed: the profile is consistent on disk then.
       await saveProfile(station, dir);
     },
