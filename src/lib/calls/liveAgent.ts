@@ -90,6 +90,12 @@ function liveSetup(request: AgentTokenRequest) {
       responseModalities: ["AUDIO"],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } } },
     },
+    // Answer sooner after the lead stops talking. The default waits longer
+    // than a phone conversation does; 600 ms keeps a breath mid-sentence
+    // from counting as the end of their turn.
+    realtimeInputConfig: {
+      automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_HIGH", silenceDurationMs: 600, prefixPaddingMs: 100 },
+    },
     systemInstruction: { parts: [{ text: agentInstructions(request) }] },
     tools: [
       {

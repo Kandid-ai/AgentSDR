@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { rename, rm, stat } from "node:fs/promises";
+import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
@@ -192,7 +192,7 @@ async function openCloak(station: WorkerStation, fresh: boolean): Promise<Statio
  * (`<-loopback>`), and the extension's reports to a local AgentSDR went to the
  * proxy and were lost — the AI never got its token (23 Oct 2026).
  */
-function proxyBypass(agentsdrUrl: string): string {
+function directHosts(agentsdrUrl: string): string[] {
   return [
     "localhost",
     "127.0.0.1",
@@ -200,7 +200,11 @@ function proxyBypass(agentsdrUrl: string): string {
     new URL(agentsdrUrl).hostname,
     "generativelanguage.googleapis.com",
     "*.r2.cloudflarestorage.com",
-  ].join(",");
+  ];
+}
+
+function proxyBypass(agentsdrUrl: string): string {
+  return directHosts(agentsdrUrl).join(",");
 }
 
 const megabytes = (bytes: number) => `${(bytes / 1_048_576).toFixed(1)} MB`;
@@ -294,7 +298,41 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
   type Zip = { addLocalFolder(localPath: string, zipPath: string): void; toBuffer(): Buffer };
   const AdmZip = createRequire(import.meta.url)("adm-zip") as new (input?: Buffer) => Zip;
   const baseZip = (GoLogin.prototype as unknown as { getProfileDataToUpdate(): Promise<Buffer> }).getProfileDataToUpdate;
+  const baseSpawn = (GoLogin.prototype as unknown as { spawnBrowser(): Promise<unknown> }).spawnBrowser;
   class WhatsAppGoLogin extends GoLogin {
+    /**
+     * Only WhatsApp goes through the profile's proxy (see directHosts). On the
+     * server, the AI's audio went Austria → an Indian home connection → Google
+     * and back on every reply — a lag the lead heard (23 Oct 2026) — and used
+     * the proxy's paid GB. GoLogin also maps every hostname to 0.0.0.0 but the
+     * proxy's (--host-resolver-rules), so a bypassed host could not even
+     * resolve; its rules are repeated with the direct hosts excluded, and the
+     * later switch wins.
+     */
+    async spawnBrowser(): Promise<unknown> {
+      const sdk = this as unknown as { proxy?: { host?: string } | null; extra_params?: string[] };
+      const proxyHost = sdk.proxy?.host;
+      if (proxyHost) {
+        const direct = directHosts(cfg.agentsdrUrl);
+        // Orbita 135+ takes its proxy from the profile's Preferences (written
+        // by the SDK just before this), not from --proxy-server, so
+        // --proxy-bypass-list alone did nothing; the pref's own bypass_list does.
+        const prefsPath = join(this.profilePath(), "Default", "Preferences");
+        const prefs = JSON.parse(await readFile(prefsPath, "utf8").catch(() => "{}")) as { proxy?: { mode?: string; bypass_list?: string } };
+        if (prefs.proxy?.mode === "fixed_servers") {
+          prefs.proxy.bypass_list = direct.join(";");
+          await writeFile(prefsPath, JSON.stringify(prefs));
+        }
+        sdk.extra_params = [
+          ...(sdk.extra_params ?? []).filter((a) => !a.startsWith("--proxy-bypass-list=") && !a.startsWith("--host-resolver-rules=")),
+          `--proxy-bypass-list=${direct.join(";")}`,
+          `--host-resolver-rules=MAP * 0.0.0.0 , EXCLUDE ${proxyHost} , EXCLUDE api.gologin.com , ${direct.map((h) => `EXCLUDE ${h}`).join(" , ")}`,
+        ];
+      }
+      return baseSpawn.call(this);
+    }
+
+
     /** The archiver drops IndexedDB from the upload too (a hard-coded list); put it back. */
     async getProfileDataToUpdate(): Promise<Buffer> {
       const zip = new AdmZip(await baseZip.call(this));

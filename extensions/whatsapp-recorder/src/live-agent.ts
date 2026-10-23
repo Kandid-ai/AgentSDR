@@ -38,6 +38,8 @@ const GREETING_PROMPT = "The call has just connected and the person is on the li
  * this long for them, and if they speak, answers them instead.
  */
 const GREETING_WAIT_MS = 1_200;
+/** A lead-side chunk this loud (-40 dBFS) counts as them making sound, for the reply-latency log. */
+const VOICE_PEAK = 0x8000 / 100;
 
 export class LiveAgent {
   private socket: WebSocket | null = null;
@@ -52,6 +54,9 @@ export class LiveAgent {
   private greetTimer: ReturnType<typeof setTimeout> | null = null;
   private leadSpoke = false;
   private firstReply = true;
+  /** When the lead's side last carried sound (above -40 dBFS), and whether the model is mid-reply. */
+  private lastVoiceAt = 0;
+  private replying = false;
   private heardThisTurn = "";
 
   constructor(private readonly handlers: Handlers) {}
@@ -108,6 +113,7 @@ export class LiveAgent {
     this.sentSamples += samples.length;
     this.sentPeak = Math.max(this.sentPeak, peak);
     const now = Date.now();
+    if (peak > VOICE_PEAK) this.lastVoiceAt = now;
     if (now - this.sentSince >= 5_000) {
       const peakDb = this.sentPeak > 0 ? Math.round(20 * Math.log10(this.sentPeak / 0x8000)) : -Infinity;
       this.handlers.trace(`AI agent: sent ${(this.sentSamples / 16_000).toFixed(1)} s of the lead's audio in ${((now - this.sentSince) / 1000).toFixed(1)} s, peak ${peakDb} dB`);
@@ -154,6 +160,7 @@ export class LiveAgent {
     const content = message.serverContent;
     if (content) {
       if (content.interrupted) {
+        this.replying = false;
         this.handlers.interrupt();
         this.flushTranscript("interrupted");
       }
@@ -176,10 +183,17 @@ export class LiveAgent {
         if (this.firstReply) {
           this.firstReply = false;
           this.handlers.trace("AI agent: first audio from Gemini");
+        } else if (!this.replying && this.lastVoiceAt) {
+          // The gap the lead hears: from their last sound to the model's first.
+          this.handlers.trace(`AI agent: replied ${Date.now() - this.lastVoiceAt} ms after the lead's last sound`);
         }
+        this.replying = true;
         this.handlers.play(fromBase64(audio.data), rate);
       }
-      if (content.turnComplete) this.flushTranscript("turn");
+      if (content.turnComplete) {
+        this.replying = false;
+        this.flushTranscript("turn");
+      }
     }
 
     for (const call of message.toolCall?.functionCalls ?? []) {
