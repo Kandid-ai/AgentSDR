@@ -67,12 +67,23 @@ function startTiming(callId: string, clickedAt: number | undefined): void {
   trace(callId, "Extension: got the call (AgentSDR had created it on the server)", now);
 }
 
+/**
+ * Every step, also kept for the call worker to collect (station.drainLog):
+ * CloakBrowser hides console messages from automation (23 Oct 2026), so a
+ * cloud call's log has to be fetched rather than watched.
+ */
+const stationLog: string[] = [];
+const STATION_LOG_MAX = 500;
+
 function trace(callId: string, step: string, at = Date.now()): void {
   const timing = timings.get(callId);
   if (!timing) return;
   const ms = at - timing.t0;
   timing.steps.push({ step, ms });
-  console.log(`[recorder] ${callId.slice(0, 8)} +${ms}ms ${step}`);
+  const line = `${callId.slice(0, 8)} +${ms}ms ${step}`;
+  console.log(`[recorder] ${line}`);
+  stationLog.push(line);
+  if (stationLog.length > STATION_LOG_MAX) stationLog.splice(0, stationLog.length - STATION_LOG_MAX);
 }
 
 async function reportTiming(callId: string): Promise<void> {
@@ -664,6 +675,10 @@ const station = {
   async activeCall(): Promise<Pick<ActiveCall, "callId" | "dialedAt" | "answeredAt"> | null> {
     const call = await getActiveCall();
     return call ? { callId: call.callId, dialedAt: call.dialedAt, answeredAt: call.answeredAt } : null;
+  },
+  /** The steps logged since the last call, oldest first — the worker's view into the call. */
+  drainLog(): string[] {
+    return stationLog.splice(0, stationLog.length);
   },
   version: chrome.runtime.getManifest().version,
 };

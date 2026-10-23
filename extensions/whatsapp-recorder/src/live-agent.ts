@@ -177,12 +177,16 @@ export class LiveAgent {
 
   private flushHeard(): void {
     console.info("[agentsdr agent] lead:", this.heardThisTurn.trim());
+    this.handlers.trace(`lead: ${this.heardThisTurn.trim()}`);
     this.heardThisTurn = "";
   }
 
   private flushTranscript(why: string): void {
     if (this.heardThisTurn) this.flushHeard();
-    if (this.saidThisTurn) console.info(`[agentsdr agent] agent (${why}):`, this.saidThisTurn.trim());
+    if (this.saidThisTurn) {
+      console.info(`[agentsdr agent] agent (${why}):`, this.saidThisTurn.trim());
+      this.handlers.trace(`agent (${why}): ${this.saidThisTurn.trim()}`);
+    }
     this.saidThisTurn = "";
   }
 }

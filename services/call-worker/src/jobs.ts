@@ -77,6 +77,7 @@ export async function runCall(job: CallJob): Promise<void> {
   const tag = `call ${call.id} @ ${station.name}`;
   let browser: StationBrowser | null = null;
   let released = false;
+  let stopExtensionLog = () => {};
   const release = async (error: string) => {
     released = true;
     await safeRelease(call.id, error);
@@ -157,6 +158,15 @@ export async function runCall(job: CallJob): Promise<void> {
       return;
     }
     log(`${tag}: call running`);
+    // The extension's own log of the call (dialing, the AI's steps, the
+    // transcript), fetched — CloakBrowser hides console messages.
+    const extensionLog = setInterval(() => {
+      void worker.drainLog().then((lines) => lines.forEach((line) => log(`${tag}: ext ${line}`)));
+    }, 2_000);
+    stopExtensionLog = () => {
+      clearInterval(extensionLog);
+      void worker.drainLog().then((lines) => lines.forEach((line) => log(`${tag}: ext ${line}`)));
+    };
     const outcome = await Promise.race([waitDone(call.id, cfg.callTimeoutMs), lost]);
     if (typeof outcome === "string") {
       log(`${tag}: ${outcome}`);
@@ -177,6 +187,7 @@ export async function runCall(job: CallJob): Promise<void> {
     log(`${tag}: error: ${message(e)}`);
     if (!released) await release(`Call worker error: ${message(e)}`);
   } finally {
+    stopExtensionLog();
     current = null;
     if (browser) await browser.close().catch((e) => log(`${tag}: close failed: ${message(e)}`));
   }

@@ -132,7 +132,10 @@ async function openCloak(station: WorkerStation, fresh: boolean): Promise<Statio
     locale: cfg.cloakLocale,
     // The browser's clock follows the number's IP when it has one.
     timezone: station.proxy?.timezone ?? cfg.cloakTimezone,
-    ...(relay ? { proxy: { server: relay.server } } : {}),
+    // Loopback goes direct: Playwright otherwise proxies even localhost
+    // (`<-loopback>`), and the extension's reports to a local AgentSDR went
+    // to the proxy and were lost — the AI never got its token (23 Oct 2026).
+    ...(relay ? { proxy: { server: relay.server, bypass: "localhost,127.0.0.1,[::1]" } } : {}),
     // Media and throttling flags only: CloakBrowser supplies its own stealth
     // and extension flags, and our user agent and automation tweaks would
     // contradict its fingerprint.

@@ -12,6 +12,8 @@ export type StationWorker = {
   startCall(req: StationCallRequest): Promise<StationResult>;
   endCall(callId: string): Promise<unknown>;
   activeCall(): Promise<ActiveCall>;
+  /** The extension's call log since the last drain (empty on extensions before 0.17.4). */
+  drainLog(): Promise<string[]>;
 };
 
 function versionAtLeast(version: string, min: string): boolean {
@@ -53,11 +55,14 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
     startCall(r: unknown): Promise<unknown>;
     endCall(id: string): Promise<unknown>;
     activeCall(): Promise<unknown>;
+    drainLog?(): string[];
   };
   return {
     version,
     startCall: (req) => w.evaluate((r) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.startCall(r), req) as Promise<StationResult>,
     endCall: (callId) => w.evaluate((id) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.endCall(id), callId),
     activeCall: () => w.evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.activeCall()) as Promise<ActiveCall>,
+    drainLog: () =>
+      w.evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.drainLog?.() ?? []).catch(() => [] as string[]),
   };
 }

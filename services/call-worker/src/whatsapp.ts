@@ -132,9 +132,8 @@ export async function startPhoneNumberLogin(page: Page, phoneE164: string, note:
     // The phone-number link appears beside the QR once the QR has loaded.
     const qr = await page.locator(LOGIN_SELECTOR).first().waitFor({ state: "visible", timeout: 20_000 }).then(() => true, () => false);
     note(qr ? "QR showing" : "no QR after 30 s");
-    const link = page.getByText(/log in with phone number|link with phone number/i).filter({ visible: true }).first();
     note(`phone-number links visible: ${await page.getByText(/log in with phone number|link with phone number/i).filter({ visible: true }).count()}`);
-    await link.click({ timeout: 8_000 });
+    await clickPhoneNumberLogin(page);
     note("clicked Log in with phone number");
     const input = page.locator('input[aria-label*="phone number" i], input[type="tel"]').filter({ visible: true }).first();
     await input.waitFor({ state: "visible", timeout: 8_000 });
@@ -155,6 +154,28 @@ export async function startPhoneNumberLogin(page: Page, phoneE164: string, note:
     note(`stopped: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
   }
   return null;
+}
+
+/**
+ * WhatsApp's "Log in with phone number". Two elements carry that text — the
+ * link beside the QR and a visually hidden label ("Link with phone number
+ * instead.") — and the first one matched timed out (23 Oct 2026). The real
+ * control is tried first by role, then every visible match in turn.
+ */
+async function clickPhoneNumberLogin(page: Page): Promise<void> {
+  const name = /log in with phone number|link with phone number/i;
+  const candidates = [
+    page.getByRole("button", { name }),
+    page.getByRole("link", { name }),
+    page.getByText(name).filter({ visible: true }),
+  ];
+  for (const locator of candidates) {
+    const count = await locator.count().catch(() => 0);
+    for (let i = count - 1; i >= 0; i--) {
+      if (await locator.nth(i).click({ timeout: 3_000 }).then(() => true, () => false)) return;
+    }
+  }
+  throw new Error('no clickable "Log in with phone number"');
 }
 
 /** From the phone-number form back to the QR ("Log in with QR code"), if the form is up. */
