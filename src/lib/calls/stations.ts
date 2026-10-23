@@ -274,12 +274,22 @@ export async function deleteStation(id: string): Promise<void> {
 }
 
 /** The operator wants WhatsApp Web linked: the next free worker opens its login screen. */
-export async function requestLink(id: string): Promise<CallingStation> {
+export async function requestLink(id: string, fresh = false): Promise<CallingStation> {
   const current = await requireStation(id);
   if (current.status === "banned") throw new CallApiError(409, "A banned number can't be linked");
   const [row] = await db
     .update(callingStations)
-    .set({ linkRequestedAt: new Date(), linkCode: null, linkScreenshot: null, linkUpdatedAt: null, lastError: null, updatedAt: new Date() })
+    .set({
+      linkRequestedAt: new Date(),
+      linkFresh: fresh,
+      // A fresh link forgets the wrong account; the worker reads the new one.
+      ...(fresh ? { linkedPhone: null } : {}),
+      linkCode: null,
+      linkScreenshot: null,
+      linkUpdatedAt: null,
+      lastError: null,
+      updatedAt: new Date(),
+    })
     .where(and(inOrg(callingStations), eq(callingStations.id, id)))
     .returning();
   return stationView(row ?? current);
@@ -289,7 +299,7 @@ export async function cancelLink(id: string): Promise<CallingStation> {
   const current = await requireStation(id);
   const [row] = await db
     .update(callingStations)
-    .set({ linkRequestedAt: null, linkCode: null, linkScreenshot: null, linkUpdatedAt: null, updatedAt: new Date() })
+    .set({ linkRequestedAt: null, linkFresh: false, linkCode: null, linkScreenshot: null, linkUpdatedAt: null, updatedAt: new Date() })
     .where(and(inOrg(callingStations), eq(callingStations.id, id)))
     .returning();
   return stationView(row ?? current);
@@ -534,7 +544,7 @@ async function claimLink({ workerId, launchers }: WorkerClaimRequest): Promise<W
       .where(eq(callingStations.id, locked.id));
     return locked;
   });
-  return station ? { kind: "link", station: await workerStation(station) } : null;
+  return station ? { kind: "link", station: await workerStation(station), fresh: station.linkFresh } : null;
 }
 
 async function workerStationRow(id: string): Promise<StationRow> {
@@ -587,6 +597,7 @@ export async function reportStationState(id: string, state: WorkerStationStateRe
   }
   if (state.linkDone) {
     set.linkRequestedAt = null;
+    set.linkFresh = false;
     set.linkCode = null;
     set.linkScreenshot = null;
     set.linkUpdatedAt = null;

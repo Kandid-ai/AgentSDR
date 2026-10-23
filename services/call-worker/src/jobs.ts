@@ -188,7 +188,7 @@ export async function runLink(job: LinkJob): Promise<void> {
   let browser: StationBrowser | null = null;
   try {
     log(`${tag}: opening browser (${station.launcher})`);
-    browser = await openStationBrowser(station);
+    browser = await openStationBrowser(station, { fresh: job.fresh });
     const page = await openWhatsApp(browser.context);
     const state = await waitForWhatsAppState(page, 90_000);
     if (state === "ready") {

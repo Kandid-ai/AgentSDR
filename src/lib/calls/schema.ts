@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   foreignKey,
   index,
@@ -87,6 +88,8 @@ export const callingStations = pgTable(
     /** PNG data URL of the login screen (QR or code), cleared once linked. */
     linkScreenshot: text("link_screenshot"),
     linkUpdatedAt: timestamp("link_updated_at", { withTimezone: true }),
+    /** The requested link starts from a logged-out browser (the session was the wrong account). */
+    linkFresh: boolean("link_fresh").notNull().default(false),
     workerId: text("worker_id"),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     lastCallAt: timestamp("last_call_at", { withTimezone: true }),

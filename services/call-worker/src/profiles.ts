@@ -57,6 +57,19 @@ export async function restoreProfile(station: WorkerStation, dir: string): Promi
   await writeFile(join(dir, SEED_FILE), `${station.fingerprintSeed}\n`);
 }
 
+/**
+ * Starts the number over logged out: its session is the wrong WhatsApp
+ * account. The local copy goes; the fingerprint seed is written back, so
+ * the number keeps its device identity. The next save replaces the saved
+ * version with the newly linked session.
+ */
+export async function resetProfile(station: WorkerStation, dir: string): Promise<void> {
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, SEED_FILE), `${station.fingerprintSeed}\n`);
+  log(`profile @ ${station.name}: discarded the logged-in session for a fresh link`);
+}
+
 /** Packs the closed browser's profile and saves it as the number's next version. Never throws. */
 export async function saveProfile(station: WorkerStation, dir: string): Promise<void> {
   const tag = `profile @ ${station.name}`;

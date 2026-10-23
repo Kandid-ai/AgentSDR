@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import type { WorkerStation } from "../../../src/lib/calls/stationContract";
 import { config } from "./config";
-import { restoreProfile, saveProfile } from "./profiles";
+import { resetProfile, restoreProfile, saveProfile } from "./profiles";
 import { startProxyRelay } from "./proxyRelay";
 
 export type StationBrowser = { context: BrowserContext; close(): Promise<void> };
@@ -57,11 +58,13 @@ export function firstLine(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).split("\n")[0]!.slice(0, 300);
 }
 
-export async function openStationBrowser(station: WorkerStation): Promise<StationBrowser> {
+/** `fresh`: open logged out, discarding the session the profile holds (see WorkerJob "link"). */
+export async function openStationBrowser(station: WorkerStation, options: { fresh?: boolean } = {}): Promise<StationBrowser> {
   switch (station.launcher) {
     case "cloak":
-      return openCloak(station);
+      return openCloak(station, options.fresh === true);
     case "local":
+      if (options.fresh) await rm(join(config().profilesDir, station.id), { recursive: true, force: true });
       return openLocal(station);
     case "gologin_cloud":
       return openGologinCloud(station);
@@ -103,7 +106,7 @@ async function openLocal(station: WorkerStation): Promise<StationBrowser> {
  * The free binary runs one session at a time (a Pro key, in
  * CLOAKBROWSER_LICENSE_KEY, lifts that); the worker runs one job at a time.
  */
-async function openCloak(station: WorkerStation): Promise<StationBrowser> {
+async function openCloak(station: WorkerStation, fresh: boolean): Promise<StationBrowser> {
   const cfg = config();
   const dir = join(cfg.profilesDir, "cloak", station.id);
   // The browser reaches the number's proxy through a local, password-free
@@ -117,8 +120,10 @@ async function openCloak(station: WorkerStation): Promise<StationBrowser> {
       throw new Error(`This number's IP doesn't work: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
-  // The saved profile and the number's fingerprint seed, from AgentSDR.
-  await restoreProfile(station, dir);
+  // The saved profile and the number's fingerprint seed, from AgentSDR — or,
+  // for a fresh link, only the seed.
+  if (fresh) await resetProfile(station, dir);
+  else await restoreProfile(station, dir);
   const { launchPersistentContext } = await import("cloakbrowser");
   const context = await launchPersistentContext({
     userDataDir: dir,

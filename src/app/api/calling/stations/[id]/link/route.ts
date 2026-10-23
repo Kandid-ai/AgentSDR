@@ -9,7 +9,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const ctx = await requireCrmMutationContext(request);
     const id = (await params).id;
-    return await runInOrganization(ctx.organizationId, async () => Response.json({ station: await requestLink(id) }));
+    const body = (await request.json().catch(() => null)) as { fresh?: unknown } | null;
+    return await runInOrganization(ctx.organizationId, async () => Response.json({ station: await requestLink(id, body?.fresh === true) }));
   } catch (error) {
     return callApiErrorResponse(error);
   }

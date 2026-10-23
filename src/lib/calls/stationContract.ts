@@ -100,6 +100,13 @@ export type UpdateStationRequest = {
   status?: "active" | "paused";
 };
 
+/**
+ * POST /api/calling/stations/:id/link — ask a worker to open WhatsApp Web's
+ * login; body `{ fresh: true }` first discards the session it is logged in
+ * with (the wrong account). DELETE cancels it.
+ */
+export type StartLinkRequest = { fresh?: boolean };
+
 /** POST /api/calling/stations/:id/link — ask a worker to open WhatsApp Web's login. DELETE cancels it. */
 export type StationResponse = { station: CallingStation };
 
@@ -217,7 +224,16 @@ export type WorkerJob =
         brief: string;
       };
     }
-  | { kind: "link"; station: WorkerStation };
+  | {
+      kind: "link";
+      station: WorkerStation;
+      /**
+       * Start from a logged-out browser: the session it holds is the wrong
+       * WhatsApp account. The worker discards the saved session (the
+       * fingerprint stays) before showing the login screen.
+       */
+      fresh: boolean;
+    };
 
 export type WorkerClaimResponse = { job: WorkerJob | null };
 

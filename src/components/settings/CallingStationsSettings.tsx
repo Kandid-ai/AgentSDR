@@ -107,6 +107,8 @@ export function CallingStationsSettings() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<CallingStation | null>(null);
+  /** Numbers whose wrong-account question the operator put off ("Decide later"), until the page reloads. */
+  const [putOff, setPutOff] = useState<ReadonlySet<string>>(new Set());
   const [proxies, setProxies] = useState<CallingProxy[]>([]);
   /** "new", or the id of the IP being edited. */
   const [proxyFormFor, setProxyFormFor] = useState<string | null>(null);
@@ -145,6 +147,10 @@ export function CallingStationsSettings() {
       setBusyId(null);
     }
   };
+
+  // A link that ended on another WhatsApp account than the number: ask which is right.
+  const wrongAccount =
+    stations?.find((station) => station.linkedPhone !== null && station.linkedPhone !== station.phone && station.link === null && !putOff.has(station.id)) ?? null;
 
   const openAdd = () => {
     setDraft(EMPTY_DRAFT);
@@ -322,7 +328,8 @@ export function CallingStationsSettings() {
                 key={station.id}
                 station={station}
                 busy={busyId === station.id}
-                onLink={() => void act(station, () => startStationLink(station.id))}
+                // Relinking a number logged in as the wrong account starts it logged out.
+                onLink={() => void act(station, () => startStationLink(station.id, { fresh: station.linkedPhone !== null && station.linkedPhone !== station.phone }))}
                 onCancelLink={() => void act(station, () => cancelStationLink(station.id))}
                 onToggle={() => void act(station, () => updateCallingStation(station.id, { status: station.status === "paused" ? "active" : "paused" }))}
                 onEdit={() => openEdit(station)}
@@ -488,6 +495,58 @@ export function CallingStationsSettings() {
             <Button.Root variant="error" mode="filled" size="small" disabled={saving} onClick={() => void confirmDeleteProxy()}>
               {saving && <RiLoader4Line className="size-4 animate-spin" aria-hidden="true" />}
               Delete
+            </Button.Root>
+          </Modal.Footer>
+        </Modal.Content>
+      </Modal.Root>
+
+      <Modal.Root open={wrongAccount !== null} onOpenChange={(open) => { if (!open && wrongAccount) setPutOff((current) => new Set(current).add(wrongAccount.id)); }}>
+        <Modal.Content>
+          <Modal.Header icon={RiLinkM}>
+            <Modal.Title>Linked to a different WhatsApp number</Modal.Title>
+            <Modal.Description>
+              {wrongAccount
+                ? `${wrongAccount.name}'s WhatsApp Web is logged in as ${wrongAccount.linkedPhone}, not ${wrongAccount.phone}. Calls go out from the logged-in number, so this number won't call until you choose.`
+                : ""}
+            </Modal.Description>
+          </Modal.Header>
+          {wrongAccount && (
+            <Modal.Body className="space-y-2 text-paragraph-sm text-text-sub-600">
+              <p>
+                <span className="text-label-sm text-text-strong-950">Use {wrongAccount.linkedPhone}</span> — keep this login and make it this calling number&apos;s number.
+              </p>
+              <p>
+                <span className="text-label-sm text-text-strong-950">Link {wrongAccount.phone} instead</span> — discard this login (the number keeps its browser fingerprint) and link again from the phone with {wrongAccount.phone}. Afterwards, remove the extra device from {wrongAccount.linkedPhone}&apos;s WhatsApp → Linked devices.
+              </p>
+            </Modal.Body>
+          )}
+          <Modal.Footer>
+            <Button.Root
+              variant="neutral"
+              mode="ghost"
+              size="small"
+              disabled={wrongAccount !== null && busyId === wrongAccount.id}
+              onClick={() => wrongAccount && setPutOff((current) => new Set(current).add(wrongAccount.id))}
+            >
+              Decide later
+            </Button.Root>
+            <Button.Root
+              variant="neutral"
+              mode="stroke"
+              size="small"
+              disabled={wrongAccount !== null && busyId === wrongAccount.id}
+              onClick={() => wrongAccount && void act(wrongAccount, () => startStationLink(wrongAccount.id, { fresh: true }))}
+            >
+              Link {wrongAccount?.phone} instead
+            </Button.Root>
+            <Button.Root
+              variant="primary"
+              mode="filled"
+              size="small"
+              disabled={wrongAccount !== null && busyId === wrongAccount.id}
+              onClick={() => wrongAccount && void act(wrongAccount, () => updateCallingStation(wrongAccount.id, { phone: wrongAccount.linkedPhone! }))}
+            >
+              Use {wrongAccount?.linkedPhone}
             </Button.Root>
           </Modal.Footer>
         </Modal.Content>

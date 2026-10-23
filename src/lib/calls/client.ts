@@ -32,7 +32,7 @@ import type {
   UpdateCampaignContactRequest,
   UpdateCampaignRequest,
 } from "./contract";
-import type {
+import type { StartLinkRequest,
   CreateProxyRequest,
   CreateStationRequest,
   ListProxiesResponse,
@@ -405,8 +405,8 @@ export function deleteCallingStation(stationId: string): Promise<{ ok: true }> {
 }
 
 /** POST /api/calling/stations/:id/link — asks a worker to open WhatsApp Web's login. */
-export function startStationLink(stationId: string): Promise<StationResponse> {
-  return callingFetch<StationResponse>(`/stations/${encodeURIComponent(stationId)}/link`, { method: "POST" });
+export function startStationLink(stationId: string, request: StartLinkRequest = {}): Promise<StationResponse> {
+  return callingFetch<StationResponse>(`/stations/${encodeURIComponent(stationId)}/link`, { method: "POST", body: JSON.stringify(request) });
 }
 
 /** DELETE /api/calling/stations/:id/link — cancels linking. */
