@@ -390,6 +390,11 @@ extension loaded from a folder at launch, so a profile ran its creation-day
 background beside current page scripts (the version shown comes from the
 manifest on disk, so it looked current). The worker deletes it before every
 launch and leaves it out of saved profiles (`purgeServiceWorkers`).
+CloakBrowser's free build mishandles `new AudioContext({ sampleRate })`: it
+reports 48 kHz but renders about a quarter of real time, which garbled
+WhatsApp's call audio both ways. wa-hook detects a browser that ignores a
+requested rate and then makes every AudioContext at the default rate
+(`fixIgnoredSampleRates`); plain Chromium is untouched.
 
 
 ## WhatsApp messaging (Unipile)

@@ -158,7 +158,44 @@ if (!scope.__agentsdrHook) {
   install();
 }
 
+/** Sample rates the page asked AudioContexts for, while fixIgnoredSampleRates is in force. */
+const ignoredRateRequests = new Set<number>();
+
+/**
+ * CloakBrowser's free build (Chromium 145) answers `new AudioContext({
+ * sampleRate: 16000 })` with a context that reports 48000 Hz yet renders
+ * about a quarter of real time; audio carried from it to another context
+ * comes out garbled (measured 23 Oct 2026: 0.5 dB SNR, against 58 dB in
+ * plain Chromium). Cloud calls in it were choppy to the lead, and the agent
+ * heard loud noise instead of the lead's voice. Where a requested rate is not
+ * honoured, every AudioContext is made at the default rate instead — which
+ * that browser handles correctly — and the page reads the real rate from it.
+ */
+function fixIgnoredSampleRates(): boolean {
+  const Native = window.AudioContext;
+  if (!Native) return false;
+  try {
+    const probe = new Native({ sampleRate: 16000 });
+    const honoured = probe.sampleRate === 16000;
+    void probe.close();
+    if (honoured) return false;
+  } catch {
+    return false;
+  }
+  class DefaultRateAudioContext extends Native {
+    constructor(options?: AudioContextOptions) {
+      const { sampleRate, ...rest } = options ?? {};
+      if (sampleRate) ignoredRateRequests.add(sampleRate);
+      super(rest);
+    }
+  }
+  window.AudioContext = DefaultRateAudioContext;
+  (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext = DefaultRateAudioContext;
+  return true;
+}
+
 function install(): void {
+  const sampleRatesFixed = fixIgnoredSampleRates();
   const nativeConnect = AudioNode.prototype.connect as unknown as Connect;
   const nativeDisconnect = AudioNode.prototype.disconnect as unknown as Disconnect;
   const nativeStop = MediaStreamTrack.prototype.stop;
@@ -406,7 +443,13 @@ function install(): void {
 
       session = next;
       micTrack.addEventListener("ended", () => { if (session?.micTrack === micTrack) micGone("the microphone track ended"); });
-      if (rig) agentLog(`call session started; audio context ${context.state} at ${context.sampleRate} Hz`);
+      if (rig) {
+        agentLog(`call session started; audio context ${context.state} at ${context.sampleRate} Hz`);
+        if (sampleRatesFixed) {
+          const asked = [...ignoredRateRequests].join(", ") || "none so far";
+          agentLog(`this browser ignores AudioContext sample rates; contexts made at the default rate (WhatsApp asked for: ${asked} Hz)`);
+        }
+      }
       next.watch = window.setInterval(watch, WATCH_INTERVAL_MS);
       post({ source: HOOK_SOURCE, type: "dialing", callId });
       setTimeout(checkSuspended, 1500);
