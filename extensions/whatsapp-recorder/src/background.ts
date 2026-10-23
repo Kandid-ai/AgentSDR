@@ -18,6 +18,7 @@ import type {
 } from "../../../src/lib/calls/contract";
 import { digitsOnly } from "../../../src/lib/calls/digits";
 import {
+  WA_HEARD_AUDIO_PORT,
   WA_RECORDING_PORT,
   type ActiveCall,
   type AgentCommand,
@@ -28,6 +29,7 @@ import {
   type ProbeResult,
   type RecentCall,
   type WaCall,
+  type WaHeardAudioPortMessage,
   type WaRecordingPortMessage,
 } from "./messages";
 import { allowedOrigins, customOrigins, isCustomOriginsChange, originPattern } from "./origins";
@@ -240,19 +242,6 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
     case "wa:agent-token":
       void agentToken(message.callId).then(sendResponse);
       return true;
-    case "wa:load-denoiser": {
-      const tabId = sender.tab?.id;
-      if (tabId === undefined) {
-        sendResponse({ ok: false, error: "no tab" });
-        return false;
-      }
-      // Into the page's own world, where wa-hook handles the call's audio; WhatsApp's CSP allows wasm.
-      chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["denoise.js"] }).then(
-        () => sendResponse({ ok: true }),
-        (error: unknown) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }),
-      );
-      return true;
-    }
     case "wa:trace":
       trace(message.callId, message.step);
       if (/^WhatsApp shows "Ringing/i.test(message.step)) {
@@ -595,6 +584,41 @@ async function stillBusy(call: ActiveCall): Promise<boolean> {
 // wa-agent streams a finished recording here: runtime messages are JSON-only,
 // so the file crosses as base64 chunks and is uploaded from this worker,
 // whose host permissions spare it CORS.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== WA_HEARD_AUDIO_PORT) return;
+  let callId: string | null = null;
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+  port.onMessage.addListener((message: WaHeardAudioPortMessage) => {
+    if (message.type === "meta") callId = message.callId;
+    else if (message.type === "chunk") parts.push(fromBase64(message.data));
+    else if (callId) void uploadHeardAudio(port, callId, parts);
+  });
+});
+
+/** The heard-audio test option: POSTs the WAV of what the AI agent heard, with the call's bearer token. */
+async function uploadHeardAudio(port: chrome.runtime.Port, callId: string, parts: Uint8Array<ArrayBuffer>[]): Promise<void> {
+  const active = await getActiveCall();
+  const call = active?.callId === callId ? active : await recentCall(callId);
+  if (!call) {
+    port.postMessage({ ok: false, error: "This call is no longer known to the extension" } satisfies BridgeResult);
+    return;
+  }
+  try {
+    const response = await fetch(`${call.apiBase}/api/call-recorder/calls/${callId}/heard-audio`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${call.recorderToken}`, "Content-Type": "audio/wav" },
+      body: new Blob(parts, { type: "audio/wav" }),
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(detail?.error ?? `heard-audio answered ${response.status}`);
+    }
+    port.postMessage({ ok: true } satisfies BridgeResult);
+  } catch (error) {
+    port.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) } satisfies BridgeResult);
+  }
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== WA_RECORDING_PORT) return;
   let meta: Extract<WaRecordingPortMessage, { type: "meta" }> | null = null;

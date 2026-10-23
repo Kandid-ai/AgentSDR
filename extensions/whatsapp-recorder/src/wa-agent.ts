@@ -23,8 +23,10 @@ import type { RecorderCallPhase, RecorderCallStatus } from "../../../src/lib/cal
 import { digitsOnly } from "../../../src/lib/calls/digits";
 import { whatsappContactName, type WhatsappContactName } from "../../../src/lib/calls/whatsappContact";
 import { LiveAgent } from "./live-agent";
+import { pcm16Wav } from "./wav";
 import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from "./wa-protocol";
 import {
+  WA_HEARD_AUDIO_PORT,
   WA_RECORDING_PORT,
   type AgentCommand,
   type AgentTokenResult,
@@ -32,6 +34,7 @@ import {
   type BridgeResult,
   type ProbeResult,
   type WaCall,
+  type WaHeardAudioPortMessage,
   type WaRecordingPortMessage,
 } from "./messages";
 
@@ -64,6 +67,7 @@ const TRANSCRIPT_WATCH_MS = 3 * 60 * 1000;
 let call: WaCall | null = null;
 /** The AI voice agent's session on the current call, when it is an agent call. */
 let agent: LiveAgent | null = null;
+let agentCallId: string | null = null;
 /** Calls whose recording is on its way to the service worker. */
 const shipping = new Set<string>();
 /**
@@ -168,13 +172,6 @@ async function placeCall(next: WaCall): Promise<void> {
   trace(next.callId, `WhatsApp tab: placing the call (agent ${next.agent}, station ${next.station}, speakers ${!next.station})`);
   trace(next.callId, "WhatsApp tab: looking for the Voice call button");
   toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent, monitor: !next.station });
-  // The lead's noise suppression loads while the call rings; a failure only means a noisier line.
-  if (next.agent) {
-    void send<{ ok: boolean; error?: string }>({ target: "background", type: "wa:load-denoiser", callId: next.callId }).then(
-      (result) => { if (!result?.ok) trace(next.callId, `noise suppression not loaded: ${result?.error ?? "no answer"}`); },
-      () => {},
-    );
-  }
   phase({ kind: "opening" });
 
   const savedName = whatsappContactName(next.lead)?.display ?? null;
@@ -834,12 +831,36 @@ function startAgent(callId: string): void {
     token: () => send<AgentTokenResult>({ target: "background", type: "wa:agent-token", callId }),
   });
   agent = session;
+  agentCallId = callId;
   session.start().catch((error: unknown) => trace(callId, `AI agent: failed to start — ${String(error)}`));
 }
 
 function stopAgent(): void {
-  agent?.close();
+  const session = agent;
+  const callId = agentCallId;
   agent = null;
+  agentCallId = null;
+  if (!session) return;
+  const heard = session.takeHeardAudio();
+  session.close();
+  if (heard && callId) void sendHeardAudio(callId, heard);
+}
+
+/** The heard-audio test option: hands the WAV of what the agent heard to the service worker, which uploads it. */
+async function sendHeardAudio(callId: string, pcm: Int16Array): Promise<void> {
+  const wav = pcm16Wav(pcm, 16_000);
+  const port = chrome.runtime.connect({ name: WA_HEARD_AUDIO_PORT });
+  const post = (message: WaHeardAudioPortMessage) => port.postMessage(message);
+  const result = new Promise<BridgeResult>((resolve) => {
+    port.onMessage.addListener((message: BridgeResult) => resolve(message));
+    port.onDisconnect.addListener(() => resolve({ ok: false, error: "the extension's worker went away" }));
+  });
+  post({ type: "meta", callId });
+  for (let offset = 0; offset < wav.length; offset += CHUNK_BYTES) post({ type: "chunk", data: toBase64(wav.subarray(offset, offset + CHUNK_BYTES)) });
+  post({ type: "end" });
+  const answer = await result;
+  trace(callId, answer.ok ? `AI agent: saved what it heard (${Math.round(pcm.length / 16_000)} s)` : `AI agent: could not save what it heard — ${answer.error}`);
+  port.disconnect();
 }
 
 // --- plumbing ------------------------------------------------------------------

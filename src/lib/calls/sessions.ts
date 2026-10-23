@@ -402,6 +402,14 @@ export async function withRecorderScope<T>(
 
 // --- recording download ----------------------------------------------------
 
+/** This organization's call by id, or a 404. */
+export async function getCallInOrganization(callId: string): Promise<CallSessionRow> {
+  if (!UUID_PATTERN.test(callId)) throw new CallApiError(404, "Call not found");
+  const [row] = await db.select().from(callSessions).where(and(inOrg(callSessions), eq(callSessions.id, callId))).limit(1);
+  if (!row) throw new CallApiError(404, "Call not found");
+  return row;
+}
+
 export async function getCallForDownload(callId: string): Promise<CallSessionRow> {
   if (!UUID_PATTERN.test(callId)) throw new CallApiError(404, "Call not found");
   const [row] = await db.select().from(callSessions).where(and(inOrg(callSessions), eq(callSessions.id, callId))).limit(1);

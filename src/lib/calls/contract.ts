@@ -600,7 +600,20 @@ export type AgentTokenRequest = { brief: string; lead: RecorderLead | null };
  * A single-use Gemini Live token with the session (model, voice, instructions,
  * tools) locked into it server-side; the API key never leaves the server.
  */
-export type AgentTokenResponse = { token: string; model: string; websocketUrl: string };
+export type AgentTokenResponse = {
+  token: string;
+  model: string;
+  websocketUrl: string;
+  /**
+   * Test option (AGENT_SAVE_HEARD_AUDIO=true on the server): keep exactly the
+   * audio sent to the model — the lead's side, 16 kHz mono — and upload it as
+   * a WAV after the call (POST …/heard-audio), to hear what the AI heard.
+   */
+  saveHeardAudio?: boolean;
+};
+
+/** POST /api/call-recorder/calls/:id/heard-audio — body: audio/wav. */
+export const MAX_HEARD_AUDIO_BYTES = 40 * 1024 * 1024;
 
 /** Opens the chat with `text` typed in; the rep reads it and presses Enter. */
 export type RecorderMessageRequest = {

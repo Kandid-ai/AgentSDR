@@ -79,7 +79,7 @@ export async function mintAgentToken(row: CallSessionRow, request: AgentTokenReq
     // and never Gemini's reason (23 Oct 2026).
     throw new CallApiError(424, `Gemini refused the agent session: ${body?.error?.message ?? `HTTP ${response.status}`}`);
   }
-  return { token: body.name, model: `models/${LIVE_MODEL}`, websocketUrl: WEBSOCKET_URL };
+  return { token: body.name, model: `models/${LIVE_MODEL}`, websocketUrl: WEBSOCKET_URL, saveHeardAudio: saveHeardAudio() };
 }
 
 /** The Live session, in the API's own JSON shape (BidiGenerateContentSetup). */
@@ -89,13 +89,6 @@ function liveSetup(request: AgentTokenRequest) {
     generationConfig: {
       responseModalities: ["AUDIO"],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } } },
-    },
-    // Answer sooner after the lead stops talking. The default waits longer
-    // than a phone conversation does; 600 ms keeps a breath mid-sentence
-    // from counting as the end of their turn. Start-of-speech stays at
-    // Gemini's defaults: a shorter prefix let brief noises cut the agent off.
-    realtimeInputConfig: {
-      automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_HIGH", silenceDurationMs: 600 },
     },
     systemInstruction: { parts: [{ text: agentInstructions(request) }] },
     tools: [
@@ -132,6 +125,7 @@ function agentInstructions({ brief, lead }: AgentTokenRequest): string {
     "- This is a phone call: keep each turn short (one or two sentences), natural and warm. Never use lists, markdown or emojis.",
     "- Speak first when the call connects: greet them by first name if you know it, say who you are and why you are calling, in one breath.",
     "- Speak the language the person speaks — English, Hindi or Hinglish — and switch if they do.",
+    "- Only ever speak English or Hindi. The line is a phone call to India and can be unclear: if something sounded like another language, or you did not catch it, ask them to repeat it in English — never answer in Spanish or any other language.",
     "- Listen more than you talk. If they interrupt, stop and respond to what they said.",
     "- If you did not catch something, ask them to repeat it. Never invent facts that are not in the brief; offer to have the team follow up instead.",
     "- Never hang up because of a question or a request, even an odd one (\"can you sound more natural?\"): answer it and carry on.",
@@ -139,4 +133,9 @@ function agentInstructions({ brief, lead }: AgentTokenRequest): string {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** Test option: the extension uploads the exact audio the model heard (see AgentTokenResponse). */
+export function saveHeardAudio(): boolean {
+  return process.env.AGENT_SAVE_HEARD_AUDIO?.trim() === "true";
 }

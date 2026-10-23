@@ -38,6 +38,8 @@ const GREETING_PROMPT = "The call has just connected and the person is on the li
  * this long for them, and if they speak, answers them instead.
  */
 const GREETING_WAIT_MS = 1_200;
+/** The heard-audio test option keeps at most 20 minutes (38 MB) of the lead's side. */
+const MAX_HEARD_SAMPLES = 16_000 * 60 * 20;
 /** A lead-side chunk this loud (-40 dBFS) counts as them making sound, for the reply-latency log. */
 const VOICE_PEAK = 0x8000 / 100;
 
@@ -58,6 +60,9 @@ export class LiveAgent {
   private lastVoiceAt = 0;
   private replying = false;
   private heardThisTurn = "";
+  /** The test option's copy of exactly what is sent to the model (null when off). */
+  private heard: Int16Array[] | null = null;
+  private heardSamples = 0;
 
   constructor(private readonly handlers: Handlers) {}
 
@@ -69,6 +74,10 @@ export class LiveAgent {
       this.handlers.trace(`AI agent: no session — ${result.error}`);
       console.warn("[agentsdr agent] no session:", result.error);
       return;
+    }
+    if (result.saveHeardAudio) {
+      this.heard = [];
+      this.handlers.trace("AI agent: saving what it hears (test option)");
     }
     const socket = new WebSocket(`${result.websocketUrl}?access_token=${encodeURIComponent(result.token)}`);
     socket.binaryType = "arraybuffer";
@@ -105,6 +114,11 @@ export class LiveAgent {
       return;
     }
     this.socket.send(JSON.stringify({ realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: toBase64(pcm) } } }));
+    if (this.heard && this.heardSamples < MAX_HEARD_SAMPLES) {
+      const copy = new Int16Array(pcm.slice(0));
+      this.heard.push(copy);
+      this.heardSamples += copy.length;
+    }
     // Every 5 s: how much of the lead's audio went to the model, and how loud
     // it was — the evidence for "the agent did not hear me".
     const samples = new Int16Array(pcm);
@@ -121,6 +135,20 @@ export class LiveAgent {
       this.sentPeak = 0;
       this.sentSince = now;
     }
+  }
+
+  /** The test option's recording of what the model heard, 16 kHz mono; null when it was off. */
+  takeHeardAudio(): Int16Array | null {
+    if (!this.heard?.length) return null;
+    const all = new Int16Array(this.heardSamples);
+    let at = 0;
+    for (const chunk of this.heard) {
+      all.set(chunk, at);
+      at += chunk.length;
+    }
+    this.heard = null;
+    this.heardSamples = 0;
+    return all;
   }
 
   close(): void {

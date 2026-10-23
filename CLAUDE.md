@@ -359,11 +359,13 @@ microphone that carries the model's voice and streams the lead's side out as
 16 kHz PCM. The socket lives in wa-agent (`live-agent.ts`), because WhatsApp's
 CSP blocks it in the page's own world. The server mints a single-use token with
 the whole session locked in (`src/lib/calls/liveAgent.ts`,
-`/api/call-recorder/calls/[id]/agent-token`). On an agent call the lead's side
-is cleaned with RNNoise before the recording and Gemini (`denoise.js`, 4.8 MB, so
-the service worker injects it into WhatsApp's page only when an agent call is
-armed; the agent rig's context runs at 48 kHz for it), then downsampled to
-16 kHz with a filtered resampler (`downsample.ts`). Two deliberate trial exceptions:
+`/api/call-recorder/calls/[id]/agent-token`). The lead's side reaches the model
+through a filtered 16 kHz resampler (`downsample.ts`) and otherwise as Gemini
+expects it — its own turn-taking defaults, no noise suppression (RNNoise was
+tried and removed, 23 Oct 2026: noise was not the problem). Test option:
+`AGENT_SAVE_HEARD_AUDIO=true` on the app makes the extension upload exactly
+what the model heard (`calls/YYYY/MM/<id>-heard.wav`, opened at
+`/api/calls/<id>/heard-audio`). Two deliberate trial exceptions:
 the key comes from `GEMINI_API_KEY` in env, and the call skips OpenRouter,
 which has no realtime audio API. Move the key into an organization integration
 before this leaves the trial.

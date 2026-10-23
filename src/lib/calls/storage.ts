@@ -44,6 +44,15 @@ export function recordingKeyFor(callId: string, createdAt: Date, contentType: st
   return `calls/${year}/${month}/${callId}${extensionFor(contentType)}`;
 }
 
+/** calls/YYYY/MM/<callId>-heard.wav — what the AI agent heard on the call (test option). */
+export function heardAudioKeyFor(callId: string, createdAt: Date): string {
+  return recordingKeyFor(callId, createdAt, "audio/wav").replace(/\.audio$/, "-heard.wav");
+}
+
+export async function putRecordingObject(key: string, body: Uint8Array, contentType: string): Promise<void> {
+  await (await s3()).send(new PutObjectCommand({ Bucket: await bucketName(), Key: key, Body: body, ContentType: contentType }));
+}
+
 export async function presignRecordingUpload(
   key: string,
   contentType: string,

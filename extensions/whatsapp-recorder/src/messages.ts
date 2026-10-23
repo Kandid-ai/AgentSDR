@@ -107,9 +107,15 @@ export type BackgroundMessage =
   /** A timed step of a call, for the timing table printed in the AgentSDR tab's console. */
   | { target: "background"; type: "wa:trace"; callId: string; step: string }
   /** A Gemini Live token for the AI agent on this call; answered with an AgentTokenResult. */
-  | { target: "background"; type: "wa:agent-token"; callId: string }
-  /** Inject denoise.js (RNNoise) into this WhatsApp tab's page for an agent call; answered { ok, error? }. */
-  | { target: "background"; type: "wa:load-denoiser"; callId: string };
+  | { target: "background"; type: "wa:agent-token"; callId: string };
+
+/** The heard-audio test option: wa-agent streams the WAV of what the AI agent heard to the service worker. */
+export const WA_HEARD_AUDIO_PORT = "wa-heard-audio";
+export type WaHeardAudioPortMessage =
+  | { type: "meta"; callId: string }
+  /** base64 — runtime messaging is JSON-only. */
+  | { type: "chunk"; data: string }
+  | { type: "end" };
 
 /** The "wa-recording" port: wa-agent streams the file to the service worker. */
 export const WA_RECORDING_PORT = "wa-recording";
