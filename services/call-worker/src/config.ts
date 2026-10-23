@@ -40,6 +40,9 @@ export type Config = {
   claimIntervalMs: number;
   callTimeoutMs: number;
   chromiumPath: string | undefined;
+  /** CloakBrowser's time zone and language for every station it opens; match them to the IP the calls go out from. */
+  cloakTimezone: string;
+  cloakLocale: string;
 };
 
 export function loadConfig(): Config {
@@ -54,6 +57,9 @@ export function loadConfig(): Config {
     claimIntervalMs: int("CLAIM_INTERVAL_MS", 3000),
     callTimeoutMs: int("CALL_TIMEOUT_MS", 30 * 60 * 1000),
     chromiumPath: process.env.CHROMIUM_PATH?.trim() || undefined,
+    cloakTimezone: process.env.CLOAK_TIMEZONE?.trim() || "Asia/Kolkata",
+    // English, which the extension needs: it finds WhatsApp's buttons by their English labels.
+    cloakLocale: process.env.CLOAK_LOCALE?.trim() || "en-US",
   };
 }
 

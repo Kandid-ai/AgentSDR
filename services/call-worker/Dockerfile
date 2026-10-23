@@ -10,6 +10,8 @@ RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
 WORKDIR /app/services/call-worker
 COPY services/call-worker/package.json services/call-worker/bun.lock* ./
 RUN bun install --frozen-lockfile || bun install
+# CloakBrowser's binary (~200 MB) baked into the image; it caches under ~/.cloakbrowser.
+RUN npx cloakbrowser install
 
 COPY services/call-worker/ ./
 # The worker imports types from the app's contract files at build time only, but keep them for typechecking.
@@ -20,7 +22,10 @@ COPY extensions/whatsapp-recorder/dist/ /app/extensions/whatsapp-recorder/dist/
 ENV EXTENSION_PATH=/app/extensions/whatsapp-recorder/dist \
     PROFILES_DIR=/data/profiles \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    LAUNCHERS=local,gologin_sdk,gologin_cloud
+    LAUNCHERS=cloak,local,gologin_sdk,gologin_cloud \
+    CLOAK_TIMEZONE=Asia/Kolkata
+# /data/profiles holds every station's browser profile — its WhatsApp login and,
+# for CloakBrowser, its fixed fingerprint. Keep it on a persistent volume.
 VOLUME /data
 
 ENTRYPOINT ["./docker-entrypoint.sh"]

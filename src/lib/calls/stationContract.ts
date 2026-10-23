@@ -12,14 +12,21 @@
 
 import type { RecorderCallPhase, RecorderLead } from "./contract";
 
-export const STATION_LAUNCHERS = ["local", "gologin_sdk", "gologin_cloud"] as const;
+export const STATION_LAUNCHERS = ["cloak", "local", "gologin_sdk", "gologin_cloud"] as const;
 /**
  * How the worker opens a station's browser:
+ *   cloak          CloakBrowser (stealth Chromium) with a profile folder on the worker's disk; the
+ *                  profile keeps its own fixed fingerprint and its WhatsApp login between calls;
  *   local          Playwright's Chromium with a profile folder on the worker's own disk (testing, self-hosted);
  *   gologin_sdk    the GoLogin SDK starts the profile on the worker's machine;
  *   gologin_cloud  GoLogin's Cloud Browser, reached over CDP.
  */
 export type StationLauncher = (typeof STATION_LAUNCHERS)[number];
+
+/** The launchers that open a GoLogin profile, and so need its id and the GoLogin integration. */
+export function usesGoLogin(launcher: StationLauncher): boolean {
+  return launcher === "gologin_sdk" || launcher === "gologin_cloud";
+}
 
 export const STATION_STATUSES = ["onboarding", "active", "paused", "logged_out", "banned"] as const;
 export type StationStatus = (typeof STATION_STATUSES)[number];

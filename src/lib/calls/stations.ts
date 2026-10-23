@@ -13,6 +13,7 @@ import { CallApiError, finishCall, recorderLeadFor } from "./sessions";
 import { createRecorderToken } from "./token";
 import {
   STATION_LAUNCHERS,
+  usesGoLogin,
   type CallingStation,
   type CloudCallPhase,
   type CreateStationRequest,
@@ -159,7 +160,7 @@ export function parseUpdateStationRequest(value: unknown): UpdateStationRequest 
 }
 
 export async function createStation(input: CreateStationRequest): Promise<CallingStation> {
-  if (input.launcher !== "local" && !input.gologinProfileId) {
+  if (usesGoLogin(input.launcher) && !input.gologinProfileId) {
     throw new CallApiError(400, "A GoLogin number needs its GoLogin profile id");
   }
   const [existing] = await db
@@ -186,7 +187,7 @@ export async function updateStation(id: string, input: UpdateStationRequest): Pr
   const current = await requireStation(id);
   const launcher = input.launcher ?? current.launcher;
   const profileId = input.gologinProfileId !== undefined ? input.gologinProfileId : current.gologinProfileId;
-  if (launcher !== "local" && !profileId) throw new CallApiError(400, "A GoLogin number needs its GoLogin profile id");
+  if (usesGoLogin(launcher) && !profileId) throw new CallApiError(400, "A GoLogin number needs its GoLogin profile id");
   if (input.status === "active" && current.status === "banned") throw new CallApiError(409, "A banned number can't be resumed");
   const [row] = await db
     .update(callingStations)
@@ -250,7 +251,7 @@ export async function stationForCloudCall(stationId: string | null | undefined, 
       .limit(1);
     if (!station) throw new CallApiError(409, "No active cloud calling number — add one in Settings → WhatsApp → Calling numbers");
   }
-  if (station.launcher !== "local" && !(await getPlatformCredentials("gologin"))) {
+  if (usesGoLogin(station.launcher) && !(await getPlatformCredentials("gologin"))) {
     throw new CallApiError(409, "Connect GoLogin in Settings → WhatsApp → Integrations to call from this number");
   }
   return { station, brief: trimmed };
@@ -329,7 +330,7 @@ export function parseWorkerClaimRequest(value: unknown): WorkerClaimRequest {
 }
 
 async function workerStation(row: StationRow): Promise<WorkerStation> {
-  const gologin = row.launcher === "local" ? null : await runInOrganization(row.organizationId, () => getPlatformCredentials("gologin"));
+  const gologin = !usesGoLogin(row.launcher) ? null : await runInOrganization(row.organizationId, () => getPlatformCredentials("gologin"));
   return {
     id: row.id,
     organizationId: row.organizationId,

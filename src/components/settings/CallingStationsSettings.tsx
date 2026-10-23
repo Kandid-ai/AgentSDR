@@ -23,10 +23,11 @@ import {
   startStationLink,
   updateCallingStation,
 } from "@/lib/calls/client";
-import { STATION_LAUNCHERS, type CallingStation, type StationLauncher, type StationStatus } from "@/lib/calls/stationContract";
+import { STATION_LAUNCHERS, usesGoLogin, type CallingStation, type StationLauncher, type StationStatus } from "@/lib/calls/stationContract";
 import { cn } from "@/utils/cn";
 
 const LAUNCHER_LABEL: Record<StationLauncher, string> = {
+  cloak: "CloakBrowser",
   local: "Local Chromium",
   gologin_sdk: "GoLogin (this server)",
   gologin_cloud: "GoLogin Cloud",
@@ -47,14 +48,13 @@ const STATUS_COLOR: Record<StationStatus, React.ComponentProps<typeof Badge.Root
   banned: "red",
 };
 
-const usesGoLogin = (launcher: StationLauncher) => launcher !== "local";
 
 /** Fast while something is happening (a link code to show, a call to follow), slow otherwise. */
 const POLL_BUSY_MS = 3000;
 const POLL_IDLE_MS = 15000;
 
 type Draft = { name: string; phone: string; launcher: StationLauncher; gologinProfileId: string };
-const EMPTY_DRAFT: Draft = { name: "", phone: "", launcher: "gologin_cloud", gologinProfileId: "" };
+const EMPTY_DRAFT: Draft = { name: "", phone: "", launcher: "cloak", gologinProfileId: "" };
 
 export function CallingStationsSettings() {
   const [stations, setStations] = useState<CallingStation[] | null>(null);

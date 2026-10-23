@@ -73,3 +73,17 @@ Give the container `--shm-size=1g` (or `--ipc=host`).
   (Extensions → Upload custom extension, the built `dist/` folder) and re-uploaded after every change.
   GoLogin's cloud machines have no audio input; the extension supplies the agent's voice as the only
   microphone on agent calls (0.17.3+).
+
+## CloakBrowser (`cloak`) — the default launcher (23 Oct 2026)
+
+Stealth Chromium on the worker's own disk: `PROFILES_DIR/cloak/<station id>` holds the station's whole
+state — WhatsApp Web's login (saved when the browser closes, loaded on the next open) and the
+fingerprint seed CloakBrowser keeps in `.cloakbrowser-seed`, so a number shows the same device on
+every call. Opens in under a second; WhatsApp Web loads headless.
+
+- `npx cloakbrowser install` once (Docker does it at build). The free binary runs one session at a
+  time, which the worker never exceeds; a Pro key goes in `CLOAKBROWSER_LICENSE_KEY`.
+- `CLOAK_TIMEZONE` (default `Asia/Kolkata`) and `CLOAK_LOCALE` (default `en-US`) apply to every
+  station; keep them matching the IP the calls leave from. The locale must be English — the
+  extension finds WhatsApp's buttons by their English labels.
+- Losing `PROFILES_DIR` logs every number out of WhatsApp Web and changes its fingerprint: back it up.

@@ -43,7 +43,7 @@ export const callingStations = pgTable(
     name: text("name").notNull(),
     /** E.164. */
     phone: text("phone").notNull(),
-    launcher: text("launcher").notNull().default("gologin_cloud").$type<StationLauncher>(),
+    launcher: text("launcher").notNull().default("cloak").$type<StationLauncher>(),
     gologinProfileId: text("gologin_profile_id"),
     status: text("status").notNull().default("onboarding").$type<StationStatus>(),
     /** Set while the operator wants WhatsApp Web linked; the worker shows its login screen. */
@@ -62,7 +62,7 @@ export const callingStations = pgTable(
   (table) => [
     index("calling_stations_organization_idx").on(table.organizationId),
     unique("calling_stations_org_phone_uq").on(table.organizationId, table.phone),
-    check("calling_stations_launcher_chk", sql`${table.launcher} IN ('local', 'gologin_sdk', 'gologin_cloud')`),
+    check("calling_stations_launcher_chk", sql`${table.launcher} IN ('cloak', 'local', 'gologin_sdk', 'gologin_cloud')`),
     check(
       "calling_stations_status_chk",
       sql`${table.status} IN ('onboarding', 'active', 'paused', 'logged_out', 'banned')`,

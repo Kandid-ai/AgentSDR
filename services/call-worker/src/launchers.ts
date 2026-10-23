@@ -57,6 +57,8 @@ export function firstLine(error: unknown): string {
 
 export async function openStationBrowser(station: WorkerStation): Promise<StationBrowser> {
   switch (station.launcher) {
+    case "cloak":
+      return openCloak(station);
     case "local":
       return openLocal(station);
     case "gologin_cloud":
@@ -84,6 +86,42 @@ async function openLocal(station: WorkerStation): Promise<StationBrowser> {
     permissions: ["microphone"],
   });
   await context.grantPermissions(["microphone"], { origin: "https://web.whatsapp.com" });
+  return { context, close: () => context.close() };
+}
+
+/**
+ * CloakBrowser — stealth Chromium with C++-level fingerprint patches — on the
+ * worker's own disk, one profile folder per station. The folder is the
+ * station's whole state: WhatsApp Web's login, cookies and storage are saved
+ * when the browser closes and loaded on the next open, and CloakBrowser keeps
+ * the profile's fingerprint seed in it (`.cloakbrowser-seed`), so a number
+ * shows the same device on every call. Measured 23 Oct 2026: opens in under
+ * a second, WhatsApp Web loads headless, same seed and canvas across launches.
+ *
+ * The free binary runs one session at a time (a Pro key, in
+ * CLOAKBROWSER_LICENSE_KEY, lifts that); the worker runs one job at a time.
+ */
+async function openCloak(station: WorkerStation): Promise<StationBrowser> {
+  const cfg = config();
+  const { launchPersistentContext } = await import("cloakbrowser");
+  const context = await launchPersistentContext({
+    userDataDir: join(cfg.profilesDir, "cloak", station.id),
+    headless: cfg.headless,
+    extensionPaths: [cfg.extensionPath],
+    locale: cfg.cloakLocale,
+    timezone: cfg.cloakTimezone,
+    // Media and throttling flags only: CloakBrowser supplies its own stealth
+    // and extension flags, and our user agent and automation tweaks would
+    // contradict its fingerprint.
+    args: chromiumArgs(cfg.extensionPath).filter(
+      (arg) =>
+        !arg.startsWith("--load-extension") &&
+        !arg.startsWith("--disable-extensions-except") &&
+        !arg.startsWith("--lang=") &&
+        !arg.startsWith("--disable-blink-features"),
+    ),
+  });
+  await context.grantPermissions(["microphone"], { origin: "https://web.whatsapp.com" }).catch(() => {});
   return { context, close: () => context.close() };
 }
 

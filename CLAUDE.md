@@ -366,9 +366,10 @@ before this leaves the trial.
 
 **Cloud calling stations.** The same agent call can run with no rep's laptop.
 A *calling station* (`calling_stations`, Settings → WhatsApp → Calling numbers)
-is one WhatsApp number whose WhatsApp Web lives in a browser profile: GoLogin
-(the `gologin` platform integration) or Playwright's own Chromium (`local`, for
-testing). "AI agent → Call from: <station>" queues a `call_sessions` row with
+is one WhatsApp number whose WhatsApp Web lives in a browser profile:
+CloakBrowser (`cloak`, the default: stealth Chromium whose profile folder on the
+worker keeps the number's login and a fixed fingerprint), GoLogin (the `gologin`
+platform integration) or Playwright's own Chromium (`local`, for testing). "AI agent → Call from: <station>" queues a `call_sessions` row with
 `mode = 'agent_cloud'`. The call worker (`services/call-worker`, its own
 package; Playwright) claims it over `/api/call-worker/*` (Bearer
 `CALL_WORKER_SECRET`, public in `proxy.ts`), opens the station's browser, and
