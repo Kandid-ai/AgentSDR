@@ -56,7 +56,7 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
     startCall(r: unknown): Promise<unknown>;
     endCall(id: string): Promise<unknown>;
     activeCall(): Promise<unknown>;
-    drainLog?(): string[];
+    drainLog?(): string[] | Promise<string[]>;
   };
   return {
     version,

@@ -148,7 +148,7 @@ chrome.runtime.onMessage.addListener((message: AgentCommand, _sender, sendRespon
 async function placeCall(next: WaCall): Promise<void> {
   call = next;
   trace(next.callId, "WhatsApp tab: looking for the Voice call button");
-  toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent });
+  toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent, monitor: !next.station });
   phase({ kind: "opening" });
 
   const savedName = whatsappContactName(next.lead)?.display ?? null;

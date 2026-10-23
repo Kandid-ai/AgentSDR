@@ -50,15 +50,20 @@ import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from ".
  * 2026), so this only needs to outlast that.
  */
 const MIC_SETTLE_MS = 300;
-const WATCH_INTERVAL_MS = 500;
+/**
+ * How often the call UI is read. Fast, because the agent greets the lead
+ * only once the pick-up is seen (the call timer appearing): every 0.2 s
+ * instead of 0.5 s takes up to 0.3 s off the silence after "hello".
+ */
+const WATCH_INTERVAL_MS = 200;
 const NO_TIMER_FALLBACK_MS = 60_000;
 /**
  * How many checks running the timer, or End call, must be missing before the
  * call counts as over. Background tabs throttle intervals to 1 s, so this is
  * a few seconds — enough to ride out the move into picture-in-picture.
  */
-const TIMER_GONE_CHECKS = 4;
-const END_BUTTON_GONE_CHECKS = 4;
+const TIMER_GONE_CHECKS = 10;
+const END_BUTTON_GONE_CHECKS = 10;
 /** Armed this long with no call UI ever showing: the call was never placed. */
 const ARMED_WITHOUT_CALL_MS = 90_000;
 const TIMER_PATTERN = /^\d{1,2}:\d{2}(?::\d{2})?$/;
@@ -162,6 +167,8 @@ function install(): void {
   let armedCallId: string | null = null;
   /** The armed call is an agent call. */
   let armedAgent = false;
+  /** Play the agent's voice on this machine's speakers too — for a rep at the laptop, not a cloud station. */
+  let armedMonitor = true;
   let agentRig: AgentRig | null = null;
   let session: Session | null = null;
   /** A call whose recording is being stopped and handed over (end() until "recording" is posted). */
@@ -263,7 +270,7 @@ function install(): void {
     if (event.source !== window) return;
     const data = event.data as Partial<AgentToHook> | null;
     if (data?.source !== AGENT_SOURCE) return;
-    if (data.type === "arm" && data.callId) arm(data.callId, data.agent === true);
+    if (data.type === "arm" && data.callId) arm(data.callId, data.agent === true, data.monitor !== false);
     else if (data.type === "disarm") {
       armedCallId = null;
       if (!session) dropAgentRig();
@@ -299,12 +306,13 @@ function install(): void {
   let armSawCallUi = false;
   let armCallUiMissing = 0;
 
-  function arm(callId: string, agent: boolean): void {
+  function arm(callId: string, agent: boolean, monitor: boolean): void {
     // A session whose call ended unseen would block this call's session.
     if (session && !readCallUi().present) end();
     if (!session) dropAgentRig();
     armedCallId = callId;
     armedAgent = agent;
+    armedMonitor = monitor;
     armedAt = Date.now();
     armSawCallUi = false;
     armCallUiMissing = 0;
@@ -660,7 +668,9 @@ function install(): void {
     const voice = context.createGain();
     // The rep hears the agent too. Native connect: this is not WhatsApp's
     // playback, so it must not be tapped as the lead's side.
-    nativeConnect.call(voice, context.destination, 0, 0);
+    // On a cloud station nobody listens here, and a phone near the speakers
+    // would send the agent's voice back into the call as the lead's.
+    if (armedMonitor) nativeConnect.call(voice, context.destination, 0, 0);
     context.addEventListener("statechange", () => {
       if (agentRig?.context === context) agentLog(`agent audio context is now ${context.state}`);
     });

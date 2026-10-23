@@ -74,16 +74,40 @@ function startTiming(callId: string, clickedAt: number | undefined): void {
  */
 const stationLog: string[] = [];
 const STATION_LOG_MAX = 500;
+/**
+ * Kept in session storage too: Chrome restarts this service worker when it
+ * likes, and a cloud call's log came back empty (23 Oct 2026). The restarted
+ * worker has also lost `timings`, so a step is logged even without one.
+ */
+const STATION_LOG_KEY = "stationLog";
+let stationLogFlush: ReturnType<typeof setTimeout> | null = null;
+
+function keepStationLogLine(line: string): void {
+  stationLog.push(line);
+  if (stationLogFlush) return;
+  stationLogFlush = setTimeout(() => void flushStationLog(), 300);
+}
+
+async function flushStationLog(): Promise<void> {
+  stationLogFlush = null;
+  const lines = stationLog.splice(0, stationLog.length);
+  if (lines.length === 0) return;
+  const stored = ((await chrome.storage.session.get(STATION_LOG_KEY))[STATION_LOG_KEY] as string[] | undefined) ?? [];
+  await chrome.storage.session.set({ [STATION_LOG_KEY]: [...stored, ...lines].slice(-STATION_LOG_MAX) });
+}
 
 function trace(callId: string, step: string, at = Date.now()): void {
   const timing = timings.get(callId);
-  if (!timing) return;
+  const clock = new Date(at).toISOString().slice(11, 23);
+  if (!timing) {
+    keepStationLogLine(`${callId.slice(0, 8)} ${clock} ${step}`);
+    return;
+  }
   const ms = at - timing.t0;
   timing.steps.push({ step, ms });
-  const line = `${callId.slice(0, 8)} +${ms}ms ${step}`;
+  const line = `${callId.slice(0, 8)} ${clock} +${ms}ms ${step}`;
   console.log(`[recorder] ${line}`);
-  stationLog.push(line);
-  if (stationLog.length > STATION_LOG_MAX) stationLog.splice(0, stationLog.length - STATION_LOG_MAX);
+  keepStationLogLine(line);
 }
 
 async function reportTiming(callId: string): Promise<void> {
@@ -438,7 +462,7 @@ async function openInPlace(tabId: number, digits: string, options: { call?: WaCa
 /** wa-agent's hello: the call to place in its tab, if one was just opened there. */
 /** What wa-agent is told about a call — never its token or the agent's brief. */
 function waCall(call: ActiveCall): WaCall {
-  return { callId: call.callId, phone: call.phone, lead: call.lead ?? null, agent: Boolean(call.agent) };
+  return { callId: call.callId, phone: call.phone, lead: call.lead ?? null, agent: Boolean(call.agent), station: Boolean(call.station) };
 }
 
 /** Asks AgentSDR for the AI agent's Gemini Live token, with the call's own bearer token. */
@@ -677,8 +701,11 @@ const station = {
     return call ? { callId: call.callId, dialedAt: call.dialedAt, answeredAt: call.answeredAt } : null;
   },
   /** The steps logged since the last call, oldest first — the worker's view into the call. */
-  drainLog(): string[] {
-    return stationLog.splice(0, stationLog.length);
+  async drainLog(): Promise<string[]> {
+    await flushStationLog();
+    const lines = ((await chrome.storage.session.get(STATION_LOG_KEY))[STATION_LOG_KEY] as string[] | undefined) ?? [];
+    await chrome.storage.session.remove(STATION_LOG_KEY);
+    return lines;
   },
   version: chrome.runtime.getManifest().version,
 };

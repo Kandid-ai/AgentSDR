@@ -17,7 +17,7 @@ export const AGENT_SOURCE = "agentsdr-wa-agent";
 export type AgentToHook =
   /** Record the next call in this tab; nothing is recorded unless armed. */
   /** `agent`: the AI voice agent talks in this call — WhatsApp gets its voice as the microphone. */
-  | { source: typeof AGENT_SOURCE; type: "arm"; callId: string; agent?: boolean }
+  | { source: typeof AGENT_SOURCE; type: "arm"; callId: string; agent?: boolean; monitor?: boolean }
   | { source: typeof AGENT_SOURCE; type: "disarm" }
   /** The rep clicked the "turn on call audio" prompt — resume suspended audio. */
   | { source: typeof AGENT_SOURCE; type: "resume-audio" }

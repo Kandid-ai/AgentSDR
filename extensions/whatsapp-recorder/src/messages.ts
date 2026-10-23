@@ -47,7 +47,8 @@ export type ActiveCall = {
 export type RecentCall = Pick<ActiveCall, "callId" | "recorderToken" | "apiBase" | "appTabId" | "station"> & { endedAt: number };
 
 /** What wa-agent is told about the call to place in its tab — never the token. */
-export type WaCall = { callId: string; phone: string; lead: RecorderLead | null; agent: boolean };
+/** `station`: a cloud calling station's call — no rep at this machine. */
+export type WaCall = { callId: string; phone: string; lead: RecorderLead | null; agent: boolean; station: boolean };
 
 /** The service worker's answer to wa:agent-token. */
 export type AgentTokenResult = ({ ok: true } & AgentTokenResponse) | { ok: false; error: string };

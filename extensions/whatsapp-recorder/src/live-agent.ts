@@ -37,7 +37,7 @@ const GREETING_PROMPT = "The call has just connected and the person is on the li
  * gets talked over (seen 11 Oct 2026: three restarts). So the agent waits
  * this long for them, and if they speak, answers them instead.
  */
-const GREETING_WAIT_MS = 2_500;
+const GREETING_WAIT_MS = 1_200;
 
 export class LiveAgent {
   private socket: WebSocket | null = null;
