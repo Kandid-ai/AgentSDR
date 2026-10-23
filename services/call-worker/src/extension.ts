@@ -38,6 +38,7 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
       });
   }
   const w = worker;
+  let drainFailed = false;
   // The station object is set when the worker script finishes evaluating; allow a moment.
   let version: string | null = null;
   for (let i = 0; i < 20 && !version; i++) {
@@ -62,7 +63,17 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
     startCall: (req) => w.evaluate((r) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.startCall(r), req) as Promise<StationResult>,
     endCall: (callId) => w.evaluate((id) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.endCall(id), callId),
     activeCall: () => w.evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.activeCall()) as Promise<ActiveCall>,
-    drainLog: () =>
-      w.evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.drainLog?.() ?? []).catch(() => [] as string[]),
+    drainLog: async () => {
+      // Chrome stops and restarts an extension's service worker as it likes;
+      // a handle to a stopped one fails, so the current one is looked up.
+      const live = context.serviceWorkers().filter(isRecorderWorker).at(-1) ?? w;
+      try {
+        return await live.evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.drainLog?.() ?? []);
+      } catch (error) {
+        if (!drainFailed) console.warn(`[worker] could not read the extension's call log: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+        drainFailed = true;
+        return [];
+      }
+    },
   };
 }
