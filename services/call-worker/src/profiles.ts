@@ -29,7 +29,7 @@ const SEED_FILE = ".cloakbrowser-seed";
  * data, and the lock files of a running browser. WhatsApp Web's login lives
  * in IndexedDB, Local Storage and cookies, which are kept.
  */
-const SKIP = /(^|\/)(Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|GraphiteDawnCache|ShaderCache|CacheStorage|component_crx_cache|Crashpad|BrowserMetrics|Safe Browsing|optimization_guide_model_store|OptimizationHints|segmentation_platform|Singleton[A-Za-z]*)(\/|$)/;
+const SKIP = /(^|\/)(Service Worker|Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|GraphiteDawnCache|ShaderCache|CacheStorage|component_crx_cache|Crashpad|BrowserMetrics|Safe Browsing|optimization_guide_model_store|OptimizationHints|segmentation_platform|Singleton[A-Za-z]*)(\/|$)/;
 
 export async function restoreProfile(station: WorkerStation, dir: string): Promise<void> {
   const tag = `profile @ ${station.name}`;
@@ -68,6 +68,20 @@ export async function resetProfile(station: WorkerStation, dir: string): Promise
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, SEED_FILE), `${station.fingerprintSeed}\n`);
   log(`profile @ ${station.name}: discarded the logged-in session for a fresh link`);
+}
+
+/**
+ * Drops the profile's service-worker registrations and their script cache
+ * before a launch. Chrome caches the extension's background script there and,
+ * for an extension loaded from a folder at launch, never refreshes it: a
+ * number's calls kept running the background script from the day its profile
+ * was made (extension 0.17.3) beside current page scripts — no station flag,
+ * so the agent played on the speakers; no call log (23 Oct 2026). WhatsApp
+ * Web's login is in IndexedDB and Local Storage, and its own service worker
+ * registers again on load.
+ */
+export async function purgeServiceWorkers(dir: string): Promise<void> {
+  await rm(join(dir, "Default", "Service Worker"), { recursive: true, force: true });
 }
 
 /** Packs the closed browser's profile and saves it as the number's next version. Never throws. */

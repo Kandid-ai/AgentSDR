@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import type { WorkerStation } from "../../../src/lib/calls/stationContract";
 import { config } from "./config";
-import { resetProfile, restoreProfile, saveProfile } from "./profiles";
+import { purgeServiceWorkers, resetProfile, restoreProfile, saveProfile } from "./profiles";
 import { startProxyRelay } from "./proxyRelay";
 
 export type StationBrowser = { context: BrowserContext; close(): Promise<void> };
@@ -77,6 +77,7 @@ export async function openStationBrowser(station: WorkerStation, options: { fres
 
 async function openLocal(station: WorkerStation): Promise<StationBrowser> {
   const cfg = config();
+  await purgeServiceWorkers(join(cfg.profilesDir, station.id));
   const ignoreDefaultArgs = ["--enable-automation", "--disable-extensions"];
   if (!cfg.headless) ignoreDefaultArgs.push("--mute-audio");
   const context = await chromium.launchPersistentContext(join(cfg.profilesDir, station.id), {
@@ -124,6 +125,7 @@ async function openCloak(station: WorkerStation, fresh: boolean): Promise<Statio
   // for a fresh link, only the seed.
   if (fresh) await resetProfile(station, dir);
   else await restoreProfile(station, dir);
+  await purgeServiceWorkers(dir);
   const { launchPersistentContext } = await import("cloakbrowser");
   const context = await launchPersistentContext({
     userDataDir: dir,

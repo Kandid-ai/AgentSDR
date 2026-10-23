@@ -384,6 +384,12 @@ phone number" and posts the code and a screenshot to the station. Shapes are in
 `src/lib/calls/stationContract.ts`; logic is in `src/lib/calls/stations.ts`.
 Headless Chromium must not say "HeadlessChrome": WhatsApp Web refuses to load
 for it (`launchers.ts` sets a desktop user agent).
+A station's browser profile must not keep `Default/Service Worker`: Chrome
+caches the extension's background script there and never refreshes it for an
+extension loaded from a folder at launch, so a profile ran its creation-day
+background beside current page scripts (the version shown comes from the
+manifest on disk, so it looked current). The worker deletes it before every
+launch and leaves it out of saved profiles (`purgeServiceWorkers`).
 
 
 ## WhatsApp messaging (Unipile)
