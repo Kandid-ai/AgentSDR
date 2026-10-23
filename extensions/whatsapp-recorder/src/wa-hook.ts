@@ -195,8 +195,58 @@ function fixIgnoredSampleRates(): boolean {
   return true;
 }
 
+/**
+ * WhatsApp Web's peer connections, so an agent call can log how its audio
+ * travels (direct or through a relay, UDP or TCP, round-trip time). On the
+ * call worker "Connecting…" took 4.5 s against 0.5 s on a Mac (23 Oct 2026);
+ * this says why. Watching only — the connections are not changed.
+ */
+const peers = new Set<WeakRef<RTCPeerConnection>>();
+function trackPeerConnections(): void {
+  const Native = window.RTCPeerConnection;
+  if (!Native) return;
+  class TrackedPeerConnection extends Native {
+    constructor(configuration?: RTCConfiguration) {
+      super(configuration);
+      peers.add(new WeakRef(this));
+    }
+  }
+  Object.defineProperty(TrackedPeerConnection, "name", { value: "RTCPeerConnection" });
+  window.RTCPeerConnection = TrackedPeerConnection;
+}
+
+/** One line per live peer connection: the selected route and its round-trip time. */
+async function describeCallTransport(): Promise<string[]> {
+  const lines: string[] = [];
+  for (const ref of peers) {
+    const pc = ref.deref();
+    if (!pc) {
+      peers.delete(ref);
+      continue;
+    }
+    if (pc.connectionState === "closed") continue;
+    const stats = await pc.getStats().catch(() => null);
+    if (!stats) continue;
+    const byId = new Map<string, Record<string, unknown>>();
+    stats.forEach((report) => byId.set(report.id, report as Record<string, unknown>));
+    const pair = [...byId.values()].find((r) => r.type === "candidate-pair" && (r.nominated || r.selected) && r.state === "succeeded");
+    if (!pair) {
+      lines.push(`peer ${pc.connectionState}, no selected route yet`);
+      continue;
+    }
+    const local = byId.get(String(pair.localCandidateId));
+    const remote = byId.get(String(pair.remoteCandidateId));
+    const rtt = typeof pair.currentRoundTripTime === "number" ? `${Math.round(pair.currentRoundTripTime * 1000)} ms` : "?";
+    lines.push(
+      `peer ${pc.connectionState}: local ${local?.candidateType}/${local?.protocol}${local?.relayProtocol ? ` (relay over ${local.relayProtocol})` : ""} → remote ${remote?.candidateType}/${remote?.protocol} ${remote?.address ?? ""}, round trip ${rtt}`,
+    );
+  }
+  return lines;
+}
+
 function install(): void {
   const sampleRatesFixed = fixIgnoredSampleRates();
+  trackPeerConnections();
   const nativeConnect = AudioNode.prototype.connect as unknown as Connect;
   const nativeDisconnect = AudioNode.prototype.disconnect as unknown as Disconnect;
   const nativeStop = MediaStreamTrack.prototype.stop;
@@ -547,6 +597,13 @@ function install(): void {
     if (agentRig?.callId === current.callId) {
       agentRig.listening = true;
       agentLog(`picked up (${timerSeen ? "timer seen" : "no timer — fallback"})`);
+      // A moment for the route's round trip to be measured.
+      window.setTimeout(() => {
+        void describeCallTransport().then((lines) => {
+          if (!lines.length) agentLog("call transport: no WebRTC peer connection seen");
+          for (const line of lines) agentLog(`call transport: ${line}`);
+        });
+      }, 2_000);
     }
     current.timerSeen = timerSeen;
     post({ source: HOOK_SOURCE, type: "answered", callId: current.callId, answeredAt, timerSeen });

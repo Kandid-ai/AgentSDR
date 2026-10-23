@@ -90,6 +90,11 @@ function liveSetup(request: AgentTokenRequest) {
       responseModalities: ["AUDIO"],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } } },
     },
+    // Background noise on the lead's line counted as them talking: the agent
+    // held its greeting for 8.5 s after the pick-up, until the noise paused
+    // (23 Oct 2026). Low start-of-speech sensitivity needs clearer speech
+    // before it yields; everything else stays at Gemini's defaults.
+    realtimeInputConfig: { automaticActivityDetection: { startOfSpeechSensitivity: "START_SENSITIVITY_LOW" } },
     systemInstruction: { parts: [{ text: agentInstructions(request) }] },
     tools: [
       {
