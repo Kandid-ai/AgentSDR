@@ -46,6 +46,9 @@ export class LiveAgent {
   private greetPending = false;
   private saidThisTurn = "";
   private warnedNotReady = false;
+  private sentSamples = 0;
+  private sentPeak = 0;
+  private sentSince = Date.now();
   private greetTimer: ReturnType<typeof setTimeout> | null = null;
   private leadSpoke = false;
   private firstReply = true;
@@ -97,6 +100,21 @@ export class LiveAgent {
       return;
     }
     this.socket.send(JSON.stringify({ realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: toBase64(pcm) } } }));
+    // Every 5 s: how much of the lead's audio went to the model, and how loud
+    // it was — the evidence for "the agent did not hear me".
+    const samples = new Int16Array(pcm);
+    let peak = 0;
+    for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+    this.sentSamples += samples.length;
+    this.sentPeak = Math.max(this.sentPeak, peak);
+    const now = Date.now();
+    if (now - this.sentSince >= 5_000) {
+      const peakDb = this.sentPeak > 0 ? Math.round(20 * Math.log10(this.sentPeak / 0x8000)) : -Infinity;
+      this.handlers.trace(`AI agent: sent ${(this.sentSamples / 16_000).toFixed(1)} s of the lead's audio in ${((now - this.sentSince) / 1000).toFixed(1)} s, peak ${peakDb} dB`);
+      this.sentSamples = 0;
+      this.sentPeak = 0;
+      this.sentSince = now;
+    }
   }
 
   close(): void {
@@ -144,6 +162,8 @@ export class LiveAgent {
         if (!this.leadSpoke && this.greetTimer) this.handlers.trace("AI agent: lead said hello first — answering them");
         this.leadSpoke = true;
         this.heardThisTurn += content.inputTranscription.text;
+        // Logged as it arrives: a turn the model never answers is never flushed.
+        this.handlers.trace(`AI agent: heard "${content.inputTranscription.text.trim()}"`);
       }
       if (content.outputTranscription?.text) {
         if (this.heardThisTurn) this.flushHeard();

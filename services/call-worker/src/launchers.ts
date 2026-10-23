@@ -78,8 +78,9 @@ export async function openStationBrowser(station: WorkerStation, options: { fres
 async function openLocal(station: WorkerStation): Promise<StationBrowser> {
   const cfg = config();
   await purgeServiceWorkers(join(cfg.profilesDir, station.id));
+  // Playwright's own --mute-audio stays: nobody listens at a station, and
+  // the extension taps WhatsApp's audio before the speakers.
   const ignoreDefaultArgs = ["--enable-automation", "--disable-extensions"];
-  if (!cfg.headless) ignoreDefaultArgs.push("--mute-audio");
   const context = await chromium.launchPersistentContext(join(cfg.profilesDir, station.id), {
     headless: cfg.headless,
     // The default headless shell cannot load extensions; "chromium" is the full build in new headless mode.
@@ -149,6 +150,9 @@ async function openCloak(station: WorkerStation, fresh: boolean): Promise<Statio
           !arg.startsWith("--lang=") &&
           !arg.startsWith("--disable-blink-features"),
       ),
+      // Nobody listens at a station: WhatsApp's playback of the lead stays off
+      // the machine's speakers (the extension taps it before the output).
+      "--mute-audio",
       // Call audio is UDP, which no browser proxy carries. Forcing it
       // through the proxy anyway (disable_non_proxied_udp) killed the audio
       // both ways while the call itself connected (23 Oct 2026), so it is
