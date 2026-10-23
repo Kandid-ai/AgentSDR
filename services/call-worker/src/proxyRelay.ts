@@ -22,6 +22,8 @@ export type ProxyRelay = {
   server: string;
   /** Opens one tunnel to WhatsApp through the upstream proxy; throws its reason (bad password, refused, timeout). */
   check(): Promise<void>;
+  /** Bytes carried so far, both directions, by destination host — what the proxy provider bills. */
+  usage(): { total: number; byHost: Map<string, number> };
   close(): Promise<void>;
 };
 
@@ -35,6 +37,11 @@ export async function startProxyRelay(upstream: WorkerProxy): Promise<ProxyRelay
       ? `Basic ${Buffer.from(`${upstream.username ?? ""}:${upstream.password ?? ""}`).toString("base64")}`
       : null;
   const sockets = new Set<Socket>();
+  const byHost = new Map<string, number>();
+  /** Counts every byte a socket carries in either direction against `host`. */
+  const meter = (socket: Socket, host: string) => {
+    socket.on("data", (chunk: Buffer) => byHost.set(host, (byHost.get(host) ?? 0) + chunk.length));
+  };
 
   /** A raw TCP connection to host:port, opened through the upstream proxy. */
   async function tunnel(host: string, port: number): Promise<Socket> {
@@ -97,6 +104,7 @@ export async function startProxyRelay(upstream: WorkerProxy): Promise<ProxyRelay
       // Through SOCKS, an HTTP request is just bytes on a tunnel to the origin.
       void tunnel(target.hostname, Number(target.port) || 80).then(
         (socket) => {
+          meter(socket, target.hostname);
           const headers = Object.entries(req.headers)
             .filter(([name]) => !/^proxy-/i.test(name))
             .map(([name, value]) => `${name}: ${Array.isArray(value) ? value.join(", ") : value}`)
@@ -135,6 +143,8 @@ export async function startProxyRelay(upstream: WorkerProxy): Promise<ProxyRelay
     tunnel(host!, port).then(
       (upstreamSocket) => {
         sockets.add(upstreamSocket);
+        meter(upstreamSocket, host!);
+        meter(client, host!);
         upstreamSocket.on("close", () => sockets.delete(upstreamSocket));
         upstreamSocket.on("error", () => client.destroy());
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -156,6 +166,7 @@ export async function startProxyRelay(upstream: WorkerProxy): Promise<ProxyRelay
       const socket = await tunnel("web.whatsapp.com", 443);
       socket.destroy();
     },
+    usage: () => ({ total: [...byHost.values()].reduce((sum, n) => sum + n, 0), byHost }),
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of sockets) socket.destroy();

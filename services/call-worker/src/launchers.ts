@@ -6,7 +6,8 @@ import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import type { WorkerStation } from "../../../src/lib/calls/stationContract";
 import { config } from "./config";
 import { purgeServiceWorkers, resetProfile, restoreProfile, saveProfile } from "./profiles";
-import { startProxyRelay } from "./proxyRelay";
+import { log } from "./log";
+import { startProxyRelay, type ProxyRelay } from "./proxyRelay";
 
 export type StationBrowser = { context: BrowserContext; close(): Promise<void> };
 
@@ -135,10 +136,8 @@ async function openCloak(station: WorkerStation, fresh: boolean): Promise<Statio
     locale: cfg.cloakLocale,
     // The browser's clock follows the number's IP when it has one.
     timezone: station.proxy?.timezone ?? cfg.cloakTimezone,
-    // Loopback goes direct: Playwright otherwise proxies even localhost
-    // (`<-loopback>`), and the extension's reports to a local AgentSDR went
-    // to the proxy and were lost — the AI never got its token (23 Oct 2026).
-    ...(relay ? { proxy: { server: relay.server, bypass: "localhost,127.0.0.1,[::1]" } } : {}),
+    // Only WhatsApp needs the number's IP; see proxyBypass.
+    ...(relay ? { proxy: { server: relay.server, bypass: proxyBypass(cfg.agentsdrUrl) } } : {}),
     // Media and throttling flags only: CloakBrowser supplies its own stealth
     // and extension flags, and our user agent and automation tweaks would
     // contradict its fingerprint.
@@ -169,11 +168,46 @@ async function openCloak(station: WorkerStation, fresh: boolean): Promise<Statio
     context,
     close: async () => {
       await context.close();
+      if (relay) logProxyUsage(station, relay);
       await relay?.close();
       // Only once closed: the profile is consistent on disk then.
       await saveProfile(station, dir);
     },
   };
+}
+
+/**
+ * What goes direct instead of through the number's proxy. The proxy is there
+ * so WhatsApp sees the number's IP; nothing else needs it, and the proxy is
+ * billed by the GB. The AI's audio (Gemini Live, about 4 MB a minute) and the
+ * recording's upload to R2 were most of a call's proxy traffic.
+ *
+ * Loopback must be listed: Playwright otherwise proxies even localhost
+ * (`<-loopback>`), and the extension's reports to a local AgentSDR went to the
+ * proxy and were lost — the AI never got its token (23 Oct 2026).
+ */
+function proxyBypass(agentsdrUrl: string): string {
+  return [
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    new URL(agentsdrUrl).hostname,
+    "generativelanguage.googleapis.com",
+    "*.r2.cloudflarestorage.com",
+  ].join(",");
+}
+
+const megabytes = (bytes: number) => `${(bytes / 1_048_576).toFixed(1)} MB`;
+
+/** What this session cost on the number's proxy, which the provider bills by the GB. */
+function logProxyUsage(station: WorkerStation, relay: ProxyRelay): void {
+  const { total, byHost } = relay.usage();
+  const top = [...byHost.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([host, bytes]) => `${host} ${megabytes(bytes)}`)
+    .join(", ");
+  log(`proxy @ ${station.name}: ${megabytes(total)} through the proxy (${top || "nothing"})`);
 }
 
 async function openGologinCloud(station: WorkerStation): Promise<StationBrowser> {
