@@ -1,4 +1,7 @@
 import type {
+  WorkerProfileCommitRequest,
+  WorkerProfileCommitResponse,
+  WorkerProfileUploadResponse,
   WorkerCallStatus,
   WorkerClaimRequest,
   WorkerClaimResponse,
@@ -55,4 +58,12 @@ export async function releaseCall(callId: string, error: string): Promise<void> 
 
 export function getCallStatus(callId: string): Promise<WorkerCallStatus> {
   return request("GET", `/api/call-worker/calls/${encodeURIComponent(callId)}`);
+}
+
+export function profileUploadUrl(stationId: string, bytes: number): Promise<WorkerProfileUploadResponse> {
+  return request("POST", `/api/call-worker/stations/${encodeURIComponent(stationId)}/profile/upload-url`, { bytes });
+}
+
+export function commitProfile(stationId: string, body: WorkerProfileCommitRequest): Promise<WorkerProfileCommitResponse> {
+  return request("POST", `/api/call-worker/stations/${encodeURIComponent(stationId)}/profile`, body);
 }

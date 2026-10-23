@@ -9,6 +9,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { crmRecords } from "@/lib/crm/schema";
@@ -23,10 +24,44 @@ import type {
   TranscriptStatus,
 } from "./contract";
 import { organizations } from "@/lib/auth/schema";
-import type { CloudCallPhase, StationLauncher, StationStatus } from "./stationContract";
+import type { CloudCallPhase, ProxyProtocol, StationLauncher, StationStatus } from "./stationContract";
 
 /** Who talks on a call: the rep, the AI agent in the rep's browser, or the AI agent on a cloud station. */
 export type CallMode = "rep" | "agent" | "agent_cloud";
+
+/**
+ * An outbound IP (static ISP / residential proxy) a calling number's browser
+ * uses; each is assigned to at most one number. The password is encrypted
+ * (integrations' credential crypto). scripts/create-calling-proxies.ts.
+ */
+export const callingProxies = pgTable(
+  "calling_proxies",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    id: uuid("id").primaryKey().defaultRandom(),
+    label: text("label").notNull(),
+    protocol: text("protocol").notNull().$type<ProxyProtocol>(),
+    host: text("host").notNull(),
+    port: integer("port").notNull(),
+    username: text("username"),
+    passwordEncrypted: text("password_encrypted"),
+    /** ISO 3166 alpha-2, e.g. "IN". */
+    country: text("country"),
+    /** IANA zone the browser shows while on this IP. */
+    timezone: text("timezone"),
+    provider: text("provider"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("calling_proxies_organization_idx").on(table.organizationId),
+    check("calling_proxies_protocol_chk", sql`${table.protocol} IN ('http', 'socks5')`),
+    check("calling_proxies_port_chk", sql`${table.port} BETWEEN 1 AND 65535`),
+  ],
+);
 
 /**
  * A cloud calling station: one WhatsApp number whose WhatsApp Web runs in a
@@ -56,11 +91,32 @@ export const callingStations = pgTable(
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     lastCallAt: timestamp("last_call_at", { withTimezone: true }),
     lastError: text("last_error"),
+    /** The IP its browser goes out from; unique, so numbers never share one. */
+    proxyId: uuid("proxy_id"),
+    /**
+     * CloakBrowser's fingerprint seed (10000–99999): the number's device
+     * identity, kept here so it survives the worker's disk. Set at creation.
+     */
+    fingerprintSeed: integer("fingerprint_seed")
+      .notNull()
+      .default(sql`(floor(random() * 90000) + 10000)::int`),
+    /** The saved browser profile in R2 (tar.gz), its size, version and save time. 0 = never saved. */
+    profileKey: text("profile_key"),
+    profileBytes: integer("profile_bytes"),
+    profileVersion: integer("profile_version").notNull().default(0),
+    profileSavedAt: timestamp("profile_saved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("calling_stations_organization_idx").on(table.organizationId),
+    foreignKey({
+      columns: [table.proxyId],
+      foreignColumns: [callingProxies.id],
+      name: "calling_stations_proxy_fk",
+    }).onDelete("set null"),
+    uniqueIndex("calling_stations_proxy_uq").on(table.proxyId).where(sql`${table.proxyId} IS NOT NULL`),
+    check("calling_stations_seed_chk", sql`${table.fingerprintSeed} BETWEEN 10000 AND 99999`),
     unique("calling_stations_org_phone_uq").on(table.organizationId, table.phone),
     check("calling_stations_launcher_chk", sql`${table.launcher} IN ('cloak', 'local', 'gologin_sdk', 'gologin_cloud')`),
     check(

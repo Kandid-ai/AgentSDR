@@ -48,6 +48,11 @@ export type CallingStation = {
   lastCallAt: string | null;
   lastError: string | null;
   createdAt: string;
+  /** The IP this number's browser goes out from, if one is assigned. */
+  proxyId: string | null;
+  proxyLabel: string | null;
+  /** The saved browser profile (CloakBrowser): WhatsApp Web's login, and so on. version 0 = never saved. */
+  profile: { version: number; bytes: number | null; savedAt: string | null };
 };
 
 /**
@@ -73,6 +78,7 @@ export type CreateStationRequest = {
   phone: string;
   launcher: StationLauncher;
   gologinProfileId?: string | null;
+  proxyId?: string | null;
 };
 
 /** PATCH /api/calling/stations/:id — every field optional. */
@@ -80,12 +86,67 @@ export type UpdateStationRequest = {
   name?: string;
   launcher?: StationLauncher;
   gologinProfileId?: string | null;
+  /** null takes the proxy away; a proxy belongs to at most one number. */
+  proxyId?: string | null;
   /** Only active ⇄ paused from the app; the worker sets the rest. */
   status?: "active" | "paused";
 };
 
 /** POST /api/calling/stations/:id/link — ask a worker to open WhatsApp Web's login. DELETE cancels it. */
 export type StationResponse = { station: CallingStation };
+
+// --- proxies: the IPs calling numbers go out from ---------------------------
+
+export const PROXY_PROTOCOLS = ["http", "socks5"] as const;
+export type ProxyProtocol = (typeof PROXY_PROTOCOLS)[number];
+
+/**
+ * One outbound IP (a static ISP / residential proxy) a calling number's
+ * browser uses. Each belongs to at most one number, so numbers never share
+ * an IP. The password is stored encrypted and never sent to the browser.
+ */
+export type CallingProxy = {
+  id: string;
+  label: string;
+  protocol: ProxyProtocol;
+  host: string;
+  port: number;
+  username: string | null;
+  hasPassword: boolean;
+  /** ISO 3166 alpha-2, e.g. "IN". */
+  country: string | null;
+  /** IANA zone the browser shows while using this IP, e.g. "Asia/Kolkata". */
+  timezone: string | null;
+  provider: string | null;
+  notes: string | null;
+  /** The number it is assigned to, if any. */
+  stationId: string | null;
+  stationName: string | null;
+  createdAt: string;
+};
+
+/** GET /api/calling/proxies */
+export type ListProxiesResponse = { proxies: CallingProxy[] };
+
+/** POST /api/calling/proxies */
+export type CreateProxyRequest = {
+  label: string;
+  protocol: ProxyProtocol;
+  host: string;
+  port: number;
+  username?: string | null;
+  password?: string | null;
+  country?: string | null;
+  timezone?: string | null;
+  provider?: string | null;
+  notes?: string | null;
+};
+
+/** PATCH /api/calling/proxies/:id — every field optional; an absent or empty password keeps the saved one. */
+export type UpdateProxyRequest = Partial<CreateProxyRequest>;
+
+/** POST/PATCH answer; DELETE answers { ok: true } (refused while a number uses it). */
+export type ProxyResponse = { proxy: CallingProxy };
 
 // --- the call worker's API (/api/call-worker/*, Bearer CALL_WORKER_SECRET) ---
 
@@ -106,7 +167,33 @@ export type WorkerStation = {
   gologinProfileId: string | null;
   /** The organization's GoLogin API token, for the gologin_* launchers. */
   gologinToken: string | null;
+  /** The number's assigned proxy, password decrypted, or null to use the worker's own IP. */
+  proxy: WorkerProxy | null;
+  /** CloakBrowser's fingerprint seed for this number (10000–99999) — the database is its source of truth. */
+  fingerprintSeed: number;
+  /** The saved browser profile: its version and a short-lived download URL (null when never saved). */
+  profile: { version: number; downloadUrl: string | null };
 };
+
+export type WorkerProxy = {
+  /** "socks5://host:port" or "http://host:port". */
+  server: string;
+  username: string | null;
+  password: string | null;
+  timezone: string | null;
+};
+
+/** POST /api/call-worker/stations/:id/profile/upload-url — where to PUT the packed profile (tar.gz). */
+export type WorkerProfileUploadRequest = { bytes: number };
+export type WorkerProfileUploadResponse = { url: string; headers: Record<string, string>; key: string };
+
+/**
+ * POST /api/call-worker/stations/:id/profile — the upload is done; make it the
+ * number's profile. Refused (409) unless `baseVersion` is still the current
+ * version, so a stale worker never overwrites a newer profile.
+ */
+export type WorkerProfileCommitRequest = { key: string; bytes: number; baseVersion: number };
+export type WorkerProfileCommitResponse = { version: number };
 
 export type WorkerJob =
   | {

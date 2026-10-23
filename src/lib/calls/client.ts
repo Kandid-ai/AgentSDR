@@ -32,7 +32,16 @@ import type {
   UpdateCampaignContactRequest,
   UpdateCampaignRequest,
 } from "./contract";
-import type { CreateStationRequest, ListStationsResponse, StationResponse, UpdateStationRequest } from "./stationContract";
+import type {
+  CreateProxyRequest,
+  CreateStationRequest,
+  ListProxiesResponse,
+  ListStationsResponse,
+  ProxyResponse,
+  StationResponse,
+  UpdateProxyRequest,
+  UpdateStationRequest,
+} from "./stationContract";
 import { MIN_RECORDER_VERSION, RECORDER_INSTALLED_ATTRIBUTE } from "./contract";
 import { isOlderVersion } from "./recorderRelease";
 
@@ -403,4 +412,29 @@ export function startStationLink(stationId: string): Promise<StationResponse> {
 /** DELETE /api/calling/stations/:id/link — cancels linking. */
 export function cancelStationLink(stationId: string): Promise<StationResponse> {
   return callingFetch<StationResponse>(`/stations/${encodeURIComponent(stationId)}/link`, { method: "DELETE" });
+}
+
+// --- Calling IPs (proxies) -------------------------------------------------
+
+/** GET /api/calling/proxies — the organization's outbound IPs. */
+export function listCallingProxies(): Promise<ListProxiesResponse> {
+  return callingFetch<ListProxiesResponse>("/proxies");
+}
+
+/** POST /api/calling/proxies */
+export function createCallingProxy(request: CreateProxyRequest): Promise<ProxyResponse> {
+  return callingFetch<ProxyResponse>("/proxies", { method: "POST", body: JSON.stringify(request) });
+}
+
+/** PATCH /api/calling/proxies/:id — an absent or empty password keeps the saved one. */
+export function updateCallingProxy(proxyId: string, request: UpdateProxyRequest): Promise<ProxyResponse> {
+  return callingFetch<ProxyResponse>(`/proxies/${encodeURIComponent(proxyId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(request),
+  });
+}
+
+/** DELETE /api/calling/proxies/:id — refused (409) while a number uses it. */
+export function deleteCallingProxy(proxyId: string): Promise<{ ok: true }> {
+  return callingFetch<{ ok: true }>(`/proxies/${encodeURIComponent(proxyId)}`, { method: "DELETE" });
 }

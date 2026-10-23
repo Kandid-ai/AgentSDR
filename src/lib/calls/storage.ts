@@ -1,6 +1,6 @@
 import "server-only";
 
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2Client } from "@/lib/platform/clients";
 import { requirePlatformCredentials } from "@/lib/platform/credentials";
@@ -100,6 +100,19 @@ export async function headRecording(key: string): Promise<{ bytes: number } | nu
     if ((error as { name?: string }).name === "NotFound") return null;
     throw error;
   }
+}
+
+/**
+ * A calling number's saved browser profile (tar.gz): one object per save,
+ * so a half-finished upload never replaces the profile in use. The presign
+ * and head helpers above are generic and serve these keys too.
+ */
+export function stationProfileKey(stationId: string, version: number, nonce: string): string {
+  return `calling-profiles/${stationId}/v${version}-${nonce}.tar.gz`;
+}
+
+export async function deleteObject(key: string): Promise<void> {
+  await (await s3()).send(new DeleteObjectCommand({ Bucket: await bucketName(), Key: key }));
 }
 
 /** The whole recording, for handing to the transcription model as base64. */

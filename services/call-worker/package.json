@@ -9,6 +9,7 @@
     "cloakbrowser": "0.6.3",
     "gologin": "^3.0.6",
     "playwright-core": "^1.64.0",
+    "tar": "7.5.22",
     "tsx": "4"
   },
   "//": "Runs on Node, not Bun: Bun's WebSocket cannot hold Playwright's connectOverCDP to an already-running browser, which both GoLogin launchers need (12 Oct 2026). Bun is fine for installing."

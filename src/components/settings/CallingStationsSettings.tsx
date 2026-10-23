@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RiAddLine, RiCloudLine, RiLinkM, RiLoader4Line, RiPauseCircleLine, RiPencilLine, RiPlayCircleLine, RiDeleteBinLine } from "@remixicon/react";
+import { RiAddLine, RiCloudLine, RiGlobalLine, RiLinkM, RiLoader4Line, RiPauseCircleLine, RiPencilLine, RiPlayCircleLine, RiDeleteBinLine } from "@remixicon/react";
 import * as Badge from "@/components/alignui/badge";
 import * as Button from "@/components/alignui/button";
 import * as Modal from "@/components/alignui/modal";
@@ -17,13 +17,26 @@ import { SettingsPage } from "@/components/settings/SettingsPage";
 import { DocsLink } from "@/components/page/DocsLink";
 import {
   cancelStationLink,
+  createCallingProxy,
   createCallingStation,
+  deleteCallingProxy,
   deleteCallingStation,
+  listCallingProxies,
   listCallingStations,
   startStationLink,
+  updateCallingProxy,
   updateCallingStation,
 } from "@/lib/calls/client";
-import { STATION_LAUNCHERS, usesGoLogin, type CallingStation, type StationLauncher, type StationStatus } from "@/lib/calls/stationContract";
+import {
+  PROXY_PROTOCOLS,
+  STATION_LAUNCHERS,
+  usesGoLogin,
+  type CallingProxy,
+  type CallingStation,
+  type ProxyProtocol,
+  type StationLauncher,
+  type StationStatus,
+} from "@/lib/calls/stationContract";
 import { cn } from "@/utils/cn";
 
 const LAUNCHER_LABEL: Record<StationLauncher, string> = {
@@ -53,8 +66,36 @@ const STATUS_COLOR: Record<StationStatus, React.ComponentProps<typeof Badge.Root
 const POLL_BUSY_MS = 3000;
 const POLL_IDLE_MS = 15000;
 
-type Draft = { name: string; phone: string; launcher: StationLauncher; gologinProfileId: string };
-const EMPTY_DRAFT: Draft = { name: "", phone: "", launcher: "cloak", gologinProfileId: "" };
+/** Radix selects cannot hold an empty value, so "no IP" is this. */
+const NO_PROXY = "none";
+
+type Draft = { name: string; phone: string; launcher: StationLauncher; gologinProfileId: string; proxyId: string };
+const EMPTY_DRAFT: Draft = { name: "", phone: "", launcher: "cloak", gologinProfileId: "", proxyId: NO_PROXY };
+
+type ProxyDraft = {
+  label: string;
+  protocol: ProxyProtocol;
+  host: string;
+  port: string;
+  username: string;
+  password: string;
+  country: string;
+  timezone: string;
+  provider: string;
+  notes: string;
+};
+const EMPTY_PROXY_DRAFT: ProxyDraft = {
+  label: "",
+  protocol: "socks5",
+  host: "",
+  port: "",
+  username: "",
+  password: "",
+  country: "IN",
+  timezone: "Asia/Kolkata",
+  provider: "",
+  notes: "",
+};
 
 export function CallingStationsSettings() {
   const [stations, setStations] = useState<CallingStation[] | null>(null);
@@ -66,10 +107,18 @@ export function CallingStationsSettings() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<CallingStation | null>(null);
+  const [proxies, setProxies] = useState<CallingProxy[]>([]);
+  /** "new", or the id of the IP being edited. */
+  const [proxyFormFor, setProxyFormFor] = useState<string | null>(null);
+  const [proxyDraft, setProxyDraft] = useState<ProxyDraft>(EMPTY_PROXY_DRAFT);
+  const [proxyFormError, setProxyFormError] = useState("");
+  const [deletingProxy, setDeletingProxy] = useState<CallingProxy | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setStations((await listCallingStations()).stations);
+      const [stationList, proxyList] = await Promise.all([listCallingStations(), listCallingProxies()]);
+      setStations(stationList.stations);
+      setProxies(proxyList.proxies);
       setError("");
     } catch (cause) {
       setError(errorMessage(cause));
@@ -103,7 +152,7 @@ export function CallingStationsSettings() {
     setFormFor("new");
   };
   const openEdit = (station: CallingStation) => {
-    setDraft({ name: station.name, phone: station.phone, launcher: station.launcher, gologinProfileId: station.gologinProfileId ?? "" });
+    setDraft({ name: station.name, phone: station.phone, launcher: station.launcher, gologinProfileId: station.gologinProfileId ?? "", proxyId: station.proxyId ?? NO_PROXY });
     setFormError("");
     setFormFor(station.id);
   };
@@ -112,6 +161,7 @@ export function CallingStationsSettings() {
     setSaving(true);
     setFormError("");
     const gologinProfileId = usesGoLogin(draft.launcher) ? draft.gologinProfileId.trim() || null : null;
+    const proxyId = draft.proxyId === NO_PROXY ? null : draft.proxyId;
     try {
       if (formFor === "new") {
         const { station } = await createCallingStation({
@@ -119,15 +169,85 @@ export function CallingStationsSettings() {
           phone: draft.phone.trim(),
           launcher: draft.launcher,
           gologinProfileId,
+          proxyId,
         });
         setStations((current) => [...(current ?? []), station]);
       } else if (formFor) {
-        const { station } = await updateCallingStation(formFor, { name: draft.name.trim(), launcher: draft.launcher, gologinProfileId });
+        const { station } = await updateCallingStation(formFor, { name: draft.name.trim(), launcher: draft.launcher, gologinProfileId, proxyId });
         setStations((current) => (current ?? []).map((item) => (item.id === station.id ? station : item)));
       }
       setFormFor(null);
+      void load();
     } catch (cause) {
       setFormError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openAddProxy = () => {
+    setProxyDraft(EMPTY_PROXY_DRAFT);
+    setProxyFormError("");
+    setProxyFormFor("new");
+  };
+  const openEditProxy = (proxy: CallingProxy) => {
+    setProxyDraft({
+      label: proxy.label,
+      protocol: proxy.protocol,
+      host: proxy.host,
+      port: String(proxy.port),
+      username: proxy.username ?? "",
+      password: "",
+      country: proxy.country ?? "",
+      timezone: proxy.timezone ?? "",
+      provider: proxy.provider ?? "",
+      notes: proxy.notes ?? "",
+    });
+    setProxyFormError("");
+    setProxyFormFor(proxy.id);
+  };
+
+  const saveProxy = async () => {
+    const port = Number(proxyDraft.port);
+    if (!proxyDraft.host.trim()) return setProxyFormError("Host is required.");
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return setProxyFormError("Port must be a number from 1 to 65535.");
+    setSaving(true);
+    setProxyFormError("");
+    const request = {
+      label: proxyDraft.label.trim(),
+      protocol: proxyDraft.protocol,
+      host: proxyDraft.host.trim(),
+      port,
+      username: proxyDraft.username.trim() || null,
+      country: proxyDraft.country.trim().toUpperCase() || null,
+      timezone: proxyDraft.timezone.trim() || null,
+      provider: proxyDraft.provider.trim() || null,
+      notes: proxyDraft.notes.trim() || null,
+      // Left out when blank, so an edit keeps the saved password.
+      ...(proxyDraft.password ? { password: proxyDraft.password } : {}),
+    };
+    try {
+      if (proxyFormFor === "new") await createCallingProxy(request);
+      else if (proxyFormFor) await updateCallingProxy(proxyFormFor, request);
+      setProxyFormFor(null);
+      await load();
+    } catch (cause) {
+      setProxyFormError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDeleteProxy = async () => {
+    if (!deletingProxy) return;
+    setSaving(true);
+    try {
+      await deleteCallingProxy(deletingProxy.id);
+      setDeletingProxy(null);
+      await load();
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setDeletingProxy(null);
     } finally {
       setSaving(false);
     }
@@ -140,6 +260,7 @@ export function CallingStationsSettings() {
       await deleteCallingStation(deleting.id);
       setStations((current) => (current ?? []).filter((item) => item.id !== deleting.id));
       setDeleting(null);
+      void load();
     } catch (cause) {
       setError(errorMessage(cause));
       setDeleting(null);
@@ -155,6 +276,10 @@ export function CallingStationsSettings() {
     </Button.Root>
   );
 
+  const editingProxy = proxyFormFor && proxyFormFor !== "new" ? proxies.find((proxy) => proxy.id === proxyFormFor) : null;
+  const canSaveProxy = proxyDraft.label.trim() && proxyDraft.host.trim() && proxyDraft.port.trim();
+  /** An IP is offered to a number while it is free or already that number's. */
+  const proxyChoices = proxies.filter((proxy) => proxy.stationId === null || proxy.stationId === formFor);
   const editing = formFor && formFor !== "new" ? stations?.find((station) => station.id === formFor) : null;
   const canSave = draft.name.trim() && (formFor !== "new" || draft.phone.trim()) && (!usesGoLogin(draft.launcher) || draft.gologinProfileId.trim());
 
@@ -206,6 +331,30 @@ export function CallingStationsSettings() {
             ))}
           </div>
         )}
+
+        {stations !== null && (
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <h2 className="text-label-md text-text-strong-950">IPs</h2>
+                <p className="text-paragraph-sm text-text-sub-600">Each number goes out from its own IP. Static Indian ISP proxies; one number per IP.</p>
+              </div>
+              <Button.Root variant="neutral" mode="stroke" size="small" onClick={openAddProxy}>
+                <Button.Icon as={RiAddLine} />
+                Add IP
+              </Button.Root>
+            </div>
+            {proxies.length === 0 ? (
+              <p className="text-paragraph-sm text-text-soft-400">No IPs yet. Numbers without one use the worker&apos;s own IP.</p>
+            ) : (
+              <div className="space-y-3">
+                {proxies.map((proxy) => (
+                  <ProxyCard key={proxy.id} proxy={proxy} onEdit={() => openEditProxy(proxy)} onDelete={() => setDeletingProxy(proxy)} />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </div>
 
       <Modal.Root open={formFor !== null} onOpenChange={(open) => { if (!open && !saving) setFormFor(null); }}>
@@ -235,6 +384,18 @@ export function CallingStationsSettings() {
                 </Select.Content>
               </Select.Root>
             </div>
+            <div>
+              <label className="mb-1.5 block text-label-sm text-text-strong-950">IP</label>
+              <Select.Root size="small" value={draft.proxyId} onValueChange={(proxyId) => setDraft((d) => ({ ...d, proxyId }))} disabled={saving}>
+                <Select.Trigger><Select.Value /></Select.Trigger>
+                <Select.Content>
+                  <Select.Item value={NO_PROXY}>None (worker&apos;s own IP)</Select.Item>
+                  {proxyChoices.map((proxy) => (
+                    <Select.Item key={proxy.id} value={proxy.id}>{proxy.label} · {proxy.host}</Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Root>
+            </div>
             {usesGoLogin(draft.launcher) && (
               <TextField
                 label="GoLogin profile ID"
@@ -252,6 +413,79 @@ export function CallingStationsSettings() {
             <Button.Root variant="primary" mode="filled" size="small" disabled={saving || !canSave} onClick={() => void save()}>
               {saving && <RiLoader4Line className="size-4 animate-spin" aria-hidden="true" />}
               {formFor === "new" ? "Add number" : "Save"}
+            </Button.Root>
+          </Modal.Footer>
+        </Modal.Content>
+      </Modal.Root>
+
+      <Modal.Root open={proxyFormFor !== null} onOpenChange={(open) => { if (!open && !saving) setProxyFormFor(null); }}>
+        <Modal.Content>
+          <Modal.Header icon={RiGlobalLine}>
+            <Modal.Title>{proxyFormFor === "new" ? "Add an IP" : "Edit IP"}</Modal.Title>
+            <Modal.Description>A proxy a calling number's browser goes out through. It can be assigned to one number.</Modal.Description>
+          </Modal.Header>
+          <Modal.Body className="space-y-3">
+            {proxyFormError && <FormError>{proxyFormError}</FormError>}
+            <TextField label="Label" autoFocus value={proxyDraft.label} onChange={(label) => setProxyDraft((d) => ({ ...d, label }))} placeholder="Mumbai ISP 1" disabled={saving} />
+            <div className="grid grid-cols-[8rem_1fr_6rem] gap-3">
+              <div>
+                <label className="mb-1.5 block text-label-sm text-text-strong-950">Protocol</label>
+                <Select.Root size="small" value={proxyDraft.protocol} onValueChange={(protocol) => setProxyDraft((d) => ({ ...d, protocol: protocol as ProxyProtocol }))} disabled={saving}>
+                  <Select.Trigger><Select.Value /></Select.Trigger>
+                  <Select.Content>
+                    {PROXY_PROTOCOLS.map((protocol) => (
+                      <Select.Item key={protocol} value={protocol}>{protocol}</Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              </div>
+              <TextField label="Host" value={proxyDraft.host} onChange={(host) => setProxyDraft((d) => ({ ...d, host }))} placeholder="203.0.113.10" disabled={saving} />
+              <TextField label="Port" inputMode="numeric" value={proxyDraft.port} onChange={(port) => setProxyDraft((d) => ({ ...d, port }))} placeholder="1080" disabled={saving} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <TextField label="Username" autoComplete="off" value={proxyDraft.username} onChange={(username) => setProxyDraft((d) => ({ ...d, username }))} disabled={saving} />
+              <TextField
+                label="Password"
+                type="password"
+                autoComplete="new-password"
+                value={proxyDraft.password}
+                onChange={(password) => setProxyDraft((d) => ({ ...d, password }))}
+                placeholder={editingProxy?.hasPassword ? "Saved — leave blank to keep" : ""}
+                disabled={saving}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <TextField label="Country" value={proxyDraft.country} onChange={(country) => setProxyDraft((d) => ({ ...d, country }))} placeholder="IN" disabled={saving} />
+              <TextField label="Time zone" value={proxyDraft.timezone} onChange={(timezone) => setProxyDraft((d) => ({ ...d, timezone }))} placeholder="Asia/Kolkata" disabled={saving} />
+            </div>
+            <TextField label="Provider" value={proxyDraft.provider} onChange={(provider) => setProxyDraft((d) => ({ ...d, provider }))} disabled={saving} />
+            <TextField label="Notes" value={proxyDraft.notes} onChange={(notes) => setProxyDraft((d) => ({ ...d, notes }))} disabled={saving} />
+          </Modal.Body>
+          <Modal.Footer>
+            <Modal.Close asChild>
+              <Button.Root variant="neutral" mode="stroke" size="small" disabled={saving}>Cancel</Button.Root>
+            </Modal.Close>
+            <Button.Root variant="primary" mode="filled" size="small" disabled={saving || !canSaveProxy} onClick={() => void saveProxy()}>
+              {saving && <RiLoader4Line className="size-4 animate-spin" aria-hidden="true" />}
+              {proxyFormFor === "new" ? "Add IP" : "Save"}
+            </Button.Root>
+          </Modal.Footer>
+        </Modal.Content>
+      </Modal.Root>
+
+      <Modal.Root open={deletingProxy !== null} onOpenChange={(open) => { if (!open && !saving) setDeletingProxy(null); }}>
+        <Modal.Content>
+          <Modal.Header icon={RiDeleteBinLine}>
+            <Modal.Title>Delete {deletingProxy?.label}?</Modal.Title>
+            <Modal.Description>The IP is removed from this list. The proxy itself is not cancelled with your provider.</Modal.Description>
+          </Modal.Header>
+          <Modal.Footer>
+            <Modal.Close asChild>
+              <Button.Root variant="neutral" mode="stroke" size="small" disabled={saving}>Cancel</Button.Root>
+            </Modal.Close>
+            <Button.Root variant="error" mode="filled" size="small" disabled={saving} onClick={() => void confirmDeleteProxy()}>
+              {saving && <RiLoader4Line className="size-4 animate-spin" aria-hidden="true" />}
+              Delete
             </Button.Root>
           </Modal.Footer>
         </Modal.Content>
@@ -314,6 +548,14 @@ function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, on
               {station.lastSeenAt ? `Worker seen ${timeAgo(station.lastSeenAt)}` : "No worker has opened it yet"}
               {station.lastCallAt ? ` · last call ${timeAgo(station.lastCallAt)}` : ""}
             </p>
+            <p className="text-paragraph-xs text-text-sub-600">{station.proxyLabel ? `IP: ${station.proxyLabel}` : "Own IP"}</p>
+            {station.launcher === "cloak" && (
+              <p className="text-paragraph-xs text-text-soft-400">
+                {station.profile.savedAt
+                  ? `Profile: saved ${timeAgo(station.profile.savedAt)}${station.profile.bytes !== null ? ` · ${(station.profile.bytes / 1_000_000).toFixed(1)} MB` : ""} · v${station.profile.version}`
+                  : "Profile: not saved yet"}
+              </p>
+            )}
             {station.lastError && <p className="text-paragraph-xs text-error-base">{station.lastError}</p>}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -342,6 +584,46 @@ function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, on
           </div>
         </div>
         {station.link && <LinkPanel link={station.link} />}
+      </FramePanel>
+    </Frame>
+  );
+}
+
+function ProxyCard({ proxy, onEdit, onDelete }: { proxy: CallingProxy; onEdit: () => void; onDelete: () => void }) {
+  const details = [proxy.country, proxy.timezone, proxy.provider].filter(Boolean).join(" · ");
+  const assigned = proxy.stationId !== null;
+  return (
+    <Frame>
+      <FramePanel>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-label-md text-text-strong-950">{proxy.label}</h3>
+              <Badge.Root variant="light" size="medium" color={assigned ? "blue" : "gray"}>
+                {assigned ? `Used by ${proxy.stationName ?? "a number"}` : "Unassigned"}
+              </Badge.Root>
+            </div>
+            <p className="font-mono text-paragraph-sm text-text-sub-600">{proxy.protocol}://{proxy.host}:{proxy.port}</p>
+            {details && <p className="text-paragraph-xs text-text-soft-400">{details}</p>}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button.Root variant="neutral" mode="stroke" size="xsmall" onClick={onEdit}>
+              <Button.Icon as={RiPencilLine} />
+              Edit
+            </Button.Root>
+            <Button.Root
+              variant="error"
+              mode="stroke"
+              size="xsmall"
+              disabled={assigned}
+              title={assigned ? "Unassign it from its number first" : undefined}
+              onClick={onDelete}
+            >
+              <Button.Icon as={RiDeleteBinLine} />
+              Delete
+            </Button.Root>
+          </div>
+        </div>
       </FramePanel>
     </Frame>
   );

@@ -7,7 +7,9 @@ import { companies, people } from "@/lib/leads/schema";
 import { personCompanyName } from "@/lib/leads/companyName";
 import { getPlatformCredentials } from "@/lib/platform/credentials";
 import { currentOrganizationId, inOrg, runInOrganization } from "@/lib/tenancy/scope";
-import { callSessions, callingStations } from "./schema";
+import { callSessions, callingProxies, callingStations } from "./schema";
+import { requireProxy, workerProxy } from "./proxies";
+import { deleteObject, headRecording, presignRecordingDownload, presignRecordingUpload, stationProfileKey } from "./storage";
 import { normalizePhone } from "./phone";
 import { CallApiError, finishCall, recorderLeadFor } from "./sessions";
 import { createRecorderToken } from "./token";
@@ -22,6 +24,9 @@ import {
   type WorkerCallStatus,
   type WorkerClaimRequest,
   type WorkerJob,
+  type WorkerProfileCommitRequest,
+  type WorkerProfileCommitResponse,
+  type WorkerProfileUploadResponse,
   type WorkerStation,
   type WorkerStationStateRequest,
 } from "./stationContract";
@@ -57,7 +62,7 @@ const OPEN_STATUSES = ["pending", "in_progress"] as const;
 
 // --- the app's view -------------------------------------------------------------
 
-export function toCallingStation(row: StationRow, busyCallId: string | null): CallingStation {
+export function toCallingStation(row: StationRow, busyCallId: string | null, proxyLabel: string | null = null): CallingStation {
   return {
     id: row.id,
     name: row.name,
@@ -78,6 +83,13 @@ export function toCallingStation(row: StationRow, busyCallId: string | null): Ca
     lastCallAt: row.lastCallAt ? row.lastCallAt.toISOString() : null,
     lastError: row.lastError,
     createdAt: row.createdAt.toISOString(),
+    proxyId: row.proxyId,
+    proxyLabel: row.proxyId ? proxyLabel : null,
+    profile: {
+      version: row.profileVersion,
+      bytes: row.profileBytes,
+      savedAt: row.profileSavedAt ? row.profileSavedAt.toISOString() : null,
+    },
   };
 }
 
@@ -100,9 +112,14 @@ async function busyCalls(stationIds: string[]): Promise<Map<string, string>> {
 }
 
 export async function listStations(): Promise<CallingStation[]> {
-  const rows = await db.select().from(callingStations).where(inOrg(callingStations)).orderBy(asc(callingStations.createdAt));
-  const busy = await busyCalls(rows.map((row) => row.id));
-  return rows.map((row) => toCallingStation(row, busy.get(row.id) ?? null));
+  const rows = await db
+    .select({ station: callingStations, proxyLabel: callingProxies.label })
+    .from(callingStations)
+    .leftJoin(callingProxies, and(eq(callingProxies.id, callingStations.proxyId), inOrg(callingProxies)))
+    .where(inOrg(callingStations))
+    .orderBy(asc(callingStations.createdAt));
+  const busy = await busyCalls(rows.map((row) => row.station.id));
+  return rows.map((row) => toCallingStation(row.station, busy.get(row.station.id) ?? null, row.proxyLabel));
 }
 
 async function requireStation(id: string): Promise<StationRow> {
@@ -113,7 +130,25 @@ async function requireStation(id: string): Promise<StationRow> {
 }
 
 async function stationView(row: StationRow): Promise<CallingStation> {
-  return toCallingStation(row, (await busyCalls([row.id])).get(row.id) ?? null);
+  const proxy = row.proxyId ? await requireProxy(row.proxyId).catch(() => null) : null;
+  return toCallingStation(row, (await busyCalls([row.id])).get(row.id) ?? null, proxy?.label ?? null);
+}
+
+function parseProxyId(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !UUID_PATTERN.test(value)) throw new CallApiError(400, "proxyId must be an IP's id");
+  return value;
+}
+
+/** A proxy given to `stationId` must be this organization's and not another number's. */
+async function assertProxyFree(proxyId: string, stationId: string | null): Promise<void> {
+  await requireProxy(proxyId);
+  const [holder] = await db
+    .select({ id: callingStations.id, name: callingStations.name })
+    .from(callingStations)
+    .where(and(inOrg(callingStations), eq(callingStations.proxyId, proxyId)))
+    .limit(1);
+  if (holder && holder.id !== stationId) throw new CallApiError(409, `${holder.name} already uses this IP — one number per IP`);
 }
 
 function parseLauncher(value: unknown): StationLauncher {
@@ -143,7 +178,13 @@ export function parseCreateStationRequest(value: unknown): CreateStationRequest 
   const body = asObject(value);
   const phone = typeof body.phone === "string" ? normalizePhone(body.phone) : null;
   if (!phone) throw new CallApiError(400, "Enter the number with its country code, e.g. +91…");
-  return { name: parseName(body.name), phone, launcher: parseLauncher(body.launcher), gologinProfileId: parseProfileId(body.gologinProfileId) };
+  return {
+    name: parseName(body.name),
+    phone,
+    launcher: parseLauncher(body.launcher),
+    gologinProfileId: parseProfileId(body.gologinProfileId),
+    proxyId: parseProxyId(body.proxyId),
+  };
 }
 
 export function parseUpdateStationRequest(value: unknown): UpdateStationRequest {
@@ -152,6 +193,7 @@ export function parseUpdateStationRequest(value: unknown): UpdateStationRequest 
   if (body.name !== undefined) update.name = parseName(body.name);
   if (body.launcher !== undefined) update.launcher = parseLauncher(body.launcher);
   if (body.gologinProfileId !== undefined) update.gologinProfileId = parseProfileId(body.gologinProfileId);
+  if (body.proxyId !== undefined) update.proxyId = parseProxyId(body.proxyId);
   if (body.status !== undefined) {
     if (body.status !== "active" && body.status !== "paused") throw new CallApiError(400, "status can only be set to active or paused");
     update.status = body.status;
@@ -169,6 +211,7 @@ export async function createStation(input: CreateStationRequest): Promise<Callin
     .where(and(inOrg(callingStations), eq(callingStations.phone, input.phone)))
     .limit(1);
   if (existing) throw new CallApiError(409, "That number is already a calling number");
+  if (input.proxyId) await assertProxyFree(input.proxyId, null);
   const [row] = await db
     .insert(callingStations)
     .values({
@@ -177,10 +220,11 @@ export async function createStation(input: CreateStationRequest): Promise<Callin
       phone: input.phone,
       launcher: input.launcher,
       gologinProfileId: input.gologinProfileId ?? null,
+      proxyId: input.proxyId ?? null,
     })
     .returning();
   if (!row) throw new Error("calling_stations insert did not return a row");
-  return toCallingStation(row, null);
+  return stationView(row);
 }
 
 export async function updateStation(id: string, input: UpdateStationRequest): Promise<CallingStation> {
@@ -189,6 +233,7 @@ export async function updateStation(id: string, input: UpdateStationRequest): Pr
   const profileId = input.gologinProfileId !== undefined ? input.gologinProfileId : current.gologinProfileId;
   if (usesGoLogin(launcher) && !profileId) throw new CallApiError(400, "A GoLogin number needs its GoLogin profile id");
   if (input.status === "active" && current.status === "banned") throw new CallApiError(409, "A banned number can't be resumed");
+  if (input.proxyId) await assertProxyFree(input.proxyId, id);
   const [row] = await db
     .update(callingStations)
     .set({ ...input, updatedAt: new Date() })
@@ -330,16 +375,25 @@ export function parseWorkerClaimRequest(value: unknown): WorkerClaimRequest {
 }
 
 async function workerStation(row: StationRow): Promise<WorkerStation> {
-  const gologin = !usesGoLogin(row.launcher) ? null : await runInOrganization(row.organizationId, () => getPlatformCredentials("gologin"));
-  return {
-    id: row.id,
-    organizationId: row.organizationId,
-    name: row.name,
-    phone: row.phone,
-    launcher: row.launcher,
-    gologinProfileId: row.gologinProfileId,
-    gologinToken: gologin?.apiToken ?? null,
-  };
+  return runInOrganization(row.organizationId, async () => {
+    const gologin = usesGoLogin(row.launcher) ? await getPlatformCredentials("gologin") : null;
+    const proxy = row.proxyId ? await requireProxy(row.proxyId).catch(() => null) : null;
+    return {
+      id: row.id,
+      organizationId: row.organizationId,
+      name: row.name,
+      phone: row.phone,
+      launcher: row.launcher,
+      gologinProfileId: row.gologinProfileId,
+      gologinToken: gologin?.apiToken ?? null,
+      proxy: proxy ? workerProxy(proxy) : null,
+      fingerprintSeed: row.fingerprintSeed,
+      profile: {
+        version: row.profileVersion,
+        downloadUrl: row.profileKey ? await presignRecordingDownload(row.profileKey) : null,
+      },
+    };
+  });
 }
 
 /**
@@ -555,4 +609,65 @@ export async function recordPhase(row: CallSessionRow, phase: RecorderCallPhase)
     .update(callSessions)
     .set({ livePhase: phase, updatedAt: new Date() })
     .where(and(inOrg(callSessions), eq(callSessions.id, row.id)));
+}
+
+// --- saved browser profiles (CloakBrowser) ---------------------------------------
+// A number's browser profile — WhatsApp Web's login and storage — is packed
+// by the worker after each job and kept in the organization's R2 bucket, one
+// object per save; the row holds which object is current and its version.
+// The worker downloads it before opening the browser (workerStation's
+// downloadUrl), so the number's state does not depend on one worker's disk.
+
+/** A profile bigger than this is refused: WhatsApp Web's data is tens of MB, not gigabytes. */
+const MAX_PROFILE_BYTES = 500 * 1024 * 1024;
+const PROFILE_CONTENT_TYPE = "application/gzip";
+
+export async function profileUploadUrl(stationId: string, bytes: unknown): Promise<WorkerProfileUploadResponse> {
+  if (typeof bytes !== "number" || !Number.isInteger(bytes) || bytes <= 0) throw new CallApiError(400, "bytes must be a positive integer");
+  if (bytes > MAX_PROFILE_BYTES) throw new CallApiError(413, `The profile is ${Math.round(bytes / 1e6)} MB — over the ${MAX_PROFILE_BYTES / 1e6} MB limit`);
+  const row = await workerStationRow(stationId);
+  return runInOrganization(row.organizationId, async () => {
+    const key = stationProfileKey(row.id, row.profileVersion + 1, crypto.randomUUID().slice(0, 8));
+    const { url, headers } = await presignRecordingUpload(key, PROFILE_CONTENT_TYPE);
+    return { url, headers, key };
+  });
+}
+
+export function parseProfileCommitRequest(value: unknown): WorkerProfileCommitRequest {
+  const body = asObject(value);
+  if (typeof body.key !== "string" || typeof body.bytes !== "number" || typeof body.baseVersion !== "number") {
+    throw new CallApiError(400, "key, bytes and baseVersion are required");
+  }
+  return { key: body.key, bytes: body.bytes, baseVersion: body.baseVersion };
+}
+
+/**
+ * Makes an uploaded profile the number's current one — only if no other save
+ * landed since the worker downloaded `baseVersion`, so a stale worker never
+ * overwrites a newer profile. The replaced object is deleted.
+ */
+export async function commitProfile(stationId: string, input: WorkerProfileCommitRequest): Promise<WorkerProfileCommitResponse> {
+  const row = await workerStationRow(stationId);
+  if (!input.key.startsWith(`calling-profiles/${row.id}/`)) throw new CallApiError(400, "That upload is not this number's");
+  return runInOrganization(row.organizationId, async () => {
+    const head = await headRecording(input.key);
+    if (!head) throw new CallApiError(409, "The profile upload was not found");
+    const [updated] = await db
+      .update(callingStations)
+      .set({
+        profileKey: input.key,
+        profileBytes: head.bytes,
+        profileVersion: sql`${callingStations.profileVersion} + 1`,
+        profileSavedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(inOrg(callingStations), eq(callingStations.id, row.id), eq(callingStations.profileVersion, input.baseVersion)))
+      .returning({ version: callingStations.profileVersion });
+    if (!updated) {
+      await deleteObject(input.key).catch(() => {});
+      throw new CallApiError(409, "A newer profile was saved for this number since this one was opened");
+    }
+    if (row.profileKey && row.profileKey !== input.key) await deleteObject(row.profileKey).catch(() => {});
+    return { version: updated.version };
+  });
 }

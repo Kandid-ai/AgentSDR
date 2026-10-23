@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import type { WorkerStation } from "../../../src/lib/calls/stationContract";
 import { config } from "./config";
+import { restoreProfile, saveProfile } from "./profiles";
 
 export type StationBrowser = { context: BrowserContext; close(): Promise<void> };
 
@@ -103,13 +104,26 @@ async function openLocal(station: WorkerStation): Promise<StationBrowser> {
  */
 async function openCloak(station: WorkerStation): Promise<StationBrowser> {
   const cfg = config();
+  const dir = join(cfg.profilesDir, "cloak", station.id);
+  // The saved profile and the number's fingerprint seed, from AgentSDR.
+  await restoreProfile(station, dir);
   const { launchPersistentContext } = await import("cloakbrowser");
   const context = await launchPersistentContext({
-    userDataDir: join(cfg.profilesDir, "cloak", station.id),
+    userDataDir: dir,
     headless: cfg.headless,
     extensionPaths: [cfg.extensionPath],
     locale: cfg.cloakLocale,
-    timezone: cfg.cloakTimezone,
+    // The browser's clock follows the number's IP when it has one.
+    timezone: station.proxy?.timezone ?? cfg.cloakTimezone,
+    ...(station.proxy
+      ? {
+          proxy: {
+            server: station.proxy.server,
+            ...(station.proxy.username ? { username: station.proxy.username } : {}),
+            ...(station.proxy.password ? { password: station.proxy.password } : {}),
+          },
+        }
+      : {}),
     // Media and throttling flags only: CloakBrowser supplies its own stealth
     // and extension flags, and our user agent and automation tweaks would
     // contradict its fingerprint.
@@ -122,7 +136,14 @@ async function openCloak(station: WorkerStation): Promise<StationBrowser> {
     ),
   });
   await context.grantPermissions(["microphone"], { origin: "https://web.whatsapp.com" }).catch(() => {});
-  return { context, close: () => context.close() };
+  return {
+    context,
+    close: async () => {
+      await context.close();
+      // Only once closed: the profile is consistent on disk then.
+      await saveProfile(station, dir);
+    },
+  };
 }
 
 async function openGologinCloud(station: WorkerStation): Promise<StationBrowser> {

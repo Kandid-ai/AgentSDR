@@ -8,6 +8,7 @@
         "cloakbrowser": "0.6.3",
         "gologin": "^3.0.6",
         "playwright-core": "^1.64.0",
+        "tar": "7.5.22",
         "tsx": "4",
       },
     },

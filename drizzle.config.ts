@@ -51,6 +51,7 @@ const OWNED_TABLES = [
   "call_campaigns",
   "call_messages",
   "call_sessions",
+  "calling_proxies",
   "calling_stations",
   "campaigns",
   "clean_domains",
