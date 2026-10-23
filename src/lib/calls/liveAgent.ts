@@ -74,7 +74,10 @@ export async function mintAgentToken(row: CallSessionRow, request: AgentTokenReq
   });
   const body = (await response.json().catch(() => null)) as { name?: string; error?: { message?: string } } | null;
   if (!response.ok || !body?.name) {
-    throw new CallApiError(502, `Gemini refused the agent session: ${body?.error?.message ?? `HTTP ${response.status}`}`);
+    // Not 502: Cloudflare, in front of app.agentsdr.ai, replaces a 502's body
+    // with its own "Bad gateway" page, so the extension saw only the status
+    // and never Gemini's reason (23 Oct 2026).
+    throw new CallApiError(424, `Gemini refused the agent session: ${body?.error?.message ?? `HTTP ${response.status}`}`);
   }
   return { token: body.name, model: `models/${LIVE_MODEL}`, websocketUrl: WEBSOCKET_URL };
 }
