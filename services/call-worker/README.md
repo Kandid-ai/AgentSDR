@@ -87,3 +87,9 @@ every call. Opens in under a second; WhatsApp Web loads headless.
   station; keep them matching the IP the calls leave from. The locale must be English — the
   extension finds WhatsApp's buttons by their English labels.
 - Losing `PROFILES_DIR` logs every number out of WhatsApp Web and changes its fingerprint: back it up.
+- **Check the audio before trusting it with calls: `npm run audio-check`** (in the container:
+  `xvfb-run npm run audio-check`). WhatsApp makes its call audio at 16 kHz, and CloakBrowser's free
+  macOS build (145) reports 48 kHz for that and runs at under a third of real time — the agent sounds
+  choppy or humming and never hears the lead (23 Oct 2026; no flag fixes it, `--fingerprint=off`
+  included). The Linux build is a different one (146). Every line must say `OK`; if `cloak` says
+  `BAD`, use `local` on that machine.

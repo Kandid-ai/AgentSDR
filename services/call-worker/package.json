@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --import tsx src/main.ts"
+    "start": "node --import tsx src/main.ts",
+    "audio-check": "node --import tsx src/audioCheck.ts"
   },
   "dependencies": {
     "cloakbrowser": "0.6.3",
