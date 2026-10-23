@@ -42,8 +42,9 @@
  * agent left and the lead right, as it would the rep.
  */
 
+import { createFrameStream } from "./denoise-stream";
 import { createDownsampler } from "./downsample";
-import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from "./wa-protocol";
+import { AGENT_SOURCE, DENOISER_EVENT, HOOK_SOURCE, type AgentToHook, type DenoiseState, type DenoiserDetail, type HookToAgent } from "./wa-protocol";
 
 /**
  * A getUserMedia track stopped sooner than this was a permission check, not a
@@ -111,7 +112,12 @@ type AgentRig = {
   /** Counters for the diagnostics, reported once each. */
   sentAudio: boolean;
   playedAudio: boolean;
+  /** RNNoise's state for this call's lead side, once it is running (freed with the rig). */
+  denoise: DenoiseState | null;
 };
+
+/** RNNoise works on 10 ms frames at exactly this rate; agent rigs run their context at it. */
+const DENOISE_RATE = 48_000;
 
 /** The sample rate Gemini Live takes its input at. */
 const AGENT_INPUT_RATE = 16_000;
@@ -210,6 +216,19 @@ function install(): void {
   let armedMonitor = true;
   let agentRig: AgentRig | null = null;
   let session: Session | null = null;
+  /** RNNoise, once denoise.js has been injected and loaded (see wa-protocol's DENOISER_EVENT). */
+  let rnnoise: { frameSize: number; createDenoiseState(): DenoiseState } | null = null;
+  window.addEventListener(DENOISER_EVENT, (event) => {
+    if (rnnoise) return;
+    const detail = (event as CustomEvent<DenoiserDetail>).detail;
+    void detail
+      ?.load()
+      .then((loaded) => {
+        rnnoise = loaded;
+        agentLog("noise suppression loaded (RNNoise)");
+      })
+      .catch((error: unknown) => agentLog(`noise suppression unavailable: ${error instanceof Error ? error.message : String(error)}`));
+  });
   /** A call whose recording is being stopped and handed over (end() until "recording" is posted). */
   let finishingCallId: string | null = null;
   /** The call whose screen was last reported as shown, so it is reported once. */
@@ -435,9 +454,13 @@ function install(): void {
       };
       // Each merger input is downmixed to mono: the rep left, the lead right.
       link(next, leveled(next, micSource), merger, 0);
-      link(next, leveled(next, remoteBus), merger, 1);
+      // An agent call's lead side is cleaned of background noise first: Gemini
+      // took a noisy line for speech and kept stopping, and the recording is
+      // clearer for it (23 Oct 2026).
+      const lead = rig ? denoised(next, rig) : remoteBus;
+      link(next, leveled(next, lead), merger, 1);
       link(next, merger, output);
-      if (rig) captureLead(next, rig);
+      if (rig) captureLead(next, rig, lead);
       for (const [playbackContext, nodes] of playback) {
         if (playbackContext.state !== "closed") for (const node of nodes) tap(next, node);
       }
@@ -708,7 +731,8 @@ function install(): void {
     dropAgentRig();
     // A context of its own: one of WhatsApp's may be closed under it (the
     // ringing sound's, at the pick-up), which would end the microphone track.
-    const context = new AudioContext();
+    // At RNNoise's rate, so the lead's side can be cleaned without resampling.
+    const context = new AudioContext({ sampleRate: DENOISE_RATE });
     if (context.state === "suspended") void context.resume();
     const voice = context.createGain();
     // The rep hears the agent too. Native connect: this is not WhatsApp's
@@ -728,6 +752,7 @@ function install(): void {
       listening: false,
       hangupTimer: 0,
       held: [],
+      denoise: null,
       sentAudio: false,
       playedAudio: false,
     };
@@ -741,6 +766,8 @@ function install(): void {
     window.clearTimeout(rig.hangupTimer);
     agentSilence(rig);
     for (const track of rig.held) nativeStop.call(track);
+    rig.denoise?.destroy();
+    rig.denoise = null;
     try {
       nativeDisconnect.call(rig.voice, rig.context.destination);
     } catch {
@@ -748,8 +775,35 @@ function install(): void {
     }
   }
 
-  /** Sends the lead's side (remoteBus) to wa-agent as 16 kHz mono PCM, once they have picked up. */
-  function captureLead(current: Session, rig: AgentRig): void {
+  /**
+   * The lead's side with background noise taken out (RNNoise, 10 ms frames,
+   * adding 10 ms). Until RNNoise has loaded — denoise.js is injected when the
+   * call is armed — or if the context is not at 48 kHz, it passes through.
+   */
+  function denoised(current: Session, rig: AgentRig): AudioNode {
+    const processor = current.context.createScriptProcessor(1024, 1, 1);
+    let stream: ((block: Float32Array) => Float32Array) | null = null;
+    let reported = false;
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      const output = event.outputBuffer.getChannelData(0);
+      if (!stream && rnnoise && current.context.sampleRate === DENOISE_RATE && agentRig === rig) {
+        const state = rnnoise.createDenoiseState();
+        rig.denoise = state;
+        stream = createFrameStream((frame) => void state.processFrame(frame), rnnoise.frameSize);
+        agentLog("noise suppression on for the lead's side");
+      } else if (!stream && !reported && current.context.sampleRate !== DENOISE_RATE) {
+        reported = true;
+        agentLog(`noise suppression off: audio context at ${current.context.sampleRate} Hz, not ${DENOISE_RATE}`);
+      }
+      output.set(stream ? stream(input) : input);
+    };
+    link(current, current.remoteBus, processor);
+    return processor;
+  }
+
+  /** Sends the lead's side to wa-agent as 16 kHz mono PCM, once they have picked up. */
+  function captureLead(current: Session, rig: AgentRig, lead: AudioNode): void {
     const processor = current.context.createScriptProcessor(AGENT_CAPTURE_FRAMES, 1, 1);
     const sink = current.context.createMediaStreamDestination();
     // Filtered and continuous across blocks — see downsample.ts for what the
@@ -771,7 +825,7 @@ function install(): void {
     };
     // A ScriptProcessor only runs while something pulls it; a stream
     // destination does, without sending anything to the speakers.
-    link(current, current.remoteBus, processor);
+    link(current, lead, processor);
     link(current, processor, sink);
   }
 

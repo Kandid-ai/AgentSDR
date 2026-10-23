@@ -240,6 +240,19 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
     case "wa:agent-token":
       void agentToken(message.callId).then(sendResponse);
       return true;
+    case "wa:load-denoiser": {
+      const tabId = sender.tab?.id;
+      if (tabId === undefined) {
+        sendResponse({ ok: false, error: "no tab" });
+        return false;
+      }
+      // Into the page's own world, where wa-hook handles the call's audio; WhatsApp's CSP allows wasm.
+      chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["denoise.js"] }).then(
+        () => sendResponse({ ok: true }),
+        (error: unknown) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }),
+      );
+      return true;
+    }
     case "wa:trace":
       trace(message.callId, message.step);
       if (/^WhatsApp shows "Ringing/i.test(message.step)) {

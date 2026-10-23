@@ -107,7 +107,9 @@ export type BackgroundMessage =
   /** A timed step of a call, for the timing table printed in the AgentSDR tab's console. */
   | { target: "background"; type: "wa:trace"; callId: string; step: string }
   /** A Gemini Live token for the AI agent on this call; answered with an AgentTokenResult. */
-  | { target: "background"; type: "wa:agent-token"; callId: string };
+  | { target: "background"; type: "wa:agent-token"; callId: string }
+  /** Inject denoise.js (RNNoise) into this WhatsApp tab's page for an agent call; answered { ok, error? }. */
+  | { target: "background"; type: "wa:load-denoiser"; callId: string };
 
 /** The "wa-recording" port: wa-agent streams the file to the service worker. */
 export const WA_RECORDING_PORT = "wa-recording";

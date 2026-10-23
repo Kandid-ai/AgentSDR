@@ -4,13 +4,13 @@
 
 # The recorder extension, built here from source: its dist/ is gitignored, so
 # an image built from git (Dokploy) has no other copy. It needs only Bun, the
-# extension, the call contracts it imports, and fflate.
+# extension, the call contracts it imports, fflate and RNNoise.
 FROM oven/bun:1 AS recorder
 WORKDIR /app
 COPY package.json ./
 COPY extensions/whatsapp-recorder/ ./extensions/whatsapp-recorder/
 COPY src/lib/calls/ ./src/lib/calls/
-RUN mkdir -p node_modules && bun add --no-save fflate@0.8.3 && bun run build:recorder
+RUN mkdir -p node_modules && bun add --no-save fflate@0.8.3 @shiguredo/rnnoise-wasm@2025.1.5 && bun run build:recorder
 
 FROM mcr.microsoft.com/playwright:v1.64.0-noble
 

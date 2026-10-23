@@ -14,6 +14,16 @@
 export const HOOK_SOURCE = "agentsdr-wa-hook";
 export const AGENT_SOURCE = "agentsdr-wa-agent";
 
+/**
+ * Fired on the page's window by denoise.js once the service worker injects it
+ * (an AI-agent call is armed), carrying a loader for RNNoise — so the 4.8 MB
+ * noise suppressor is only ever loaded into WhatsApp for an agent call, and
+ * nothing is left on the page's globals.
+ */
+export const DENOISER_EVENT = "agentsdr-denoiser";
+export type DenoiseState = { processFrame(frame: Float32Array): number; destroy(): void };
+export type DenoiserDetail = { load(): Promise<{ frameSize: number; createDenoiseState(): DenoiseState }> };
+
 export type AgentToHook =
   /** Record the next call in this tab; nothing is recorded unless armed. */
   /** `agent`: the AI voice agent talks in this call — WhatsApp gets its voice as the microphone. */

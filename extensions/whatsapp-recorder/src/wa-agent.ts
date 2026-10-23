@@ -168,6 +168,13 @@ async function placeCall(next: WaCall): Promise<void> {
   trace(next.callId, `WhatsApp tab: placing the call (agent ${next.agent}, station ${next.station}, speakers ${!next.station})`);
   trace(next.callId, "WhatsApp tab: looking for the Voice call button");
   toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent, monitor: !next.station });
+  // The lead's noise suppression loads while the call rings; a failure only means a noisier line.
+  if (next.agent) {
+    void send<{ ok: boolean; error?: string }>({ target: "background", type: "wa:load-denoiser", callId: next.callId }).then(
+      (result) => { if (!result?.ok) trace(next.callId, `noise suppression not loaded: ${result?.error ?? "no answer"}`); },
+      () => {},
+    );
+  }
   phase({ kind: "opening" });
 
   const savedName = whatsappContactName(next.lead)?.display ?? null;
