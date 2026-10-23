@@ -304,7 +304,7 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
           <Modal.Header icon={RiRobot2Line}>
             <Modal.Title>Call with the AI agent</Modal.Title>
             <Modal.Description>
-              An AI voice talks to {phone ?? "the lead"} over WhatsApp instead of you. From this browser you'll hear both sides; it hangs up when it's done.
+              An AI voice talks to {phone ?? "the lead"} over WhatsApp instead of you. From this browser you&apos;ll hear both sides; it hangs up when it&apos;s done.
             </Modal.Description>
           </Modal.Header>
           <Modal.Body className="space-y-3">
@@ -336,7 +336,7 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
               disabled={busy}
               placeholder={"You are Riya from Acme. We help D2C brands cut shipping costs by 20%.\nGoal: find out who handles logistics and book a 15-minute demo this week.\nIf they're busy, ask for a better time to call back."}
             />
-            <p className="text-paragraph-xs text-text-sub-600">Who the agent is, what it's calling about, and what it should get out of the call.</p>
+            <p className="text-paragraph-xs text-text-sub-600">Who the agent is, what it&apos;s calling about, and what it should get out of the call.</p>
             </div>
           </Modal.Body>
           <Modal.Footer>

@@ -34,9 +34,13 @@ type Probe = { version: string | null; api: boolean };
 async function probe(worker: Worker): Promise<Probe> {
   return worker
     .evaluate(async () => {
-      const version = (globalThis as unknown as { agentsdrStation?: { version: string } }).agentsdrStation?.version ?? null;
+      const scope = globalThis as unknown as {
+        agentsdrStation?: { version: string };
+        chrome: { storage: { session: { get(keys: null): Promise<unknown> } } };
+      };
+      const version = scope.agentsdrStation?.version ?? null;
       try {
-        await chrome.storage.session.get(null);
+        await scope.chrome.storage.session.get(null);
         return { version, api: true };
       } catch {
         return { version, api: false };

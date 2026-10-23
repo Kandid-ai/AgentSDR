@@ -430,7 +430,7 @@ export function CallingStationsSettings() {
         <Modal.Content>
           <Modal.Header icon={RiGlobalLine}>
             <Modal.Title>{proxyFormFor === "new" ? "Add an IP" : "Edit IP"}</Modal.Title>
-            <Modal.Description>A proxy a calling number's browser goes out through. It can be assigned to one number.</Modal.Description>
+            <Modal.Description>A proxy a calling number&apos;s browser goes out through. It can be assigned to one number.</Modal.Description>
           </Modal.Header>
           <Modal.Body className="space-y-3">
             {proxyFormError && <FormError>{proxyFormError}</FormError>}

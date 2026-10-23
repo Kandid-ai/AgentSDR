@@ -1009,10 +1009,75 @@ CREATE TABLE public.call_sessions (
     transcribed_at timestamp with time zone,
     recording_offset_ms integer,
     organization_id uuid NOT NULL,
+    mode text DEFAULT 'rep'::text NOT NULL,
+    station_id uuid,
+    agent_brief text,
+    live_phase jsonb,
+    claimed_at timestamp with time zone,
+    claimed_by text,
     CONSTRAINT call_sessions_duration_chk CHECK (((duration_ms IS NULL) OR (duration_ms >= 0))),
+    CONSTRAINT call_sessions_mode_chk CHECK ((mode = ANY (ARRAY['rep'::text, 'agent'::text, 'agent_cloud'::text]))),
     CONSTRAINT call_sessions_recording_chk CHECK (((status = 'recorded'::text) = (recording_key IS NOT NULL))),
     CONSTRAINT call_sessions_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'in_progress'::text, 'recorded'::text, 'no_recording'::text, 'failed'::text]))),
     CONSTRAINT call_sessions_transcript_status_chk CHECK ((transcript_status = ANY (ARRAY['none'::text, 'pending'::text, 'done'::text, 'failed'::text])))
+);
+
+--
+-- Name: calling_proxies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.calling_proxies (
+    organization_id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    label text NOT NULL,
+    protocol text NOT NULL,
+    host text NOT NULL,
+    port integer NOT NULL,
+    username text,
+    password_encrypted text,
+    country text,
+    timezone text,
+    provider text,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT calling_proxies_port_chk CHECK (((port >= 1) AND (port <= 65535))),
+    CONSTRAINT calling_proxies_protocol_chk CHECK ((protocol = ANY (ARRAY['http'::text, 'socks5'::text])))
+);
+
+--
+-- Name: calling_stations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.calling_stations (
+    organization_id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    phone text NOT NULL,
+    launcher text DEFAULT 'cloak'::text NOT NULL,
+    gologin_profile_id text,
+    status text DEFAULT 'onboarding'::text NOT NULL,
+    link_requested_at timestamp with time zone,
+    link_code text,
+    link_screenshot text,
+    link_updated_at timestamp with time zone,
+    worker_id text,
+    last_seen_at timestamp with time zone,
+    last_call_at timestamp with time zone,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    proxy_id uuid,
+    fingerprint_seed integer DEFAULT ((floor((random() * (90000)::double precision)) + (10000)::double precision))::integer NOT NULL,
+    profile_key text,
+    profile_bytes integer,
+    profile_version integer DEFAULT 0 NOT NULL,
+    profile_saved_at timestamp with time zone,
+    linked_phone text,
+    link_fresh boolean DEFAULT false NOT NULL,
+    CONSTRAINT calling_stations_launcher_chk CHECK ((launcher = ANY (ARRAY['cloak'::text, 'local'::text, 'gologin_sdk'::text, 'gologin_cloud'::text]))),
+    CONSTRAINT calling_stations_seed_chk CHECK (((fingerprint_seed >= 10000) AND (fingerprint_seed <= 99999))),
+    CONSTRAINT calling_stations_status_chk CHECK ((status = ANY (ARRAY['onboarding'::text, 'active'::text, 'paused'::text, 'logged_out'::text, 'banned'::text])))
 );
 
 --
@@ -2701,6 +2766,27 @@ ALTER TABLE ONLY public.call_sessions
     ADD CONSTRAINT call_sessions_pkey PRIMARY KEY (id);
 
 --
+-- Name: calling_proxies calling_proxies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.calling_proxies
+    ADD CONSTRAINT calling_proxies_pkey PRIMARY KEY (id);
+
+--
+-- Name: calling_stations calling_stations_org_phone_uq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.calling_stations
+    ADD CONSTRAINT calling_stations_org_phone_uq UNIQUE (organization_id, phone);
+
+--
+-- Name: calling_stations calling_stations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.calling_stations
+    ADD CONSTRAINT calling_stations_pkey PRIMARY KEY (id);
+
+--
 -- Name: campaigns campaigns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3657,6 +3743,12 @@ CREATE INDEX call_messages_organization_idx ON public.call_messages USING btree 
 CREATE INDEX call_sessions_campaign_contact_idx ON public.call_sessions USING btree (campaign_contact_id);
 
 --
+-- Name: call_sessions_cloud_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX call_sessions_cloud_open_idx ON public.call_sessions USING btree (created_at) WHERE ((mode = 'agent_cloud'::text) AND (status = ANY (ARRAY['pending'::text, 'in_progress'::text])));
+
+--
 -- Name: call_sessions_organization_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3667,6 +3759,24 @@ CREATE INDEX call_sessions_organization_idx ON public.call_sessions USING btree 
 --
 
 CREATE INDEX call_sessions_person_created_idx ON public.call_sessions USING btree (person_id, created_at);
+
+--
+-- Name: calling_proxies_organization_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX calling_proxies_organization_idx ON public.calling_proxies USING btree (organization_id);
+
+--
+-- Name: calling_stations_organization_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX calling_stations_organization_idx ON public.calling_stations USING btree (organization_id);
+
+--
+-- Name: calling_stations_proxy_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX calling_stations_proxy_uq ON public.calling_stations USING btree (proxy_id) WHERE (proxy_id IS NOT NULL);
 
 --
 -- Name: campaigns_organization_idx; Type: INDEX; Schema: public; Owner: -
@@ -4878,6 +4988,34 @@ ALTER TABLE ONLY public.call_sessions
 
 ALTER TABLE ONLY public.call_sessions
     ADD CONSTRAINT call_sessions_person_fk FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE RESTRICT;
+
+--
+-- Name: call_sessions call_sessions_station_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_sessions
+    ADD CONSTRAINT call_sessions_station_fk FOREIGN KEY (station_id) REFERENCES public.calling_stations(id) ON DELETE SET NULL;
+
+--
+-- Name: calling_proxies calling_proxies_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.calling_proxies
+    ADD CONSTRAINT calling_proxies_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
+
+--
+-- Name: calling_stations calling_stations_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.calling_stations
+    ADD CONSTRAINT calling_stations_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
+
+--
+-- Name: calling_stations calling_stations_proxy_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.calling_stations
+    ADD CONSTRAINT calling_stations_proxy_fk FOREIGN KEY (proxy_id) REFERENCES public.calling_proxies(id) ON DELETE SET NULL;
 
 --
 -- Name: campaigns campaigns_organization_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
