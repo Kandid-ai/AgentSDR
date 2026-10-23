@@ -42,6 +42,7 @@
  * agent left and the lead right, as it would the rep.
  */
 
+import { createDownsampler } from "./downsample";
 import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from "./wa-protocol";
 
 /**
@@ -751,20 +752,17 @@ function install(): void {
   function captureLead(current: Session, rig: AgentRig): void {
     const processor = current.context.createScriptProcessor(AGENT_CAPTURE_FRAMES, 1, 1);
     const sink = current.context.createMediaStreamDestination();
-    const ratio = current.context.sampleRate / AGENT_INPUT_RATE;
+    // Filtered and continuous across blocks — see downsample.ts for what the
+    // old nearest-sample pick did to the lead's voice.
+    const downsample = createDownsampler(current.context.sampleRate, AGENT_INPUT_RATE);
     processor.onaudioprocess = (event) => {
       if (!rig.listening || agentRig !== rig) return;
       if (!rig.sentAudio) {
         rig.sentAudio = true;
-        agentLog("sending the lead's audio to the agent");
+        agentLog(`sending the lead's audio to the agent (${current.context.sampleRate} Hz → ${AGENT_INPUT_RATE} Hz)`);
       }
-      const input = event.inputBuffer.getChannelData(0);
-      const length = Math.floor(input.length / ratio);
-      const pcm = new Int16Array(length);
-      for (let i = 0; i < length; i++) {
-        const sample = input[Math.min(input.length - 1, Math.round(i * ratio))];
-        pcm[i] = Math.max(-1, Math.min(1, sample)) * 0x7fff;
-      }
+      const pcm = downsample(event.inputBuffer.getChannelData(0));
+      if (pcm.length === 0) return;
       window.postMessage(
         { source: HOOK_SOURCE, type: "agent-audio", callId: rig.callId, pcm: pcm.buffer } satisfies HookToAgent,
         location.origin,

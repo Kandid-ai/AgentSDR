@@ -92,9 +92,10 @@ function liveSetup(request: AgentTokenRequest) {
     },
     // Answer sooner after the lead stops talking. The default waits longer
     // than a phone conversation does; 600 ms keeps a breath mid-sentence
-    // from counting as the end of their turn.
+    // from counting as the end of their turn. Start-of-speech stays at
+    // Gemini's defaults: a shorter prefix let brief noises cut the agent off.
     realtimeInputConfig: {
-      automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_HIGH", silenceDurationMs: 600, prefixPaddingMs: 100 },
+      automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_HIGH", silenceDurationMs: 600 },
     },
     systemInstruction: { parts: [{ text: agentInstructions(request) }] },
     tools: [
