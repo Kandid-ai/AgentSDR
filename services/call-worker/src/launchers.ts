@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { rename, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -288,7 +289,7 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
   const cfg = config();
   // Dynamic import so the local launcher works without the gologin package loaded.
   const { GoLogin } = await import("gologin");
-  type Sdk = InstanceType<typeof GoLogin> & { sanitizeProfile(): Promise<void>; processSpawned?: { pid?: number } };
+  type Sdk = InstanceType<typeof GoLogin> & { sanitizeProfile(): Promise<void>; processSpawned?: ChildProcess | null };
   const baseSanitize = (GoLogin.prototype as unknown as Sdk).sanitizeProfile;
   type Zip = { addLocalFolder(localPath: string, zipPath: string): void; toBuffer(): Buffer };
   const AdmZip = createRequire(import.meta.url)("adm-zip") as new (input?: Buffer) => Zip;
@@ -315,6 +316,11 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
   }
   const extra = chromiumArgs(cfg.extensionPath).filter((a) => !a.startsWith("--lang=") && !a.startsWith("--disable-extensions-except="));
   if (cfg.headless) extra.push("--headless=new");
+  // In Docker the worker is root, and Chromium refuses to start as root
+  // without --no-sandbox: Orbita exited at once and the SDK's wait for it
+  // failed "ECONNREFUSED 127.0.0.1:<port>" (23 Oct 2026). /dev/shm in a
+  // container is 64 MB unless raised.
+  if (process.platform === "linux" && process.getuid?.() === 0) extra.push("--no-sandbox", "--disable-dev-shm-usage");
   const gl = new WhatsAppGoLogin({
     token: station.gologinToken,
     profile_id: station.gologinProfileId,
@@ -323,7 +329,23 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
     executablePath: cfg.chromiumPath,
   }) as unknown as Sdk;
   let browser: Browser | null = null;
+  // The SDK discards Orbita's output; kept here so a browser that dies on
+  // start says why (a missing library, the sandbox) instead of only that
+  // nothing answered on its debugging port.
+  let orbitaOutput = "";
+  const watchOrbita = setInterval(() => {
+    const child = gl.processSpawned;
+    if (!child?.stderr) return;
+    clearInterval(watchOrbita);
+    child.stderr.on("data", (chunk: Buffer) => {
+      orbitaOutput = (orbitaOutput + String(chunk)).slice(-2_000);
+    });
+    child.on("exit", (code, signal) => {
+      orbitaOutput += `\n[Orbita exited: ${code ?? signal}]`;
+    });
+  }, 50);
   const shutDown = async () => {
+    clearInterval(watchOrbita);
     const pid = gl.processSpawned?.pid;
     if (browser) {
       // Browser.close shuts Orbita down cleanly, so IndexedDB is flushed to disk.
@@ -346,7 +368,10 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
     await context.grantPermissions(["microphone"], { origin: "https://web.whatsapp.com" }).catch(() => {});
     return { context, close: shutDown };
   } catch (err) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const output = orbitaOutput.trim().split("\n").slice(-6).join(" | ");
     await shutDown().catch(() => {});
+    if (output) throw new Error(`${firstLine(err)} — Orbita said: ${output}`.slice(0, 1_500));
     throw err;
   }
 }
