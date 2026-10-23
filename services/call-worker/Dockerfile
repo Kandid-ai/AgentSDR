@@ -1,5 +1,17 @@
 # Build from the repo root:
 #   docker build -f services/call-worker/Dockerfile -t agentsdr-call-worker .
+# (Dokploy: build type Dockerfile, path services/call-worker/Dockerfile, context the repo root.)
+
+# The recorder extension, built here from source: its dist/ is gitignored, so
+# an image built from git (Dokploy) has no other copy. It needs only Bun, the
+# extension, the call contracts it imports, and fflate.
+FROM oven/bun:1 AS recorder
+WORKDIR /app
+COPY package.json ./
+COPY extensions/whatsapp-recorder/ ./extensions/whatsapp-recorder/
+COPY src/lib/calls/ ./src/lib/calls/
+RUN mkdir -p node_modules && bun add --no-save fflate@0.8.3 && bun run build:recorder
+
 FROM mcr.microsoft.com/playwright:v1.64.0-noble
 
 RUN apt-get update \
@@ -14,18 +26,19 @@ RUN bun install --frozen-lockfile || bun install
 RUN npx cloakbrowser install
 
 COPY services/call-worker/ ./
-# The worker imports types from the app's contract files at build time only, but keep them for typechecking.
+# The worker imports types and shapes from the app's call contracts.
 COPY src/lib/calls/ /app/src/lib/calls/
-# Build the extension first (bun run build:recorder) so dist/ exists.
-COPY extensions/whatsapp-recorder/dist/ /app/extensions/whatsapp-recorder/dist/
+COPY --from=recorder /app/extensions/whatsapp-recorder/dist/ /app/extensions/whatsapp-recorder/dist/
 
 ENV EXTENSION_PATH=/app/extensions/whatsapp-recorder/dist \
     PROFILES_DIR=/data/profiles \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    LAUNCHERS=cloak,local,gologin_sdk,gologin_cloud \
+    LAUNCHERS=gologin_sdk \
     CLOAK_TIMEZONE=Asia/Kolkata
-# /data/profiles holds every station's browser profile — its WhatsApp login and,
-# for CloakBrowser, its fixed fingerprint. Keep it on a persistent volume.
-VOLUME /data
+# /data/profiles holds the cloak/local launchers' browser profiles (WhatsApp's
+# login, CloakBrowser's fingerprint). GoLogin keeps its profiles in its own
+# cloud; its Orbita browser (~400 MB) downloads to /root/.gologin on first use —
+# mount a volume there too, or every restart downloads it again.
+VOLUME ["/data", "/root/.gologin"]
 
 ENTRYPOINT ["./docker-entrypoint.sh"]

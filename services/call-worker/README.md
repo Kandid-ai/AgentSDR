@@ -19,7 +19,7 @@ One job at a time per worker. Run several workers for more concurrency.
 | `AGENTSDR_URL` | required | e.g. `http://localhost:3000` |
 | `CALL_WORKER_SECRET` | required | Bearer secret the app checks |
 | `WORKER_ID` | hostname | shown on the station while held |
-| `LAUNCHERS` | `local` | comma list of `local`, `gologin_sdk`, `gologin_cloud` |
+| `LAUNCHERS` | `local` (`gologin_sdk` in Docker) | comma list of `cloak`, `local`, `gologin_sdk`, `gologin_cloud` |
 | `EXTENSION_PATH` | repo `extensions/whatsapp-recorder/dist` | built extension |
 | `PROFILES_DIR` | `~/.agentsdr-call-worker/profiles` | `local` profiles, one folder per station id |
 | `HEADLESS` | `false` | `true` for new headless Chromium |
@@ -58,8 +58,16 @@ station), never from env.
 
 ## Server deployment
 
-Build from the repo root after `bun run build:recorder`:
+Build from the repo root — the image builds the extension itself:
 `docker build -f services/call-worker/Dockerfile -t agentsdr-call-worker .`
+On Dokploy: an Application on this repo, build type Dockerfile, path
+`services/call-worker/Dockerfile`, context `.`; env `AGENTSDR_URL` (the app's public URL),
+`CALL_WORKER_SECRET` (the same value as the app's), `WORKER_ID`, `LAUNCHERS`; volumes on `/data`
+and `/root/.gologin`; no domain or port (it only calls out). The app needs `CALL_WORKER_SECRET`
+and, for the AI agent, `GEMINI_API_KEY`.
+
+Only one worker may run a given number: a laptop worker pointed at a dev server that shares the
+production database claims the same calls.
 Run with `-e AGENTSDR_URL=… -e CALL_WORKER_SECRET=… -v profiles:/data`. The entrypoint starts
 PulseAudio with a null sink (so WhatsApp has an audio output to tap) and runs the worker under
 `xvfb-run` with `HEADLESS=false`; extensions and WhatsApp's audio are most reliable headful.
