@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from "playwright-core";
+import type { BrowserContext, Locator, Page } from "playwright-core";
 
 const WA_URL = "https://web.whatsapp.com/";
 
@@ -137,8 +137,13 @@ export async function startPhoneNumberLogin(page: Page, phoneE164: string, note:
     note("clicked Log in with phone number");
     const input = page.locator('input[aria-label*="phone number" i], input[type="tel"]').filter({ visible: true }).first();
     await input.waitFor({ state: "visible", timeout: 8_000 });
-    await input.fill(phoneE164.startsWith("+") ? phoneE164 : `+${phoneE164}`);
-    note(`typed the number (field now "${await input.inputValue().catch(() => "?")}")`);
+    const typed = await typePhoneNumber(page, input, phoneE164);
+    note(`typed the number (field now "${typed.value}")`);
+    // A wrong number would ask some other phone for a code; the QR is the fallback.
+    if (!typed.ok) {
+      note("the field does not hold this number — not pressing Next");
+      return null;
+    }
     await page.waitForTimeout(500);
     const next = page.getByRole("button", { name: /^next$/i }).filter({ visible: true }).first();
     if (await next.isVisible().catch(() => false)) await next.click();
@@ -156,13 +161,46 @@ export async function startPhoneNumberLogin(page: Page, phoneE164: string, note:
   return null;
 }
 
+const digitsOf = (text: string) => text.replace(/\D/g, "");
+
+/**
+ * Types the number into the login form's phone field and checks it took.
+ *
+ * The field carries a country prefix the browser cannot delete ("+91 ", from
+ * the IP), and typing the full international number after it doubles the
+ * code: "+91 919876543210", in GoLogin's browser (23 Oct 2026). Right after
+ * the form opens the prefix can still be a placeholder "+1 ", so it is given
+ * a moment to settle, then only the digits after it are typed. Failing that,
+ * fill() with the whole number, which the field parses itself.
+ */
+async function typePhoneNumber(page: Page, input: Locator, phoneE164: string): Promise<{ ok: boolean; value: string }> {
+  const want = digitsOf(phoneE164);
+  const value = () => input.inputValue().catch(() => "");
+  const clear = async () => {
+    await input.click();
+    await input.press("ControlOrMeta+A");
+    await input.press("Backspace");
+  };
+  await page.waitForTimeout(1500);
+  await clear();
+  const prefix = digitsOf(await value());
+  if (prefix && want.startsWith(prefix)) {
+    await input.pressSequentially(want.slice(prefix.length), { delay: 40 });
+    if (digitsOf(await value()) === want) return { ok: true, value: await value() };
+  }
+  await clear();
+  await input.fill(`+${want}`);
+  const filled = await value();
+  return { ok: digitsOf(filled) === want, value: filled };
+}
+
 /**
  * WhatsApp's "Log in with phone number". Two elements carry that text — the
  * link beside the QR and a visually hidden label ("Link with phone number
  * instead.") — and the first one matched timed out (23 Oct 2026). The real
  * control is tried first by role, then every visible match in turn.
  */
-async function clickPhoneNumberLogin(page: Page): Promise<void> {
+export async function clickPhoneNumberLogin(page: Page): Promise<void> {
   const name = /log in with phone number|link with phone number/i;
   const candidates = [
     page.getByRole("button", { name }),

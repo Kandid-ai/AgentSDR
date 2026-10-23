@@ -69,6 +69,10 @@ Give the container `--shm-size=1g` (or `--ipc=host`).
 
 - **SDK (`gologin_sdk`)**: Orbita starts on this machine in about 5 s; the worker loads the extension
   from `EXTENSION_PATH`. Do **not** also upload the extension to that GoLogin profile, or two copies run.
+  Needs a paid plan (Professional and up have the API; the trial's API allowance runs out fast).
+  The SDK drops `IndexedDB` — WhatsApp Web's login — from every profile it uploads, and its `stop()`
+  leaves the browser running; `openGologinSdk` works around both (23 Oct 2026). Set the profile's
+  language to English (not "based on IP"), or WhatsApp Web loads in Hindi for an Indian IP.
 - **Cloud (`gologin_cloud`)**: opens in about 17 s; the extension must be uploaded to the profile
   (Extensions → Upload custom extension, the built `dist/` folder) and re-uploaded after every change.
   GoLogin's cloud machines have no audio input; the extension supplies the agent's voice as the only

@@ -5,6 +5,7 @@
     "": {
       "name": "agentsdr-call-worker",
       "dependencies": {
+        "adm-zip": "0.5.18",
         "cloakbrowser": "0.6.3",
         "gologin": "^3.0.6",
         "playwright-core": "^1.64.0",

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { rename, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
@@ -261,22 +261,77 @@ async function openGologinCloud(station: WorkerStation): Promise<StationBrowser>
   };
 }
 
+/**
+ * The GoLogin SDK, fixed in two places for WhatsApp Web (gologin 3.0.6, 23 Oct 2026):
+ *
+ * - Before it uploads a profile, `sanitizeProfile()` deletes `Default/IndexedDB`,
+ *   and the archiver leaves it out of the zip again, neither with an option to
+ *   keep it — and IndexedDB is where WhatsApp Web keeps its login keys. Every
+ *   open after a successful link came up with the account remembered but its
+ *   keys gone; WhatsApp's server refused the session (400) and WhatsApp logged
+ *   itself out (`?post_logout=1`). IndexedDB is set aside while the SDK
+ *   sanitizes and added back into the zip it uploads.
+ * - `stop()` never stops the browser: it uploads the profile and returns, and
+ *   Playwright's close() of a CDP-connected browser only disconnects. Every
+ *   job left an Orbita running, logged in, while its profile was uploaded
+ *   mid-write. The browser is closed (CDP Browser.close, then a kill) and
+ *   waited for before the upload.
+ */
 async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
   if (!station.gologinToken) throw new Error(`Station ${station.name}: the organization has no GoLogin API token`);
   if (!station.gologinProfileId) throw new Error(`Station ${station.name}: no GoLogin profile id`);
   const cfg = config();
   // Dynamic import so the local launcher works without the gologin package loaded.
   const { GoLogin } = await import("gologin");
+  type Sdk = InstanceType<typeof GoLogin> & { sanitizeProfile(): Promise<void>; processSpawned?: { pid?: number } };
+  const baseSanitize = (GoLogin.prototype as unknown as Sdk).sanitizeProfile;
+  type Zip = { addLocalFolder(localPath: string, zipPath: string): void; toBuffer(): Buffer };
+  const AdmZip = createRequire(import.meta.url)("adm-zip") as new (input?: Buffer) => Zip;
+  const baseZip = (GoLogin.prototype as unknown as { getProfileDataToUpdate(): Promise<Buffer> }).getProfileDataToUpdate;
+  class WhatsAppGoLogin extends GoLogin {
+    /** The archiver drops IndexedDB from the upload too (a hard-coded list); put it back. */
+    async getProfileDataToUpdate(): Promise<Buffer> {
+      const zip = new AdmZip(await baseZip.call(this));
+      const indexedDb = join(this.profilePath(), "Default", "IndexedDB");
+      if (await stat(indexedDb).then((s) => s.isDirectory(), () => false)) zip.addLocalFolder(indexedDb, "Default/IndexedDB");
+      return zip.toBuffer();
+    }
+
+    async sanitizeProfile(): Promise<void> {
+      const indexedDb = join(this.profilePath(), "Default", "IndexedDB");
+      const aside = join(this.profilePath(), "agentsdr-indexeddb");
+      const kept = await rename(indexedDb, aside).then(() => true, () => false);
+      try {
+        await baseSanitize.call(this as unknown as Sdk);
+      } finally {
+        if (kept) await rename(aside, indexedDb);
+      }
+    }
+  }
   const extra = chromiumArgs(cfg.extensionPath).filter((a) => !a.startsWith("--lang=") && !a.startsWith("--disable-extensions-except="));
   if (cfg.headless) extra.push("--headless=new");
-  const gl = new GoLogin({
+  const gl = new WhatsAppGoLogin({
     token: station.gologinToken,
     profile_id: station.gologinProfileId,
     // GoLogin merges a "--load-extension=" entry in extra_params with the extensions it installs itself.
     extra_params: extra,
     executablePath: cfg.chromiumPath,
-  });
+  }) as unknown as Sdk;
   let browser: Browser | null = null;
+  const shutDown = async () => {
+    const pid = gl.processSpawned?.pid;
+    if (browser) {
+      // Browser.close shuts Orbita down cleanly, so IndexedDB is flushed to disk.
+      const cdp = await browser.newBrowserCDPSession().catch(() => null);
+      await cdp?.send("Browser.close").catch(() => {});
+      await browser.close().catch(() => {});
+    }
+    if (pid && !(await exited(pid, 10_000))) {
+      process.kill(pid, "SIGKILL");
+      await exited(pid, 5_000);
+    }
+    await gl.stop();
+  };
   try {
     const { wsUrl } = await gl.start();
     if (!wsUrl) throw new Error("GoLogin started the profile but gave no websocket URL");
@@ -284,17 +339,23 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
     const context = browser.contexts()[0];
     if (!context) throw new Error("GoLogin browser has no browser context");
     await context.grantPermissions(["microphone"], { origin: "https://web.whatsapp.com" }).catch(() => {});
-    const b = browser;
-    return {
-      context,
-      close: async () => {
-        await b.close().catch(() => {});
-        await gl.stop();
-      },
-    };
+    return { context, close: shutDown };
   } catch (err) {
-    await browser?.close().catch(() => {});
-    await gl.stop().catch(() => {});
+    await shutDown().catch(() => {});
     throw err;
   }
+}
+
+/** Waits up to `timeoutMs` for process `pid` to be gone. */
+async function exited(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
 }
