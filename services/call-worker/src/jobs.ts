@@ -7,6 +7,7 @@ import { firstLine, openStationBrowser, type StationBrowser } from "./launchers"
 import { log } from "./log";
 import {
   backToQr,
+  dismissDialogs,
   loggedInPhone,
   isEnglish,
   isLoginScreen,
@@ -133,6 +134,8 @@ export async function runCall(job: CallJob): Promise<void> {
       return;
     }
     await safeState(station.id, { status: "active", error: null, ...(linkedPhone ? { linkedPhone } : {}) });
+    const dialogs = await dismissDialogs(page);
+    if (dialogs) log(`${tag}: closed ${dialogs} WhatsApp dialog(s) over the chats`);
 
     let worker: StationWorker;
     try {

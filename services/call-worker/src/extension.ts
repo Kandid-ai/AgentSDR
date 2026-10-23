@@ -28,29 +28,64 @@ function versionAtLeast(version: string, min: string): boolean {
 
 const isRecorderWorker = (w: Worker) => w.url().startsWith("chrome-extension://") && w.url().endsWith("/background.js");
 
+type Probe = { version: string | null; api: boolean };
+
+/** The extension's station version in this worker, and whether its chrome.* calls work. */
+async function probe(worker: Worker): Promise<Probe> {
+  return worker
+    .evaluate(async () => {
+      const version = (globalThis as unknown as { agentsdrStation?: { version: string } }).agentsdrStation?.version ?? null;
+      try {
+        await chrome.storage.session.get(null);
+        return { version, api: true };
+      } catch {
+        return { version, api: false };
+      }
+    })
+    .catch(() => ({ version: null, api: false }));
+}
+
+/**
+ * The recorder's background worker that is actually running. Reopening a
+ * GoLogin profile lists two of them (23 Oct 2026): a stale one carried over
+ * from the last session, which still evaluates — even reports its version —
+ * but whose every chrome.* call fails "No SW", and the live one. Taking the
+ * first found failed every call on a relinked number, so each candidate is
+ * tested with a real API call, newest first.
+ */
+async function liveWorker(context: BrowserContext, timeoutMs: number): Promise<{ worker: Worker; version: string } | null> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    for (const worker of context.serviceWorkers().filter(isRecorderWorker).reverse()) {
+      const { version, api } = await probe(worker);
+      if (version && api) return { worker, version };
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  } while (Date.now() < deadline);
+  return null;
+}
+
 export async function stationWorker(context: BrowserContext): Promise<StationWorker> {
-  let worker = context.serviceWorkers().find(isRecorderWorker);
-  if (!worker) {
-    worker = await context
-      .waitForEvent("serviceworker", { predicate: isRecorderWorker, timeout: 30_000 })
-      .catch(() => {
-        throw new Error("The recorder extension's service worker did not start — is the extension installed in this browser profile?");
-      });
+  if (!context.serviceWorkers().some(isRecorderWorker)) {
+    await context.waitForEvent("serviceworker", { predicate: isRecorderWorker, timeout: 30_000 }).catch(() => {
+      throw new Error("The recorder extension's service worker did not start — is the extension installed in this browser profile?");
+    });
   }
-  const w = worker;
-  let drainFailed = false;
   // The station object is set when the worker script finishes evaluating; allow a moment.
-  let version: string | null = null;
-  for (let i = 0; i < 20 && !version; i++) {
-    version = await w
-      .evaluate(() => (globalThis as unknown as { agentsdrStation?: { version: string } }).agentsdrStation?.version ?? null)
-      .catch(() => null);
-    if (!version) await new Promise((r) => setTimeout(r, 500));
-  }
-  if (!version) throw new Error("The recorder extension has no station mode (agentsdrStation missing) — update the extension");
+  const found = await liveWorker(context, 10_000);
+  if (!found) throw new Error("The recorder extension has no working station mode (agentsdrStation missing, or its worker is not running) — update the extension");
+  const { version } = found;
+  let current = found.worker;
   if (!versionAtLeast(version, MIN_EXTENSION_VERSION)) {
     throw new Error(`The recorder extension is ${version}; station mode needs ${MIN_EXTENSION_VERSION} or newer`);
   }
+  let drainFailed = false;
+  /** Chrome stops and restarts an extension's worker as it likes; a stale handle is swapped for the live one. */
+  const live = async (): Promise<Worker> => {
+    if ((await probe(current)).api) return current;
+    current = (await liveWorker(context, 5_000))?.worker ?? current;
+    return current;
+  };
 
   type Station = {
     startCall(r: unknown): Promise<unknown>;
@@ -60,15 +95,12 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
   };
   return {
     version,
-    startCall: (req) => w.evaluate((r) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.startCall(r), req) as Promise<StationResult>,
-    endCall: (callId) => w.evaluate((id) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.endCall(id), callId),
-    activeCall: () => w.evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.activeCall()) as Promise<ActiveCall>,
+    startCall: async (req) => (await live()).evaluate((r) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.startCall(r), req) as Promise<StationResult>,
+    endCall: async (callId) => (await live()).evaluate((id) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.endCall(id), callId),
+    activeCall: async () => (await live()).evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.activeCall()) as Promise<ActiveCall>,
     drainLog: async () => {
-      // Chrome stops and restarts an extension's service worker as it likes;
-      // a handle to a stopped one fails, so the current one is looked up.
-      const live = context.serviceWorkers().filter(isRecorderWorker).at(-1) ?? w;
       try {
-        return await live.evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.drainLog?.() ?? []);
+        return await (await live()).evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.drainLog?.() ?? []);
       } catch (error) {
         if (!drainFailed) console.warn(`[worker] could not read the extension's call log: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
         drainFailed = true;

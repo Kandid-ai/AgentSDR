@@ -216,6 +216,24 @@ export async function clickPhoneNumberLogin(page: Page): Promise<void> {
   throw new Error('no clickable "Log in with phone number"');
 }
 
+/**
+ * Closes WhatsApp's one-off dialogs ("What's new on WhatsApp Web" after a new
+ * link, 23 Oct 2026) that sit over the chats, so the extension's clicks reach
+ * the chat and its Voice call button. Returns how many it closed.
+ */
+export async function dismissDialogs(page: Page): Promise<number> {
+  let closed = 0;
+  for (let i = 0; i < 3; i++) {
+    const dialog = page.getByRole("dialog").filter({ visible: true }).first();
+    if (!(await dialog.isVisible().catch(() => false))) break;
+    const button = dialog.getByRole("button", { name: /^(continue|ok|got it|not now|close)$/i }).first();
+    if (!(await button.click({ timeout: 2_000 }).then(() => true, () => false))) await page.keyboard.press("Escape");
+    closed++;
+    await page.waitForTimeout(500);
+  }
+  return closed;
+}
+
 /** From the phone-number form back to the QR ("Log in with QR code"), if the form is up. */
 export async function backToQr(page: Page): Promise<void> {
   await page
