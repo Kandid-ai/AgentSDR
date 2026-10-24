@@ -25,6 +25,7 @@ import { pickInRange } from "@/lib/channels/rules";
 import { fillTemplate, renderEmail, unsubscribePostUrl } from "./render";
 import { isMigrationControlPaused } from "@/lib/migration/controls";
 import { isPersonDoNotContact } from "@/lib/crm/policies";
+import { mailboxHasAutoFollowUpWaiting } from "@/lib/crm/autoFollowUps";
 import { inOrg, currentOrganizationId, runInOrganization } from "@/lib/tenancy/scope";
 import { leadsInOrg } from "./orgScope";
 
@@ -122,6 +123,18 @@ async function tickOrganization(result: TickResult, now: Date, send: SendFunctio
     }
     if (!isWithinWorkingHours(mailbox.workingHours, now)) {
       result.skippedOutsideHours += 1;
+      continue;
+    }
+    // Automatic CRM follow-ups share the mailbox's day: they count toward its
+    // limit, which the queue (built once a day) cannot know about.
+    if (mailbox.todayEmailsSent >= mailbox.dailySendLimit) {
+      result.skippedThrottle += 1;
+      continue;
+    }
+    // A lead who replied and is owed a follow-up goes before a cold email:
+    // leave this turn to the follow-up sender (src/lib/crm/autoFollowUps.ts).
+    if (await mailboxHasAutoFollowUpWaiting(mailbox.emailAddress, now)) {
+      result.skippedThrottle += 1;
       continue;
     }
 

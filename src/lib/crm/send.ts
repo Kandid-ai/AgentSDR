@@ -39,6 +39,7 @@ import {
   crmSequenceStepRuns,
   crmSequenceSteps,
   type CrmChannel,
+  type CrmSendActorType,
 } from "./schema";
 import { assertCurrentCrmContext } from "./stateMachine";
 import { adoptCurrentSequenceStepInTransaction, interruptActiveSequenceRunInTransaction } from "./sequences";
@@ -238,6 +239,7 @@ async function prepareSend(tx: CrmTransaction, input: {
   revision: number;
   idempotencyKey: string;
   requestId: string;
+  actorType?: CrmSendActorType;
   actorRef?: string | null;
   ccEmails?: string[];
   bccEmails?: string[];
@@ -340,6 +342,7 @@ async function prepareSend(tx: CrmTransaction, input: {
         draftId: draft.id,
         idempotencyKey: input.idempotencyKey,
         status: "sending",
+        actorType: input.actorType ?? "authenticated_operator",
         requestId: input.requestId,
         provider,
         accountRef: conversation.accountRef,
@@ -349,7 +352,7 @@ async function prepareSend(tx: CrmTransaction, input: {
   await tx.update(crmDrafts).set({ status: "sending", updatedAt: new Date() }).where(eq(crmDrafts.id, draft.id));
   await appendCrmEvent(tx, {
     personId: record.personId, crmRecordId: record.id, pipelineId: record.pipelineId,
-    eventType: "message.sending", actorType: "authenticated_operator", actorRef: input.actorRef,
+    eventType: "message.sending", actorType: input.actorType ?? "authenticated_operator", actorRef: input.actorRef,
     toData: { draftId: draft.id, sendAttemptId: attempt.id },
     meta: { idempotencyKey: input.idempotencyKey, requestId: input.requestId },
     contextVersion: record.contextVersion,
@@ -560,7 +563,7 @@ async function finishSuccessfulSend(
       ));
     await appendCrmEvent(tx, {
       personId: record.personId, crmRecordId: record.id, pipelineId: record.pipelineId,
-      eventType: "message.sent", actorType: "authenticated_operator", actorRef,
+      eventType: "message.sent", actorType: reconciliation ? "authenticated_operator" : attempt.actorType, actorRef,
       fromData: { draftId: draft.id },
       toData: { messageId: message.id, sendAttemptId: attempt.id, workflowState, nextActionAt },
       meta: {
@@ -604,7 +607,7 @@ async function finishFailedSend(prepared: PreparedSend, error: unknown, definite
     await appendCrmEvent(tx, {
       personId: record.personId, crmRecordId: record.id, pipelineId: record.pipelineId,
       eventType: definite ? "message.failed" : "message.delivery_uncertain",
-      actorType: "authenticated_operator", actorRef,
+      actorType: attempt.actorType, actorRef,
       toData: { draftId: draft.id, sendAttemptId: attempt.id, status: attemptStatus },
       meta: { error: message }, contextVersion: record.contextVersion,
     });
@@ -617,6 +620,8 @@ export async function sendDraft(input: {
   revision: number;
   idempotencyKey: string;
   requestId: string;
+  /** "system" only for the automatic follow-up sender; a person's send is the default. */
+  actorType?: CrmSendActorType;
   actorRef?: string | null;
   ccEmails?: string[];
   bccEmails?: string[];

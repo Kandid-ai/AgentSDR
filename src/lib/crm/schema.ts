@@ -575,6 +575,13 @@ export const crmSequences = pgTable(
       (): AnyPgColumn => crmSequenceVersions.id,
       { onDelete: "restrict" },
     ),
+    /**
+     * Follow-up drafts of this sequence go out on their own, paced per sending
+     * account (src/lib/crm/autoFollowUps.ts); the immediate reply always waits
+     * for a person. Not versioned: switching it needs no re-publish.
+     * scripts/add-crm-auto-follow-ups.ts.
+     */
+    autoSendFollowUps: boolean("auto_send_follow_ups").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -866,6 +873,12 @@ export const crmDrafts = pgTable(
     request: jsonb("request").$type<Record<string, unknown> | null>(),
     response: jsonb("response").$type<Record<string, unknown> | null>(),
     error: text("error"),
+    /**
+     * Set on a follow-up draft whose sequence sends automatically: from this
+     * time the sender may send it when its account's turn comes. Cleared when
+     * a person takes it over ("Review before sending"). Kept after the send.
+     */
+    autoSendAt: timestamp("auto_send_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -894,6 +907,9 @@ export const crmDrafts = pgTable(
       .on(table.sequenceStepRunId)
       .where(sql`${table.sequenceStepRunId} IS NOT NULL`),
     index("crm_drafts_record_status_idx").on(table.crmRecordId, table.status),
+    index("crm_drafts_auto_send_idx")
+      .on(table.autoSendAt)
+      .where(sql`${table.autoSendAt} IS NOT NULL AND ${table.status} = 'awaiting_review'`),
     check("crm_drafts_context_chk", sql`${table.expectedContextVersion} >= 0`),
     check("crm_drafts_revision_chk", sql`${table.revision} > 0`),
     check("crm_drafts_channel_chk", sql`${table.channel} IN ('email', 'linkedin', 'whatsapp')`),
@@ -911,6 +927,8 @@ export type CrmSendAttemptStatus =
   | "delivery_uncertain"
   | "reconciled";
 
+export type CrmSendActorType = "authenticated_operator" | "system";
+
 export const crmSendAttempts = pgTable(
   "crm_send_attempts",
   {
@@ -918,7 +936,8 @@ export const crmSendAttempts = pgTable(
     draftId: uuid("draft_id").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     status: text("status").notNull().default("prepared").$type<CrmSendAttemptStatus>(),
-    actorType: text("actor_type").notNull().default("authenticated_operator").$type<"authenticated_operator">(),
+    /** system: the automatic follow-up sender (src/lib/crm/autoFollowUps.ts). */
+    actorType: text("actor_type").notNull().default("authenticated_operator").$type<CrmSendActorType>(),
     requestId: text("request_id").notNull(),
     provider: text("provider").notNull(),
     accountRef: text("account_ref").notNull(),
@@ -945,7 +964,10 @@ export const crmSendAttempts = pgTable(
     index("crm_send_attempts_draft_created_idx").on(table.draftId, table.createdAt),
     check("crm_send_attempts_idempotency_chk", sql`length(btrim(${table.idempotencyKey})) > 0`),
     check("crm_send_attempts_status_chk", sql`${table.status} IN ('prepared', 'sending', 'sent', 'failed', 'delivery_uncertain', 'reconciled')`),
-    check("crm_send_attempts_actor_chk", sql`${table.actorType} = 'authenticated_operator'`),
+    check("crm_send_attempts_actor_chk", sql`${table.actorType} IN ('authenticated_operator', 'system')`),
+    index("crm_send_attempts_system_account_idx")
+      .on(table.accountRef, table.createdAt)
+      .where(sql`${table.actorType} = 'system'`),
     check("crm_send_attempts_request_id_chk", sql`length(btrim(${table.requestId})) > 0`),
     check("crm_send_attempts_provider_chk", sql`length(btrim(${table.provider})) > 0`),
     check("crm_send_attempts_account_chk", sql`length(btrim(${table.accountRef})) > 0`),

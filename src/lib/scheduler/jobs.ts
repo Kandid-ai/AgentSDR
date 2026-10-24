@@ -8,6 +8,7 @@ import { runOutreach } from "@/jobs/runOutreach";
 import { runSearchQueue } from "@/jobs/runSearchQueue";
 import { startTrackedJob } from "@/lib/linkedin/jobTracker";
 import { jobRuns } from "@/lib/linkedin/schema";
+import { runCrmAutoFollowUps } from "@/lib/crm/autoFollowUps";
 import { pruneClaims } from "./claims";
 import type { PlatformJobName } from "./schedules";
 
@@ -51,6 +52,10 @@ export async function startPlatformJob(name: PlatformJobName): Promise<StartedJo
         summary = await replayLinkedinWebhooks(100, undefined);
       });
       return { body: { ok: true, runId, summary }, done };
+    }
+    case "crm-auto-follow-ups": {
+      const summary = await runCrmAutoFollowUps();
+      return { body: { ok: true, summary }, done: finished };
     }
     case "history-prune": {
       // Shared history, once a day for the whole platform (it used to ride

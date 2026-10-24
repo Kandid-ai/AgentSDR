@@ -25,6 +25,7 @@ import {
   crmDrafts,
   crmRecords,
   crmSequenceRuns,
+  crmSequences,
   crmSequenceStepRuns,
   crmSequenceSteps,
   crmSettings,
@@ -261,6 +262,8 @@ async function loadDraftContext(
 async function finishGeneratedDraft(
   prepared: PreparedDraft,
   generated: Awaited<ReturnType<typeof generateCrmDraft>>,
+  /** A person asked for this draft (Regenerate), so it waits for them. */
+  options: { personRequested?: boolean } = {},
 ): Promise<CrmDraft> {
   return withCrmTransaction(async (tx) => {
     const [draft] = await tx.select().from(crmDrafts)
@@ -312,13 +315,34 @@ async function finishGeneratedDraft(
       });
       if (citations.length) await tx.insert(crmDraftKnowledgeCitations).values(citations);
     }
+    let autoSend = false;
     if (draft.sequenceStepRunId) {
       await tx.update(crmSequenceStepRuns).set({ status: "awaiting_review", lastError: null, updatedAt: now })
         .where(eq(crmSequenceStepRuns.id, draft.sequenceStepRunId));
+      // A follow-up of a sequence that sends on its own goes to the sender,
+      // not to a person — unless a person asked for this rewrite, in which
+      // case they are reviewing it already.
+      if (!options.personRequested) {
+        const [scope] = await tx.select({ stepType: crmSequenceSteps.stepType, autoSend: crmSequences.autoSendFollowUps })
+          .from(crmSequenceStepRuns)
+          .innerJoin(crmSequenceSteps, eq(crmSequenceSteps.id, crmSequenceStepRuns.sequenceStepId))
+          .innerJoin(crmSequenceRuns, eq(crmSequenceRuns.id, crmSequenceStepRuns.sequenceRunId))
+          .innerJoin(crmSequences, eq(crmSequences.id, crmSequenceRuns.sequenceId))
+          .where(eq(crmSequenceStepRuns.id, draft.sequenceStepRunId)).limit(1);
+        autoSend = scope?.stepType === "follow_up" && scope.autoSend;
+      }
     }
-    // The draft is what the person has to act on, so it is due now.
-    await tx.update(crmRecords).set({ workflowState: "action_required", nextActionAt: now, updatedAt: now })
-      .where(eq(crmRecords.id, record.id));
+    if (autoSend) {
+      // Off the person's desk: it waits for its account's turn
+      // (autoFollowUps.ts), where "Review before sending" can still stop it.
+      await tx.update(crmDrafts).set({ autoSendAt: now }).where(eq(crmDrafts.id, draft.id));
+      await tx.update(crmRecords).set({ workflowState: "waiting", nextActionAt: null, updatedAt: now })
+        .where(eq(crmRecords.id, record.id));
+    } else {
+      // The draft is what the person has to act on, so it is due now.
+      await tx.update(crmRecords).set({ workflowState: "action_required", nextActionAt: now, updatedAt: now })
+        .where(eq(crmRecords.id, record.id));
+    }
     await appendCrmEvent(tx, {
       personId: record.personId,
       crmRecordId: record.id,
@@ -330,10 +354,11 @@ async function finishGeneratedDraft(
         provider: generated.provider,
         model: generated.model,
         ...(prepared.promptInput.revision ? { reviewerFeedback: prepared.promptInput.revision.reviewerFeedback } : {}),
+        ...(autoSend ? { autoSend: true } : {}),
       },
       contextVersion: record.contextVersion,
     });
-    return updated;
+    return autoSend ? { ...updated, autoSendAt: now } : updated;
   });
 }
 
@@ -495,7 +520,7 @@ export async function generateDraftForStep(
   const prepared = await withCrmTransaction((tx) => loadDraftContext(tx, stepRunId, regenerating));
   try {
     const generated = await generateCrmDraft({ ...prepared.promptInput, revision }, dependencies);
-    return await finishGeneratedDraft(prepared, generated);
+    return await finishGeneratedDraft(prepared, generated, { personRequested: regenerating });
   } catch (error) {
     await failDraftGeneration(prepared.draft.id, error);
     throw error;

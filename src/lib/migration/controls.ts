@@ -17,6 +17,7 @@ export type MigrationControl =
   | "emailOutbound"
   | "linkedinOutbound"
   | "whatsappOutbound"
+  | "crmAutoSend"
   | "linkedinResolution"
   | "linkedinSearch"
   | "gridWorker";
@@ -25,6 +26,8 @@ const CONTROL_ENV: Record<MigrationControl, string> = {
   emailOutbound: "PAUSE_EMAIL_OUTBOUND",
   linkedinOutbound: "PAUSE_LINKEDIN_OUTBOUND",
   whatsappOutbound: "PAUSE_WHATSAPP_OUTBOUND",
+  /** Automatic CRM follow-ups (src/lib/crm/autoFollowUps.ts); drafts wait until it is lifted. */
+  crmAutoSend: "PAUSE_CRM_AUTOSEND",
   linkedinResolution: "PAUSE_LINKEDIN_RESOLUTION",
   linkedinSearch: "PAUSE_LINKEDIN_SEARCH",
   gridWorker: "PAUSE_GRID_WORKER",

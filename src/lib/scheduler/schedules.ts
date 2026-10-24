@@ -15,7 +15,12 @@
  */
 import { dailyAt, everyMinutes, type Schedule } from "./slots";
 
-export type PlatformJobName = "linkedin-run-outreach" | "linkedin-run-search-queue" | "linkedin-replay-webhooks" | "history-prune";
+export type PlatformJobName =
+  | "linkedin-run-outreach"
+  | "linkedin-run-search-queue"
+  | "linkedin-replay-webhooks"
+  | "crm-auto-follow-ups"
+  | "history-prune";
 
 export type PlatformJob = {
   name: PlatformJobName;
@@ -54,6 +59,14 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     enabled: true,
     endpoint: "/api/linkedin/jobs/replay-webhooks",
     description: "Retry LinkedIn webhook deliveries that failed",
+  },
+  {
+    // Each run sends at most one follow-up per sending account; the
+    // per-account gap (Sending rules, default 30 min) does the spacing.
+    name: "crm-auto-follow-ups",
+    schedule: everyMinutes(5),
+    enabled: true,
+    description: "Automatic CRM follow-ups, one per sending account at a time (sequences with automatic follow-ups on)",
   },
   {
     name: "history-prune",

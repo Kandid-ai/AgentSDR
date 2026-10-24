@@ -305,6 +305,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
         nextActionAt: row.record.nextActionAt,
         draftStatus: draft?.status ?? null,
         draftStepType: draftStep?.stepType ?? null,
+        draftAutoSend: Boolean(draft?.autoSendAt),
         classificationStatus: classification?.status ?? null,
         hasActiveRun: Boolean(run),
       }),

@@ -843,12 +843,25 @@ export function parseUpdateSequenceInput(value: unknown): {
   name?: string;
   description?: string | null;
   status?: CrmSequenceStatus;
+  autoSendFollowUps?: boolean;
   steps?: SequenceStepInput[];
 } {
   assertObject(value);
-  assertExactKeys(value, ["name", "description", "status", "steps"]);
-  const parsed: { name?: string; description?: string | null; status?: CrmSequenceStatus; steps?: SequenceStepInput[] } = {};
+  assertExactKeys(value, ["name", "description", "status", "autoSendFollowUps", "steps"]);
+  const parsed: {
+    name?: string;
+    description?: string | null;
+    status?: CrmSequenceStatus;
+    autoSendFollowUps?: boolean;
+    steps?: SequenceStepInput[];
+  } = {};
   if (value.name !== undefined) parsed.name = parseRequiredText(value.name, "name", 160);
+  if (value.autoSendFollowUps !== undefined) {
+    if (typeof value.autoSendFollowUps !== "boolean") {
+      throw new CrmConfigurationValidationError("autoSendFollowUps must be true or false");
+    }
+    parsed.autoSendFollowUps = value.autoSendFollowUps;
+  }
   if (value.description !== undefined) parsed.description = parseOptionalText(value.description, "description", 4_000) ?? null;
   if (value.status !== undefined) parsed.status = configStatus(value.status);
   if (value.steps !== undefined) parsed.steps = parseSequenceSteps(value.steps);
@@ -870,6 +883,13 @@ export async function updateSequence(id: string, value: unknown) {
         .where(and(inOrg(crmSequences), eq(crmSequences.id, id))).returning();
       if (!row) throw new Error("CRM sequence update did not return a row");
       updated = row;
+    }
+    if (sequence.autoSendFollowUps && metadata.autoSendFollowUps === false) {
+      // Switched off: follow-ups already drafted for the sender become
+      // ordinary drafts for a person to review. (Imported here: autoFollowUps
+      // reaches this module through send.ts.)
+      const { handSequenceAutoFollowUpsToRepInTransaction } = await import("./autoFollowUps");
+      await handSequenceAutoFollowUpsToRepInTransaction(tx, { sequenceId: id });
     }
     if (steps !== undefined) {
       const [draft] = await tx.select().from(crmSequenceVersions).where(and(

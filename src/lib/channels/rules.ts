@@ -118,6 +118,19 @@ export const CHANNEL_RULES = {
       help: "When a newly connected mailbox may send. Each mailbox can change its own hours in Email → Accounts.",
       default: { timezone: "Asia/Kolkata", days: [1, 2, 3, 4, 5], start: "09:00", end: "18:00" },
     },
+    {
+      // Read by the CRM's automatic follow-up sender (src/lib/crm/autoFollowUps.ts).
+      key: "crmFollowUpGapMinutes",
+      kind: "number",
+      label: "Gap between automatic CRM follow-ups, per mailbox",
+      help: "A CRM sequence set to send its follow-ups automatically sends at most one from each mailbox in this time, oldest first, so follow-ups that fall due together go out spread over the day.",
+      unit: "minutes",
+      default: 30,
+      min: 5,
+      max: 720,
+      safe: { below: 15 },
+      warning: "Follow-ups less than 15 minutes apart from one mailbox look automated.",
+    },
   ],
   linkedin: [
     {
@@ -226,13 +239,26 @@ export const CHANNEL_RULES = {
       default: null,
       optional: true,
     },
+    {
+      // Read by the CRM's automatic follow-up sender (src/lib/crm/autoFollowUps.ts).
+      key: "crmFollowUpGapMinutes",
+      kind: "number",
+      label: "Gap between automatic CRM follow-ups, per account",
+      help: "A CRM sequence set to send its follow-ups automatically sends at most one from each account in this time, oldest first, so follow-ups that fall due together go out spread over the day.",
+      unit: "minutes",
+      default: 30,
+      min: 5,
+      max: 720,
+      safe: { below: 15 },
+      warning: "Follow-ups less than 15 minutes apart from one account look automated.",
+    },
   ],
   whatsapp: [
     {
       key: "sendingHours",
       kind: "hours",
-      label: "Sending hours for campaigns",
-      help: "Any time unless you set hours here. Campaign messages only go out inside these hours; messages you send yourself are not affected.",
+      label: "Sending hours for campaigns and automatic follow-ups",
+      help: "Any time unless you set hours here. Campaign messages and automatic CRM follow-ups only go out inside these hours; messages you send yourself are not affected.",
       default: null,
       optional: true,
     },
@@ -272,6 +298,19 @@ export const CHANNEL_RULES = {
       max: 600,
       safe: { below: 10 },
       warning: "Messages sent faster than every 10 seconds look automated.",
+    },
+    {
+      // Read by the CRM's automatic follow-up sender (src/lib/crm/autoFollowUps.ts).
+      key: "crmFollowUpGapMinutes",
+      kind: "number",
+      label: "Gap between automatic CRM follow-ups, per number",
+      help: "A CRM sequence set to send its follow-ups automatically sends at most one from each number in this time, oldest first, so follow-ups that fall due together go out spread over the day.",
+      unit: "minutes",
+      default: 30,
+      min: 5,
+      max: 720,
+      safe: { below: 15 },
+      warning: "Follow-ups less than 15 minutes apart from one number look automated.",
     },
   ],
   general: [

@@ -16,6 +16,7 @@ import {
 } from "@remixicon/react";
 import * as Badge from "@/components/alignui/badge";
 import * as Button from "@/components/alignui/button";
+import * as Checkbox from "@/components/alignui/checkbox";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Select from "@/components/alignui/select";
 import { Frame, FrameFooter, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
@@ -126,7 +127,7 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [busy, setBusy] = useState<"" | "save" | "publish" | "duplicate">("");
+  const [busy, setBusy] = useState<"" | "save" | "publish" | "duplicate" | "auto">("");
   const [dirty, setDirty] = useState(false);
 
   const load = useCallback(async (showLoading = true) => {
@@ -157,6 +158,25 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
     else setDescription(value);
     setDirty(true);
     setNotice("");
+  };
+
+  // Not versioned: the switch applies to the sequence at once, with no publish.
+  const toggleAutoSend = async (value: boolean) => {
+    setBusy("auto");
+    setError("");
+    setNotice("");
+    try {
+      await crmFetch(`/sequences/${sequenceId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ autoSendFollowUps: value }),
+      });
+      setSequence((current) => ({ ...current, autoSendFollowUps: value }));
+      setNotice(value ? "Follow-ups will now send automatically." : "Automatic follow-ups turned off. Waiting follow-ups are now in Action required.");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy("");
+    }
   };
 
   const updateStep = (index: number, patch: Partial<EditorStep>) => {
@@ -384,6 +404,18 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
               />
             </label>
           </div>
+          <label className="flex cursor-pointer items-start gap-3 text-paragraph-sm">
+            <Checkbox.Root
+              className="mt-0.5"
+              checked={sequence.autoSendFollowUps === true}
+              disabled={Boolean(busy) || archived}
+              onCheckedChange={(checked) => void toggleAutoSend(checked === true)}
+            />
+            <span>
+              <span className="block text-label-sm text-text-strong-950">Send follow-ups automatically</span>
+              <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">After the immediate reply goes out from AgentSDR, this sequence&apos;s follow-ups are drafted by the AI and sent on their own — at most one every 30 minutes (by default; see Sending rules) from each mailbox, LinkedIn account or WhatsApp number, inside its sending hours. The immediate reply always waits for you. Turning this off moves waiting follow-ups to Action required.</span>
+            </span>
+          </label>
           {validationError && <p role="alert" className="text-label-xs text-error-base">{validationError}</p>}
         </FramePanel>
       </Frame>

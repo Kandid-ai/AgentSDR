@@ -212,6 +212,22 @@ describe("due state", () => {
     );
   });
 
+  it("calls a follow-up the sender will send on its own automatic", () => {
+    assert.equal(
+      crmDueState({ ...base, workflowState: "waiting", draftStatus: "awaiting_review", draftStepType: "follow_up", draftAutoSend: true, now }),
+      "auto_follow_up",
+    );
+    // A reply never goes out on its own, and a flag off the sender keeps its old label.
+    assert.equal(
+      crmDueState({ ...base, workflowState: "action_required", draftStatus: "awaiting_review", draftStepType: "reply", draftAutoSend: true, now }),
+      "immediate_reply",
+    );
+    assert.equal(
+      crmDueState({ ...base, workflowState: "action_required", draftStatus: "awaiting_review", draftStepType: "follow_up", draftAutoSend: false, now }),
+      "follow_up_ready",
+    );
+  });
+
   it("treats an error and an undecided classification the same way", () => {
     assert.equal(crmDueState({ ...base, workflowState: "error", now }), "immediate_reply");
     assert.equal(crmDueState({ ...base, classificationStatus: "proposed", now }), "immediate_reply");

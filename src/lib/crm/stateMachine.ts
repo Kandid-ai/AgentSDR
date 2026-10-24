@@ -184,6 +184,7 @@ export function replyClassificationDecision(
 export type CrmDueState =
   | "immediate_reply"
   | "follow_up_ready"
+  | "auto_follow_up"
   | "past_due"
   | "follow_up"
   | "pending"
@@ -195,6 +196,8 @@ export function crmDueState(input: {
   draftStatus: string | null;
   /** Step the awaiting draft was written for; null for a hand-written draft. */
   draftStepType?: "reply" | "follow_up" | null;
+  /** The awaiting draft has an automatic-send time: the sender, not a person, will send it. */
+  draftAutoSend?: boolean;
   classificationStatus: string | null;
   hasActiveRun: boolean;
   now?: Date;
@@ -206,6 +209,9 @@ export function crmDueState(input: {
     // A drafted follow-up is just as ready to send, but it is not a reply the
     // lead is waiting on — calling it "Immediate reply" made every record
     // whose reply had gone out look as if it had not.
+    if (input.draftStatus === "awaiting_review" && input.draftStepType === "follow_up" && input.draftAutoSend) {
+      return "auto_follow_up";
+    }
     return input.draftStatus === "awaiting_review" && input.draftStepType === "follow_up"
       ? "follow_up_ready"
       : "immediate_reply";
@@ -220,6 +226,7 @@ export function crmDueState(input: {
 export const CRM_DUE_STATE_LABELS: Readonly<Record<CrmDueState, string>> = {
   immediate_reply: "Immediate reply",
   follow_up_ready: "Follow-up ready",
+  auto_follow_up: "Sending automatically",
   past_due: "Past due",
   follow_up: "Follow-up",
   pending: "Pending",

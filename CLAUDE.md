@@ -169,6 +169,27 @@ The `WHATSAPP_*` constants in `src/lib/whatsapp/contract.ts` remain only as
 the defaults the extension shows (and agentsdr.ai, which copies this file) (that file must stay
 import-free); `rules.test.ts` keeps them equal to the registry.
 
+## CRM follow-ups: the reply is a person's, the follow-ups can send themselves
+
+A reply's AI classification always applies (`replyClassificationDecision`,
+`src/lib/crm/stateMachine.ts`; call transcripts keep the stricter
+`classificationApplicationDecision`), and its stage's sequence drafts the
+immediate reply. The rep may change the stage, then sends the reply from the
+CRM — AI draft or their own. That send (or confirming the stage after it)
+starts the stage's follow-ups; a reply typed outside AgentSDR does not.
+
+A sequence with **Send follow-ups automatically** (`crm_sequences.
+auto_send_follow_ups`, off by default) hands its follow-up drafts to
+`src/lib/crm/autoFollowUps.ts` (`crm_drafts.auto_send_at`) instead of Action
+required. The platform job `crm-auto-follow-ups` (every 5 min, production
+only, `PAUSE_CRM_AUTOSEND`) sends at most one per sending account per run,
+oldest first, through `sendDraft` with actor `system`, and only inside the
+account's hours and its `crmFollowUpGapMinutes` Sending rule (default 30).
+Email follow-ups share the mailbox's gap and daily limit with campaigns, and
+the campaign scheduler yields a mailbox's turn to a waiting follow-up. A draft
+the sender cannot send within 48 h, or that a person takes over ("Review
+before sending"), goes to Action required like any other.
+
 ## Drizzle is the only ORM
 
 The LinkedIn subsystem was migrated from Prisma to Drizzle. Prisma is gone —

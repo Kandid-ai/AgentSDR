@@ -665,13 +665,14 @@ export function describeAction(action: Action, categories: Data[], pipeline: boo
     : stage === "waiting" ? "purple"
     : urgent ? "red"
     : dueState === "follow_up_ready" ? "orange"
+    : dueState === "auto_follow_up" ? "blue"
     : dueState === "follow_up" ? "blue"
     : "gray";
   const dueIcon: IconType = stage === "exhausted" ? STAGE_META.exhausted.icon
     : stage === "waiting" ? STAGE_META.waiting.icon
     : dueState === "past_due" || followUpOverdue ? RiAlarmWarningFill
     : dueState === "immediate_reply" ? RiFlashlightFill
-    : dueState === "follow_up_ready" ? RiMailSendLine
+    : dueState === "follow_up_ready" || dueState === "auto_follow_up" ? RiMailSendLine
     : dueState === "follow_up" ? RiCalendarScheduleLine
     : RiTimeLine;
   const name = displayName({ ...action, ...record });
