@@ -7,7 +7,7 @@ import {
 } from "./conversations";
 import { appendCrmEvent, type CrmEventActor } from "./events";
 import type { CrmExecutor, CrmTransaction } from "./repository";
-import { lockCrmRecord, type CrmRecord } from "./records";
+import { draftInOrg, lockCrmRecord, type CrmRecord } from "./records";
 import {
   crmClassifications,
   crmConversationMessages,
@@ -15,6 +15,7 @@ import {
   crmDrafts,
   crmRecords,
   type CrmChannel,
+  type CrmClassificationStatus,
 } from "./schema";
 import { interruptActiveSequenceRunInTransaction } from "./sequences";
 import { inOrg } from "@/lib/tenancy/scope";
@@ -124,6 +125,42 @@ export async function inboundAnsweredSince(
     ))
     .limit(1);
   return Boolean(answer);
+}
+
+/**
+ * Where a reply sent from AgentSDR outside any sequence step leaves the
+ * record. Usually idle — but while the latest reply's category is still a
+ * proposal, the record stays in Action required so a person confirms it:
+ * confirming is what starts that stage's follow-ups. Pure, for the tests.
+ */
+export function workflowStateAfterOffScriptSend(
+  latestClassificationStatus: CrmClassificationStatus | null,
+): "idle" | "action_required" {
+  return latestClassificationStatus === "proposed" ? "action_required" : "idle";
+}
+
+/**
+ * Whether the rep answered this inbound message from AgentSDR: a CRM draft
+ * written for it — AI or hand-written — went out through sendDraft. Only
+ * that kind of answer starts the stage's follow-ups; one typed outside the
+ * platform (phone, WhatsApp Web, Gmail) leaves them off.
+ */
+export async function inboundAnsweredFromCrm(
+  executor: CrmExecutor,
+  recordId: string,
+  inboundMessageId: string,
+): Promise<boolean> {
+  const [sent] = await executor
+    .select({ id: crmDrafts.id })
+    .from(crmDrafts)
+    .where(and(
+      draftInOrg(),
+      eq(crmDrafts.crmRecordId, recordId),
+      eq(crmDrafts.replyForMessageId, inboundMessageId),
+      eq(crmDrafts.status, "sent"),
+    ))
+    .limit(1);
+  return Boolean(sent);
 }
 
 /**

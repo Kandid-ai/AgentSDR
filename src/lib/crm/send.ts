@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { inboxContacts, inboxMessages } from "@/lib/inbox/schema";
 import { people } from "@/lib/leads/schema";
@@ -42,6 +42,7 @@ import {
 } from "./schema";
 import { assertCurrentCrmContext } from "./stateMachine";
 import { adoptCurrentSequenceStepInTransaction, interruptActiveSequenceRunInTransaction } from "./sequences";
+import { workflowStateAfterOffScriptSend } from "./manualOutbound";
 
 export type NormalizedCrmSendResult = {
   provider: "gmail" | "unipile";
@@ -524,7 +525,15 @@ async function finishSuccessfulSend(
         }
       }
     } else if (record.contextVersion === draft.expectedContextVersion) {
-      workflowState = "idle";
+      const [classification] = record.latestInboundMessageId
+        ? await tx.select({ status: crmClassifications.status }).from(crmClassifications)
+          .where(and(
+            eq(crmClassifications.crmRecordId, record.id),
+            eq(crmClassifications.messageId, record.latestInboundMessageId),
+          ))
+          .orderBy(desc(crmClassifications.createdAt)).limit(1)
+        : [];
+      workflowState = workflowStateAfterOffScriptSend(classification?.status ?? null);
       await interruptActiveSequenceRunInTransaction(tx, {
         recordId: record.id,
         reason: "manual_outbound_send",

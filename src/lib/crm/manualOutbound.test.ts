@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { latestInboundAnswered, manualOutboundDecision, type ManualOutboundRecordState } from "./manualOutbound";
+import {
+  latestInboundAnswered,
+  manualOutboundDecision,
+  workflowStateAfterOffScriptSend,
+  type ManualOutboundRecordState,
+} from "./manualOutbound";
 import type { CrmWorkflowState } from "./schema";
 
 const replyAt = new Date("2026-09-02T09:00:00.000Z");
@@ -58,5 +63,18 @@ describe("latestInboundAnswered", () => {
     expect(latestInboundAnswered(record({ lastOutboundAt: before }))).toBe(false);
     expect(latestInboundAnswered(record({ lastOutboundAt: after }))).toBe(true);
     expect(latestInboundAnswered(record({ latestInboundMessageId: null, lastOutboundAt: after }))).toBe(false);
+  });
+});
+
+describe("workflowStateAfterOffScriptSend", () => {
+  test("a reply sent before its category is confirmed keeps the record in the queue", () => {
+    // Confirming the proposal is what starts that stage's follow-ups.
+    expect(workflowStateAfterOffScriptSend("proposed")).toBe("action_required");
+  });
+
+  test("otherwise the reply settles the record", () => {
+    for (const status of ["auto_applied", "accepted", "overridden", "rejected", "stale", "failed", null] as const) {
+      expect(workflowStateAfterOffScriptSend(status)).toBe("idle");
+    }
   });
 });

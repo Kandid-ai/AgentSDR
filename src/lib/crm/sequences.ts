@@ -423,6 +423,33 @@ export function startSequenceRun(input: StartSequenceRunInput) {
   return withCrmTransaction((tx) => startSequenceRunInTransaction(tx, input));
 }
 
+/**
+ * The record's latest reply is already answered, so its stage's sequence
+ * starts at the first follow-up and the record waits for it to come due —
+ * idle when the stage has no follow-ups (or no sequence) to send.
+ */
+export async function startFollowUpsInTransaction(
+  tx: CrmTransaction,
+  input: {
+    recordId: string;
+    conversationId: string;
+    triggerMessageId: string;
+    expectedContextVersion: number;
+    actorType: "ai" | "authenticated_operator";
+    actorRef?: string | null;
+  },
+) {
+  const started = await startSequenceRunInTransaction(tx, { ...input, skipReply: true });
+  const firstFollowUp = started?.stepRuns[0] ?? null;
+  const [record] = await tx.update(crmRecords).set({
+    workflowState: firstFollowUp ? "waiting" : "idle",
+    nextActionAt: firstFollowUp?.dueAt ?? null,
+    updatedAt: new Date(),
+  }).where(eq(crmRecords.id, input.recordId)).returning();
+  if (!record) throw new Error("CRM record update did not return a row");
+  return { record, sequenceRun: started };
+}
+
 export async function setRecordSequenceOverride(input: {
   recordId: string;
   sequenceId: string | null;

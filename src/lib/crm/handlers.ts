@@ -12,7 +12,7 @@ import type {
 import { generateDraftForStep, generateFallbackDraft } from "./drafts";
 import { loadCallContextMessages } from "./callHistory";
 import { appendCrmEvent } from "./events";
-import { inboundAnsweredSince, settleAnsweredRecordInTransaction } from "./manualOutbound";
+import { inboundAnsweredFromCrm, inboundAnsweredSince, settleAnsweredRecordInTransaction } from "./manualOutbound";
 import { setPersonDoNotContactInTransaction } from "./policies";
 import { enqueueCrmJobInTransaction, type CrmJob } from "./queue";
 import { CrmConflictError, withCrmTransaction } from "./repository";
@@ -32,7 +32,7 @@ import {
   crmSubcategories,
   type CrmCategoryKey,
 } from "./schema";
-import { startSequenceRunInTransaction } from "./sequences";
+import { startFollowUpsInTransaction, startSequenceRunInTransaction } from "./sequences";
 import { PermanentCrmJobError, registerCrmJobHandlers } from "./worker";
 import { inOrg } from "@/lib/tenancy/scope";
 
@@ -294,8 +294,23 @@ export async function handleClassificationJob(
       }
       if (!appliedResult.applied || appliedResult.stale || context.dncIntent) return;
       const current = await lockCrmRecord(tx, context.recordId);
-      // The rep answered while this ran — e.g. straight from their phone on
-      // WhatsApp (manualOutbound.ts): keep the classification, skip the draft.
+      // The rep answered from AgentSDR while this ran: that was the immediate
+      // reply, so the stage's follow-ups take it from here.
+      if (await inboundAnsweredFromCrm(tx, current.id, job.entityId)) {
+        await startFollowUpsInTransaction(tx, {
+          recordId: current.id,
+          conversationId: context.conversationId,
+          triggerMessageId: job.entityId,
+          expectedContextVersion: current.contextVersion,
+          actorType: "ai",
+        });
+        await tx.update(crmClassifications).set({ acknowledgedAt: new Date(), updatedAt: new Date() })
+          .where(eq(crmClassifications.id, appliedResult.classification.id));
+        return;
+      }
+      // The rep answered outside AgentSDR — e.g. straight from their phone on
+      // WhatsApp (manualOutbound.ts): keep the classification, skip the draft
+      // and the follow-ups.
       if (await inboundAnsweredSince(tx, current.id, job.entityId)) {
         await settleAnsweredRecordInTransaction(tx, current, {
           reason: "answered_outside_crm",

@@ -20,7 +20,12 @@ import {
   crmSequenceRuns,
   type CrmCategoryKey,
 } from "./schema";
-import { interruptActiveSequenceRunInTransaction, startSequenceRunInTransaction } from "./sequences";
+import { inboundAnsweredFromCrm } from "./manualOutbound";
+import {
+  interruptActiveSequenceRunInTransaction,
+  startFollowUpsInTransaction,
+  startSequenceRunInTransaction,
+} from "./sequences";
 import { STAGE_MOVED_EVENT, type StageMoveNext } from "./stageMove";
 import { inOrg } from "@/lib/tenancy/scope";
 
@@ -85,10 +90,14 @@ export async function applyHumanClassification(input: {
       source: "human",
       actorType: "authenticated_operator",
     });
+    // Confirmed after the rep already replied from AgentSDR: that reply was
+    // the immediate one, so the confirmed stage continues with its
+    // follow-ups instead of drafting a second reply.
+    const repliedFromCrm = await inboundAnsweredFromCrm(tx, before.id, before.latestInboundMessageId);
     // A re-applied classification keeps its id, and its draft job has
     // usually already succeeded for the previous run's step.
     return restartRecordWorkInTransaction(tx, updated, {
-      draftJob: { entityId: classificationId, requeueCompleted: true },
+      draftJob: repliedFromCrm ? null : { entityId: classificationId, requeueCompleted: true },
       actorRef: input.actorRef,
     });
   });
@@ -132,26 +141,18 @@ async function restartRecordWorkInTransaction(
       eq(crmConversations.crmRecordId, updated.id),
     )).limit(1);
   if (!conversation) throw new CrmConflictError("Latest inbound conversation was not found");
-  const started = await startSequenceRunInTransaction(tx, {
+  const runInput = {
     recordId: updated.id,
     conversationId: conversation.id,
     triggerMessageId: updated.latestInboundMessageId,
     expectedContextVersion: updated.contextVersion,
-    skipReply: !input.draftJob,
-    actorType: "authenticated_operator",
+    actorType: "authenticated_operator" as const,
     actorRef: input.actorRef,
-  });
-  if (!input.draftJob) {
-    // Nothing is on anyone's desk until the first follow-up comes due; with
-    // no follow-ups there is nothing left to do at this stage.
-    const firstFollowUp = started?.stepRuns[0] ?? null;
-    const [waiting] = await tx.update(crmRecords).set({
-      workflowState: firstFollowUp ? "waiting" : "idle",
-      nextActionAt: firstFollowUp?.dueAt ?? null,
-      updatedAt: new Date(),
-    }).where(eq(crmRecords.id, updated.id)).returning();
-    return { record: waiting ?? updated, sequenceRun: started };
-  }
+  };
+  // Nothing is on anyone's desk until the first follow-up comes due; with
+  // no follow-ups there is nothing left to do at this stage.
+  if (!input.draftJob) return startFollowUpsInTransaction(tx, runInput);
+  const started = await startSequenceRunInTransaction(tx, runInput);
   // Same rule as the AI path: a classified reply always gets a draft. When
   // no sequence covers the subcategory the draft comes from the thread.
   const { enqueueCrmJobInTransaction } = await import("./queue");
