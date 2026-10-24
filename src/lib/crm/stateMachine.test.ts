@@ -7,6 +7,7 @@ import {
   assertWorkflowTransition,
   classificationApplicationDecision,
   crmDueState,
+  replyClassificationDecision,
   workflowStateForInbound,
 } from "./stateMachine";
 
@@ -234,5 +235,50 @@ describe("due state", () => {
   it("falls back to pending only while something is actually running", () => {
     assert.equal(crmDueState({ ...base, hasActiveRun: true, now }), "pending");
     assert.equal(crmDueState({ ...base, workflowState: "idle", now }), "none");
+  });
+});
+
+describe("reply classification decision", () => {
+  const base = {
+    currentCategoryKey: null,
+    currentCategoryLocked: false,
+    proposedCategoryKey: "interested" as const,
+    subcategoryReviewRequired: false,
+    currentStageRank: null,
+    proposedStageRank: null,
+  };
+
+  it("applies the AI's best guess, including Other and Customer", () => {
+    assert.equal(replyClassificationDecision(base), "auto_apply");
+    assert.equal(replyClassificationDecision({ ...base, proposedCategoryKey: "other" }), "auto_apply");
+    assert.equal(replyClassificationDecision({ ...base, proposedCategoryKey: "customer" }), "auto_apply");
+  });
+
+  it("keeps a locked customer a customer", () => {
+    assert.equal(replyClassificationDecision({
+      ...base,
+      currentCategoryKey: "customer",
+      currentCategoryLocked: true,
+      proposedCategoryKey: "other",
+    }), "keep_current");
+  });
+
+  it("keeps the stage on a step back inside the ranked funnel", () => {
+    assert.equal(replyClassificationDecision({ ...base, currentStageRank: 3, proposedStageRank: 1 }), "keep_current");
+    assert.equal(replyClassificationDecision({ ...base, currentStageRank: 3, proposedStageRank: 3 }), "auto_apply");
+    assert.equal(replyClassificationDecision({ ...base, currentStageRank: 1, proposedStageRank: 3 }), "auto_apply");
+  });
+
+  it("moves a ranked lead to an unranked stage such as Not Interested", () => {
+    assert.equal(replyClassificationDecision({
+      ...base,
+      proposedCategoryKey: "not_interested",
+      currentStageRank: 3,
+      proposedStageRank: null,
+    }), "auto_apply");
+  });
+
+  it("still waits for a person on a stage marked review required", () => {
+    assert.equal(replyClassificationDecision({ ...base, subcategoryReviewRequired: true }), "requires_review");
   });
 });

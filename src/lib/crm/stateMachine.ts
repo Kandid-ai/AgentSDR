@@ -127,6 +127,51 @@ export function classificationApplicationDecision(
   return "auto_apply";
 }
 
+export type ReplyClassificationDecision = "auto_apply" | "keep_current" | "requires_review";
+
+/**
+ * How the AI's reading of an inbound reply lands on the record. Its best
+ * guess applies whatever its confidence — the rep sees the category before
+ * sending the immediate reply, and changes it there if it is wrong. Two
+ * cases keep the record's current stage instead (and draft for it as
+ * usual): a locked customer, and a step back inside the ranked funnel
+ * (Meeting Booked → Interested). A move to an unranked stage (Not
+ * Interested, Other) is a real change in the conversation, so it applies.
+ * Only a stage marked "review required" still waits for a person.
+ *
+ * Call transcripts keep classificationApplicationDecision: nobody looks at
+ * a call's stage before something is sent, so a doubtful reading there
+ * leaves the stage alone.
+ */
+export function replyClassificationDecision(
+  input: Pick<
+    ClassificationPolicyInput,
+    | "currentCategoryKey"
+    | "currentCategoryLocked"
+    | "proposedCategoryKey"
+    | "subcategoryReviewRequired"
+    | "currentStageRank"
+    | "proposedStageRank"
+  >,
+): ReplyClassificationDecision {
+  if (
+    input.currentCategoryLocked
+    && input.currentCategoryKey === "customer"
+    && input.proposedCategoryKey !== "customer"
+  ) {
+    return "keep_current";
+  }
+  if (
+    input.currentStageRank !== null
+    && input.proposedStageRank !== null
+    && input.proposedStageRank < input.currentStageRank
+  ) {
+    return "keep_current";
+  }
+  if (input.subcategoryReviewRequired) return "requires_review";
+  return "auto_apply";
+}
+
 
 /**
  * What the actions list should say a record is waiting for.

@@ -281,7 +281,7 @@ export async function handleClassificationJob(
       }
       if (
         !context.dncIntent
-        && classifiedIntoDoNotContactSubcategory(appliedResult, result.subcategoryId, context.input.subcategories)
+        && classifiedIntoDoNotContactSubcategory(appliedResult, appliedResult.classification.appliedSubcategoryId, context.input.subcategories)
       ) {
         await setPersonDoNotContactInTransaction(tx, {
           personId: context.personId,

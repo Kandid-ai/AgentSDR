@@ -6,7 +6,6 @@ import {
   crmDrafts,
   crmPipelines,
   crmRecords,
-  crmSettings,
   crmSubcategories,
   type CrmCategoryKey,
   type CrmWorkflowState,
@@ -22,7 +21,7 @@ import {
 import {
   assertCurrentCrmContext,
   assertWorkflowTransition,
-  classificationApplicationDecision,
+  replyClassificationDecision,
 } from "./stateMachine";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import { ensureCrmDefaults } from "./defaults";
@@ -506,25 +505,20 @@ export async function recordAiClassificationInTransaction(
     ? await tx.select({ stageRank: crmSubcategories.stageRank }).from(crmSubcategories)
       .where(eq(crmSubcategories.id, record.subcategoryId)).limit(1)
     : [];
-  const [settings] = await tx
-    .select()
-    .from(crmSettings)
-    .where(eq(crmSettings.pipelineId, record.pipelineId))
-    .limit(1);
-  const decision = classificationApplicationDecision({
+  const decision = replyClassificationDecision({
     currentCategoryKey: record.categoryKey as CrmCategoryKey | null,
     currentCategoryLocked: record.categoryLocked,
     proposedCategoryKey: input.categoryKey,
-    confidence: input.confidence,
-    autoApplyConfidence: Number(settings?.autoApplyConfidence ?? "0.85"),
-    reviewOther: settings?.reviewOther ?? true,
-    customerRequiresReview: settings?.customerRequiresReview ?? true,
     subcategoryReviewRequired: subcategory?.reviewRequired ?? false,
     currentStageRank: currentSubcategory?.stageRank ?? null,
     proposedStageRank: subcategory?.stageRank ?? null,
-    proposedSubcategoryKey: subcategory?.key ?? null,
   });
-  const applied = decision === "auto_apply";
+  // keep_current takes effect like an applied reading — the reply is drafted
+  // straight away — with the record's own stage as the applied one.
+  const moved = decision === "auto_apply";
+  const applied = moved || decision === "keep_current";
+  const appliedCategoryKey = moved ? input.categoryKey : applied ? record.categoryKey as CrmCategoryKey | null : null;
+  const appliedSubcategoryId = moved ? input.subcategoryId : applied ? record.subcategoryId : null;
 
   const values: typeof crmClassifications.$inferInsert = {
       crmRecordId: record.id,
@@ -534,8 +528,8 @@ export async function recordAiClassificationInTransaction(
       previousSubcategoryId: record.subcategoryId,
       proposedCategoryKey: input.categoryKey,
       proposedSubcategoryId: input.subcategoryId,
-      appliedCategoryKey: applied ? input.categoryKey : null,
-      appliedSubcategoryId: applied ? input.subcategoryId : null,
+      appliedCategoryKey,
+      appliedSubcategoryId,
       confidence: String(input.confidence),
       reasoning: input.reasoning,
       status: applied ? "auto_applied" : "proposed",
@@ -556,7 +550,7 @@ export async function recordAiClassificationInTransaction(
   const [updated] = await tx
     .update(crmRecords)
     .set({
-      ...(applied ? {
+      ...(moved ? {
         categoryKey: input.categoryKey,
         subcategoryId: input.subcategoryId,
         categorySource: "ai" as const,
@@ -584,8 +578,8 @@ export async function recordAiClassificationInTransaction(
     fromData: { categoryKey: record.categoryKey, subcategoryId: record.subcategoryId },
     toData: {
       classificationId: classification.id,
-      categoryKey: applied ? input.categoryKey : record.categoryKey,
-      subcategoryId: applied ? input.subcategoryId : record.subcategoryId,
+      categoryKey: moved ? input.categoryKey : record.categoryKey,
+      subcategoryId: moved ? input.subcategoryId : record.subcategoryId,
     },
     meta: { decision, confidence: input.confidence, reasoning: input.reasoning ?? null },
     contextVersion: nextContextVersion,
