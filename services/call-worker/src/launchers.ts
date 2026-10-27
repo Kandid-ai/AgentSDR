@@ -396,6 +396,12 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
   // failed "ECONNREFUSED 127.0.0.1:<port>" (23 Oct 2026). /dev/shm in a
   // container is 64 MB unless raised.
   if (process.platform === "linux" && process.getuid?.() === 0) extra.push("--no-sandbox", "--disable-dev-shm-usage");
+  // WebRTC sends no UDP outside the profile's proxy. WhatsApp's call servers
+  // never completed UDP from the worker, so every call waited ~4 s on it before
+  // ringing, then used TCP through the proxy anyway; and UDP sent directly
+  // showed the server's own IP (srflx candidates). The call goes straight to
+  // that TCP route now (27 Oct 2026).
+  extra.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp");
   const gl = new WhatsAppGoLogin({
     token: station.gologinToken,
     profile_id: station.gologinProfileId,
