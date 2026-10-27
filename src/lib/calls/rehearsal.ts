@@ -29,6 +29,7 @@ export async function resolveRehearsal(body: Record<string, unknown>): Promise<R
   let name = parseAgentName(body.name);
   let voice = parseAgentVoice(body.voice);
   let goal: AgentPromptContext["goal"] = null;
+  let knowledgeIds: string[] | null = null;
   if (body.campaignId !== undefined && body.campaignId !== null && body.campaignId !== "") {
     const campaignId = text(body.campaignId);
     if (!UUID_RE.test(campaignId)) throw new CallApiError(400, "campaignId must be a UUID");
@@ -44,9 +45,10 @@ export async function resolveRehearsal(body: Record<string, unknown>): Promise<R
     name = campaign.aiAgentName?.trim() || name;
     voice = campaign.aiAgentVoice ?? voice;
     goal = { goal: campaign.aiGoal, bookingUrl: campaign.aiBookingUrl };
+    knowledgeIds = campaign.aiKnowledgeIds ?? null;
   }
   if (!brief) throw new CallApiError(400, "The agent needs a brief");
   if (brief.length > MAX_AGENT_BRIEF_CHARS) throw new CallApiError(400, `The brief is over ${MAX_AGENT_BRIEF_CHARS} characters`);
-  const [knowledge, context] = await Promise.all([agentKnowledge(), loadRehearsalContext(goal)]);
+  const [knowledge, context] = await Promise.all([agentKnowledge(knowledgeIds), loadRehearsalContext(goal)]);
   return { request: { brief, lead: REHEARSAL_LEAD, name, voice }, knowledge, context };
 }

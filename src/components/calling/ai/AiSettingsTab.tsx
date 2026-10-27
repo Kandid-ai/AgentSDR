@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { RiArchiveLine, RiErrorWarningLine, RiLoader4Line, RiPauseCircleLine, RiPlayCircleLine, RiSaveLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import { VoicePreviewButton } from "@/components/calls/VoicePreviewButton";
+import { KnowledgePicker } from "./KnowledgePicker";
 import * as Select from "@/components/alignui/select";
 import * as Textarea from "@/components/alignui/textarea";
 import { Frame, FrameFooter, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
@@ -33,6 +34,7 @@ type Draft = {
   bookingUrl: string;
   bookingMessage: string;
   maxCallbacks: number;
+  knowledgeIds: string[] | null;
 };
 
 const draftOf = (campaign: AiCampaignDetail): Draft => ({
@@ -43,6 +45,7 @@ const draftOf = (campaign: AiCampaignDetail): Draft => ({
   bookingUrl: campaign.bookingUrl ?? "",
   bookingMessage: campaign.bookingMessage,
   maxCallbacks: campaign.maxCallbacks,
+  knowledgeIds: campaign.knowledgeIds,
 });
 
 /** The Settings tab: what the calls are for, the agent, booking, call-backs, numbers, and pause / archive. */
@@ -113,6 +116,7 @@ export function AiSettingsTab({
         bookingUrl: handover ? null : draft.bookingUrl.trim() || null,
         bookingMessage: draft.bookingMessage,
         maxCallbacks: draft.maxCallbacks,
+        knowledgeIds: draft.knowledgeIds,
       };
       const updated = await updateAiCampaign(campaign.id, request);
       const next = draftOf(updated);
@@ -170,9 +174,14 @@ export function AiSettingsTab({
           </div>
 
           <div className="mt-5">
+            <label className="mb-1.5 block text-label-sm text-text-strong-950">Knowledge</label>
+            <KnowledgePicker value={draft.knowledgeIds} onChange={(ids) => set("knowledgeIds", ids)} />
+          </div>
+
+          <div className="mt-5">
             <label htmlFor="ai-instructions" className="mb-1.5 block text-label-sm text-text-strong-950">Campaign instructions</label>
             <p className="mb-2 text-paragraph-xs text-text-sub-600">
-              What every call in this campaign is about: who you are calling, what you offer them, what to find out. Facts about your company come from CRM Knowledge marked &ldquo;always include&rdquo;, so keep them there and write only this campaign&apos;s angle here. Each call step can add its own instructions on top.
+              What every call in this campaign is about, on top of the Knowledge above: who you are calling, what you offer them, what to find out. Each call step can add its own instructions on top.
             </p>
             <Textarea.Root
               id="ai-instructions"

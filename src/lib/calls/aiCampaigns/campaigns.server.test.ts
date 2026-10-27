@@ -87,3 +87,16 @@ describe("parseStationAiSettings", () => {
     expect(() => parseStationAiSettings({ other: 1 })).toThrow(CallApiError);
   });
 });
+
+describe("parseUpdateAiCampaignRequest knowledgeIds", () => {
+  const id = "d13cecd7-6837-469b-b61e-ad21ef2144f4";
+  test("keeps a list of ids once each, an empty list, or null for the default", () => {
+    expect(parseUpdateAiCampaignRequest({ knowledgeIds: [id, id] }).knowledgeIds).toEqual([id]);
+    expect(parseUpdateAiCampaignRequest({ knowledgeIds: [] }).knowledgeIds).toEqual([]);
+    expect(parseUpdateAiCampaignRequest({ knowledgeIds: null }).knowledgeIds).toBeNull();
+  });
+  test("refuses anything that is not a list of document ids", () => {
+    expect(() => parseUpdateAiCampaignRequest({ knowledgeIds: ["nope"] })).toThrow(CallApiError);
+    expect(() => parseUpdateAiCampaignRequest({ knowledgeIds: id })).toThrow(CallApiError);
+  });
+});

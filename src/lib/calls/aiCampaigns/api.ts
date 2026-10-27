@@ -61,6 +61,8 @@ export type AiCampaignDetail = AiCampaignSummary &
   AiCampaignSettings & {
     steps: AiCampaignStep[];
     chaseSteps: AiCampaignStep[];
+    /** The CRM Knowledge documents its calls know; null = the organization's "always include" ones. */
+    knowledgeIds: string[] | null;
     /** Why it cannot launch yet (drafts only), or null. */
     blocker: string | null;
     /** The most calls its numbers may place a day (their own limits or the organization's rule), before warm-up. */
@@ -85,7 +87,12 @@ export type UpdateAiCampaignRequest = {
   maxCallbacks?: number;
   steps?: AiCampaignStep[];
   chaseSteps?: AiCampaignStep[];
+  /** CRM Knowledge document ids (an empty list: none); null = the "always include" documents. */
+  knowledgeIds?: string[] | null;
 };
+
+/** The most Knowledge documents a campaign may pick. */
+export const AI_CAMPAIGN_MAX_KNOWLEDGE = 50;
 
 export type SetAiCampaignStationsRequest = { stationIds: string[] };
 

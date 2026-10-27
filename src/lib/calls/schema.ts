@@ -179,6 +179,12 @@ export const callCampaigns = pgTable(
     aiBookingUrl: text("ai_booking_url"),
     aiBookingMessage: text("ai_booking_message"),
     aiMaxCallbacks: integer("ai_max_callbacks").notNull().default(2),
+    /**
+     * The CRM Knowledge documents its calls know (crm_knowledge_documents ids).
+     * Null: the organization's documents marked "always include", as for a
+     * call placed by hand. scripts/add-ai-campaign-knowledge.ts.
+     */
+    aiKnowledgeIds: uuid("ai_knowledge_ids").array(),
     /** First switched on; a draft AI campaign (null) places no calls. */
     aiLaunchedAt: timestamp("ai_launched_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),

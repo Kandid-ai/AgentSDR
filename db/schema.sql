@@ -1011,6 +1011,7 @@ CREATE TABLE public.call_campaigns (
     ai_booking_message text,
     ai_max_callbacks integer DEFAULT 2 NOT NULL,
     ai_launched_at timestamp with time zone,
+    ai_knowledge_ids uuid[],
     CONSTRAINT call_campaigns_ai_goal_chk CHECK ((ai_goal = ANY (ARRAY['book_meeting'::text, 'human_callback'::text, 'either'::text]))),
     CONSTRAINT call_campaigns_ai_max_callbacks_chk CHECK (((ai_max_callbacks >= 0) AND (ai_max_callbacks <= 3))),
     CONSTRAINT call_campaigns_name_chk CHECK ((length(btrim(name)) > 0)),

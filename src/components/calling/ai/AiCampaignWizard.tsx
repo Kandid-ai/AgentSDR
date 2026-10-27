@@ -17,6 +17,7 @@ import {
 } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import { VoicePreviewButton } from "@/components/calls/VoicePreviewButton";
+import { KnowledgePicker } from "./KnowledgePicker";
 import * as Input from "@/components/alignui/input";
 import * as Select from "@/components/alignui/select";
 import * as Textarea from "@/components/alignui/textarea";
@@ -78,6 +79,7 @@ export function AiCampaignWizard() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [showPeople, setShowPeople] = useState(false);
   const [instructions, setInstructions] = useState("");
+  const [knowledgeIds, setKnowledgeIds] = useState<string[] | null>(null);
   const [agentName, setAgentName] = useState("");
   const [agentVoice, setAgentVoice] = useState(DEFAULT_VOICE);
   const [bookingUrl, setBookingUrl] = useState("");
@@ -133,6 +135,7 @@ export function AiCampaignWizard() {
       const withGoal = goal === created.goal ? created : await updateAiCampaign(created.id, { goal });
       setCampaign(withGoal);
       setInstructions(withGoal.instructions);
+      setKnowledgeIds(withGoal.knowledgeIds);
       setBookingMessage(withGoal.bookingMessage);
       setSteps(withGoal.steps.map((s) => ({ ...s })));
       setChaseSteps(withGoal.chaseSteps.map((s) => ({ ...s })));
@@ -156,6 +159,7 @@ export function AiCampaignWizard() {
     setCampaign(
       await updateAiCampaign(campaign.id, {
         instructions,
+        knowledgeIds,
         agentName: agentName.trim() || null,
         agentVoice: agentVoice === DEFAULT_VOICE ? null : agentVoice,
         bookingUrl: handover ? null : bookingUrl.trim() || null,
@@ -334,8 +338,12 @@ export function AiCampaignWizard() {
                 <Heading title="Script and sequence" description="What every call is about, who the agent is, and the calls and messages to send. The defaults are a sensible start." />
                 <div className="mt-6 grid gap-6">
                   <div>
+                    <label className="mb-1.5 block text-label-sm text-text-strong-950">Knowledge</label>
+                    <KnowledgePicker value={knowledgeIds} onChange={setKnowledgeIds} />
+                  </div>
+                  <div>
                     <label htmlFor="wiz-instructions" className="mb-1.5 block text-label-sm text-text-strong-950">Campaign instructions</label>
-                    <p className="mb-2 text-paragraph-xs text-text-sub-600">What every call is about: who you are calling, what you offer, what to find out. Company facts come from CRM Knowledge marked &ldquo;always include&rdquo;.</p>
+                    <p className="mb-2 text-paragraph-xs text-text-sub-600">What every call is about, on top of the Knowledge above: who you are calling, what you offer, what to find out.</p>
                     <Textarea.Root id="wiz-instructions" simple rows={6} maxLength={AI_CAMPAIGN_MAX_INSTRUCTIONS} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="You are calling founders of D2C brands who run Meta ads. We help them …" hasError={!instructions.trim()} />
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">

@@ -142,6 +142,18 @@ export async function loadCampaignGoal(campaignContactId: string | null): Promis
   return campaign ? { goal: campaign.goal, bookingUrl: campaign.bookingUrl } : null;
 }
 
+/** The knowledge an AI campaign's call uses (null: the "always include" documents). Runs in the organization's scope. */
+export async function loadCampaignKnowledgeIds(campaignContactId: string | null): Promise<string[] | null> {
+  if (!campaignContactId) return null;
+  const [campaign] = await db
+    .select({ ids: callCampaigns.aiKnowledgeIds })
+    .from(callCampaignContacts)
+    .innerJoin(callCampaigns, eq(callCampaigns.id, callCampaignContacts.campaignId))
+    .where(and(inOrg(callCampaigns), eq(callCampaignContacts.id, campaignContactId), eq(callCampaigns.runBy, "ai")))
+    .limit(1);
+  return campaign?.ids ?? null;
+}
+
 export async function organizationTimeZone(): Promise<string> {
   try {
     return (await channelRules("general")).timeZone ?? "UTC";

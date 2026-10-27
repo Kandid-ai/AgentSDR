@@ -1,11 +1,11 @@
 import "server-only";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crmKnowledgeDocuments, crmKnowledgeDocumentVersions } from "@/lib/crm/schema";
 import { inOrg } from "@/lib/tenancy/scope";
 import { pcm16Wav } from "../../../extensions/whatsapp-recorder/src/wav";
-import { goalGuidance, loadAgentContext, type AgentPromptContext } from "./agentContext";
+import { goalGuidance, loadAgentContext, loadCampaignKnowledgeIds, type AgentPromptContext } from "./agentContext";
 import {
   AGENT_OUTCOMES,
   AGENT_VOICES,
@@ -115,7 +115,10 @@ export async function mintAgentToken(row: CallSessionRow, request: AgentTokenReq
   if (row.status !== "pending" && row.status !== "in_progress") {
     throw new CallApiError(409, "This call is already over");
   }
-  const [knowledge, context] = await Promise.all([agentKnowledge(), loadAgentContext(row)]);
+  const [knowledge, context] = await Promise.all([
+    loadCampaignKnowledgeIds(row.campaignContactId).then((ids) => agentKnowledge(ids)),
+    loadAgentContext(row),
+  ]);
   return { ...(await mintLiveToken(liveSetup(request, knowledge, context))), saveHeardAudio: saveHeardAudio() };
 }
 
@@ -305,11 +308,13 @@ const KNOWLEDGE_TOTAL_CHARS = 12_000;
 const KNOWLEDGE_ORDER = ["company", "product", "pricing", "faq", "objection", "scheduling", "custom", "case_study"];
 
 /**
- * The organization's CRM Knowledge marked "always include" — the same set
- * that grounds the call-transcript classification (leadStage.ts) — so the
- * agent can answer questions instead of deferring every one to "the team".
+ * The CRM Knowledge an agent call is grounded in: the documents an AI
+ * campaign selected (`ids`; empty = none), or else the organization's
+ * documents marked "always include" — the same set that grounds the
+ * call-transcript classification (leadStage.ts). Archived ones never count.
  */
-export async function agentKnowledge(): Promise<KnowledgeDocument[]> {
+export async function agentKnowledge(ids: string[] | null = null): Promise<KnowledgeDocument[]> {
+  if (ids && !ids.length) return [];
   const rows = await db
     .select({ title: crmKnowledgeDocuments.title, kind: crmKnowledgeDocuments.kind, content: crmKnowledgeDocumentVersions.content })
     .from(crmKnowledgeDocuments)
@@ -320,7 +325,13 @@ export async function agentKnowledge(): Promise<KnowledgeDocument[]> {
         eq(crmKnowledgeDocumentVersions.version, crmKnowledgeDocuments.latestVersion),
       ),
     )
-    .where(and(inOrg(crmKnowledgeDocuments), eq(crmKnowledgeDocuments.active, true), eq(crmKnowledgeDocuments.alwaysInclude, true)))
+    .where(
+      and(
+        inOrg(crmKnowledgeDocuments),
+        eq(crmKnowledgeDocuments.active, true),
+        ids ? inArray(crmKnowledgeDocuments.id, ids) : eq(crmKnowledgeDocuments.alwaysInclude, true),
+      ),
+    )
     .orderBy(asc(crmKnowledgeDocuments.title));
   return budgetKnowledge(rows);
 }

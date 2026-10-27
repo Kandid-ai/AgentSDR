@@ -10,6 +10,7 @@ import { organizationPhoneCountry } from "@/lib/calls/phone.server";
 import { findOrCreateContactPerson, resolveImportRow, contactInOrg } from "@/lib/calls/campaigns";
 import { messageInOrg } from "@/lib/whatsapp/messages";
 import { whatsappMessages } from "@/lib/whatsapp/schema";
+import { crmKnowledgeDocuments } from "@/lib/crm/schema";
 import {
   importMappingError,
   mapImportRow,
@@ -62,6 +63,7 @@ import {
   type ListAiLeadsResponse,
   type UpdateAiCampaignRequest,
   type UpdateAiLeadRequest,
+  AI_CAMPAIGN_MAX_KNOWLEDGE,
 } from "./api";
 
 /**
@@ -258,6 +260,7 @@ async function toDetail(row: CampaignRow): Promise<AiCampaignDetail> {
     maxCallbacks: row.aiMaxCallbacks,
     steps: row.aiSteps,
     chaseSteps: row.aiChaseSteps,
+    knowledgeIds: row.aiKnowledgeIds ?? null,
     blocker,
     callsPerDayLimit: callsPerDayLimit(summary.numbers, rules.callsPerDay),
   };
@@ -298,6 +301,7 @@ const UPDATE_KEYS = [
   "maxCallbacks",
   "steps",
   "chaseSteps",
+  "knowledgeIds",
 ];
 
 function asObject(value: unknown, allowed: string[]): Record<string, unknown> {
@@ -344,6 +348,17 @@ export function parseUpdateAiCampaignRequest(value: unknown): UpdateAiCampaignRe
   }
   if (body.steps !== undefined) request.steps = body.steps as AiCampaignStep[];
   if (body.chaseSteps !== undefined) request.chaseSteps = body.chaseSteps as AiCampaignStep[];
+  if (body.knowledgeIds !== undefined) {
+    if (body.knowledgeIds === null) request.knowledgeIds = null;
+    else {
+      if (!Array.isArray(body.knowledgeIds) || body.knowledgeIds.some((id) => typeof id !== "string" || !UUID_PATTERN.test(id))) {
+        throw new CallApiError(400, "knowledgeIds must be a list of Knowledge document ids");
+      }
+      const ids = [...new Set(body.knowledgeIds as string[])];
+      if (ids.length > AI_CAMPAIGN_MAX_KNOWLEDGE) throw new CallApiError(400, `At most ${AI_CAMPAIGN_MAX_KNOWLEDGE} Knowledge documents`);
+      request.knowledgeIds = ids;
+    }
+  }
   return request;
 }
 
@@ -361,6 +376,13 @@ export async function createAiCampaign(input: CreateAiCampaignRequest): Promise<
       aiSteps: DEFAULT_REACH_STEPS.map((step) => ({ ...step })),
       aiChaseSteps: DEFAULT_CHASE_STEPS.map((step) => ({ ...step })),
       aiBookingMessage: DEFAULT_BOOKING_MESSAGE,
+      // Starts from what a call placed by hand knows; the campaign then picks its own.
+      aiKnowledgeIds: (
+        await db
+          .select({ id: crmKnowledgeDocuments.id })
+          .from(crmKnowledgeDocuments)
+          .where(and(inOrg(crmKnowledgeDocuments), eq(crmKnowledgeDocuments.active, true), eq(crmKnowledgeDocuments.alwaysInclude, true)))
+      ).map((document) => document.id),
     })
     .returning();
   if (!row) throw new Error("call_campaigns insert did not return a row");
@@ -394,6 +416,16 @@ export async function updateAiCampaign(campaignId: string, input: UpdateAiCampai
     updates.aiBookingUrl = merged.bookingUrl;
     updates.aiBookingMessage = merged.bookingMessage;
     updates.aiMaxCallbacks = merged.maxCallbacks;
+  }
+  if (input.knowledgeIds !== undefined) {
+    if (input.knowledgeIds?.length) {
+      const found = await db
+        .select({ id: crmKnowledgeDocuments.id })
+        .from(crmKnowledgeDocuments)
+        .where(and(inOrg(crmKnowledgeDocuments), inArray(crmKnowledgeDocuments.id, input.knowledgeIds)));
+      if (found.length !== input.knowledgeIds.length) throw new CallApiError(400, "Some of those Knowledge documents do not exist");
+    }
+    updates.aiKnowledgeIds = input.knowledgeIds;
   }
   if (input.agentName !== undefined) updates.aiAgentName = input.agentName;
   if (input.agentVoice !== undefined) updates.aiAgentVoice = input.agentVoice;
