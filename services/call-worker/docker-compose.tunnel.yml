@@ -21,6 +21,11 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
+    # Replies to the tunnelled UDP come back on the tunnel interface, not the
+    # one a strict reverse-path check expects: loose checking keeps them.
+    sysctls:
+      net.ipv4.conf.all.rp_filter: "2"
+      net.ipv4.conf.default.rp_filter: "2"
     shm_size: 1gb
     # Closing the open number saves its profile (~10 s).
     stop_grace_period: 60s

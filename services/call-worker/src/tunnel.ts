@@ -1,6 +1,8 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { lookup } from "node:dns/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { WorkerProxy } from "../../../src/lib/calls/stationContract";
 
 /**
@@ -10,16 +12,28 @@ import type { WorkerProxy } from "../../../src/lib/calls/stationContract";
  * cannot go that way, so GoLogin forced it into TCP through the proxy, where
  * WhatsApp's "Connecting…" took 3.3 s and the audio lagged (27 Oct 2026). A
  * SOCKS5 proxy with UDP support (Proxy-Cheap's does) can carry it if the
- * container's UDP is routed there: sing-box makes a TUN interface for the
- * whole container and sends every UDP packet through the proxy; all TCP goes
- * direct — the browser's own web traffic still uses the profile's proxy, as
- * before. The audio then leaves from the proxy's IP over UDP.
+ * container's UDP reaches it: sing-box holds a TUN interface and relays what
+ * arrives there through the proxy, and policy routing sends the container's
+ * UDP — and only UDP — into that interface. TCP is never routed there: the
+ * browser's web traffic keeps using the profile's proxy, the worker's API calls
+ * go out as before. DNS, private and link-local addresses, and the proxy's own
+ * address stay on the normal route.
  *
- * One number per container: the tunnel is container-wide (STATIONS names the
- * one number). The container needs NET_ADMIN and /dev/net/tun (see
- * docker-compose.tunnel.yml); the GoLogin profile's WebRTC must allow UDP
- * ("Real"), and QUIC is turned off so web pages stay on TCP.
+ * (sing-box's own auto_route captured every packet, and in the container all
+ * TCP then timed out — GoLogin's API, AgentSDR — 27 Oct 2026.)
+ *
+ * One number per container: the routing is container-wide (STATIONS names
+ * the one number). Needs NET_ADMIN, /dev/net/tun and loose reverse-path
+ * filtering (docker-compose.tunnel.yml).
  */
+
+const INTERFACE = "agentsdr0";
+/** RFC 2544 benchmarking space: never a Docker network's. */
+const ADDRESS = "198.18.0.1/30";
+const TABLE = "7777";
+/** Our ip rules' priorities, all removed on stop. */
+const PREFS = { proxy: 9000, dns: 9001, local: 9002, udp: 9010 } as const;
+const LOCAL_RANGES = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "127.0.0.0/8", "100.64.0.0/10"];
 
 export function tunnelConfig(proxy: WorkerProxy): object {
   const server = new URL(proxy.server);
@@ -30,11 +44,12 @@ export function tunnelConfig(proxy: WorkerProxy): object {
       {
         type: "tun",
         tag: "tun-in",
-        interface_name: "agentsdr0",
-        address: ["172.19.0.1/30"],
+        interface_name: INTERFACE,
+        address: [ADDRESS],
         mtu: 1400,
-        auto_route: true,
-        stack: "mixed",
+        // Routing is ours (policy rules for UDP only) — see the header.
+        auto_route: false,
+        stack: "gvisor",
       },
     ],
     outbounds: [
@@ -50,23 +65,43 @@ export function tunnelConfig(proxy: WorkerProxy): object {
       { type: "direct", tag: "direct" },
     ],
     route: {
-      // UDP (WebRTC: STUN and the call's audio) through the number's proxy; everything else as before.
-      // DNS and private/link-local addresses stay local: Google Cloud's resolver is 169.254.169.254.
       rules: [
         { port: 53, outbound: "direct" },
         { ip_is_private: true, outbound: "direct" },
-        { network: "udp", outbound: "proxy" },
       ],
-      final: "direct",
-      auto_detect_interface: true,
+      // Only UDP is routed into the interface; all of it goes through the proxy.
+      final: "proxy",
     },
   };
 }
 
+const run = promisify(execFile);
+
+/** The ip commands that send the container's UDP into the tunnel, and those that undo them. */
+export function routingCommands(proxyIp: string): { up: string[][]; down: string[][] } {
+  const up: string[][] = [
+    ["ip", "rule", "add", "pref", String(PREFS.proxy), "to", `${proxyIp}/32`, "lookup", "main"],
+    ["ip", "rule", "add", "pref", String(PREFS.dns), "ipproto", "udp", "dport", "53", "lookup", "main"],
+    ...LOCAL_RANGES.map((range) => ["ip", "rule", "add", "pref", String(PREFS.local), "to", range, "lookup", "main"]),
+    ["ip", "route", "replace", "default", "dev", INTERFACE, "table", TABLE],
+    ["ip", "rule", "add", "pref", String(PREFS.udp), "ipproto", "udp", "lookup", TABLE],
+  ];
+  const down: string[][] = [
+    ["ip", "rule", "del", "pref", String(PREFS.udp)],
+    ["ip", "route", "flush", "table", TABLE],
+    ...LOCAL_RANGES.map(() => ["ip", "rule", "del", "pref", String(PREFS.local)]),
+    ["ip", "rule", "del", "pref", String(PREFS.dns)],
+    ["ip", "rule", "del", "pref", String(PREFS.proxy)],
+  ];
+  return { up, down };
+}
+
 export type Tunnel = { stop(): Promise<void> };
 
-/** Starts sing-box with tunnelConfig and resolves once its TUN interface is up (or rejects with its output). */
+/** Starts sing-box, routes the container's UDP into it, and resolves once it is in place (or rejects with why). */
 export async function startTunnel(proxy: WorkerProxy, dir: string, log: (text: string) => void): Promise<Tunnel> {
+  const server = new URL(proxy.server);
+  const proxyIp = (await lookup(server.hostname, { family: 4 })).address;
   await mkdir(dir, { recursive: true });
   const configPath = join(dir, "sing-box.json");
   await writeFile(configPath, JSON.stringify(tunnelConfig(proxy), null, 2), { mode: 0o600 });
@@ -82,11 +117,17 @@ export async function startTunnel(proxy: WorkerProxy, dir: string, log: (text: s
   child.once("error", (error) => {
     output += `\n${error.message}`;
   });
-  // sing-box has no ready signal; up once the interface exists and it is still running.
+  const stopSingBox = async () => {
+    if (child.exitCode !== null) return;
+    child.kill("SIGTERM");
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 3_000))]);
+    if (child.exitCode === null) child.kill("SIGKILL");
+  };
+  // sing-box has no ready signal: up once the interface exists and it is still running.
   const up = await Promise.race([
     (async () => {
       for (let i = 0; i < 40; i++) {
-        if (await interfaceExists("agentsdr0")) return true;
+        if (await access(`/sys/class/net/${INTERFACE}`).then(() => true, () => false)) return true;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
       return false;
@@ -94,24 +135,26 @@ export async function startTunnel(proxy: WorkerProxy, dir: string, log: (text: s
     exited.then(() => false),
   ]);
   if (!up) {
-    child.kill("SIGKILL");
+    await stopSingBox();
     throw new Error(`the tunnel did not start: ${output.trim().split("\n").slice(-3).join(" | ") || "no output"}`);
   }
-  log(`tunnel: up — UDP goes through ${new URL(proxy.server).host}`);
+  const { up: routeUp, down: routeDown } = routingCommands(proxyIp);
+  const unroute = async () => {
+    for (const [cmd, ...args] of routeDown) await run(cmd!, args).catch(() => {});
+  };
+  await unroute(); // leftovers from a worker that died without cleaning up
+  try {
+    for (const [cmd, ...args] of routeUp) await run(cmd!, args);
+  } catch (error) {
+    await unroute();
+    await stopSingBox();
+    throw new Error(`could not route UDP into the tunnel: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+  }
+  log(`tunnel: up — UDP goes through ${server.host}; TCP untouched`);
   return {
     stop: async () => {
-      if (child.exitCode !== null) return;
-      child.kill("SIGTERM");
-      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 3_000))]);
-      if (child.exitCode === null) child.kill("SIGKILL");
+      await unroute();
+      await stopSingBox();
     },
   };
-}
-
-async function interfaceExists(name: string): Promise<boolean> {
-  const { access } = await import("node:fs/promises");
-  return access(`/sys/class/net/${name}`).then(
-    () => true,
-    () => false,
-  );
 }

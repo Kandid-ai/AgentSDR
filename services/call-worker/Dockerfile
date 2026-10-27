@@ -15,7 +15,7 @@ RUN mkdir -p node_modules && bun add --no-save fflate@0.8.3 && bun run build:rec
 FROM mcr.microsoft.com/playwright:v1.64.0-noble
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils xvfb unzip curl ca-certificates \
+ && apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils xvfb unzip curl ca-certificates iproute2 \
  && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
 

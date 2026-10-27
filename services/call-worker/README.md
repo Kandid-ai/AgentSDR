@@ -121,9 +121,11 @@ every call. Opens in under a second; WhatsApp Web loads headless.
 
 A browser sends only TCP through a proxy, so GoLogin pushed the call's UDP audio into TCP through
 the proxy: "Connecting…" took ~3.3 s and the audio lagged. `src/tunnel.ts` runs sing-box with a
-container-wide TUN interface that sends every UDP packet through the number's **SOCKS5 proxy with
-UDP** (DNS and private addresses stay local) and leaves TCP alone — the browser's web traffic keeps
-using the profile's proxy. The call audio then goes over UDP and still leaves from the proxy's IP.
+TUN interface, and policy routing (`ip rule … ipproto udp`) sends the container's UDP — only UDP —
+into it; sing-box relays it through the number's **SOCKS5 proxy with UDP**. DNS, private addresses
+and the proxy's own address stay on the normal route, and TCP is never routed there — the browser's
+web traffic keeps using the profile's proxy. (sing-box's own `auto_route` captured all traffic and
+every TCP connection in the container timed out, 27 Oct 2026.) The call audio then goes over UDP and still leaves from the proxy's IP.
 
 Because the tunnel covers the whole container, a tunnelled worker serves exactly one number:
 deploy `docker-compose.tunnel.yml` (Dokploy → Compose) once per number with `STATIONS` set to its
