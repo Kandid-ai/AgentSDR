@@ -91,6 +91,13 @@ export const callingStations = pgTable(
     /** The requested link starts from a logged-out browser (the session was the wrong account). */
     linkFresh: boolean("link_fresh").notNull().default(false),
     workerId: text("worker_id"),
+    /**
+     * The call worker keeping this number's WhatsApp Web open, until when
+     * (renewed every 20 s). Only the holder runs its calls and links, so the
+     * profile is never open twice. scripts/add-calling-station-lease.ts.
+     */
+    leaseHolder: text("lease_holder"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     lastCallAt: timestamp("last_call_at", { withTimezone: true }),
     lastError: text("last_error"),

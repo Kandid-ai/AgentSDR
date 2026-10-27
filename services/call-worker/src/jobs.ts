@@ -1,5 +1,5 @@
 import type { Page } from "playwright-core";
-import type { WorkerJob } from "../../../src/lib/calls/stationContract";
+import type { WorkerJob, WorkerStation } from "../../../src/lib/calls/stationContract";
 import { MAX_TIMELINE_ENTRIES, type CallTimelineEntry } from "../../../src/lib/calls/stationContract";
 import { getCallStatus, releaseCall, reportStationState, saveTimeline } from "./api";
 import { config } from "./config";
@@ -73,13 +73,69 @@ async function waitDone(callId: string, timeoutMs: number): Promise<boolean> {
   return false;
 }
 
-export async function runCall(job: CallJob): Promise<void> {
+/** A number's WhatsApp Web, open and checked: ready to place a call. */
+export type ReadyWhatsApp = { browser: StationBrowser; page: Page };
+
+/**
+ * Opens WhatsApp Web in `browser` and checks it can place calls: logged in,
+ * in English, as the number's own account. Reports the station's state as it
+ * goes (logged out, wrong account, active). Returns the reason it cannot
+ * call, or the page.
+ */
+export async function prepareWhatsApp(
+  station: WorkerStation,
+  browser: StationBrowser,
+  step: (text: string) => void,
+): Promise<{ page: Page } | { error: string }> {
+  const page = await openWhatsApp(browser.context);
+  step("WhatsApp Web page opened");
+  step("waiting for WhatsApp Web");
+  const state = await waitForWhatsAppState(page, 120_000);
+  if (state === "logged_out") {
+    step("WhatsApp Web is logged out");
+    const error = `WhatsApp Web on ${station.name} is logged out — link it again`;
+    await safeState(station.id, { status: "logged_out", error });
+    return { error };
+  }
+  if (state === "timeout") {
+    step("WhatsApp Web did not load");
+    return { error: `WhatsApp Web on ${station.name} did not load in time` };
+  }
+  step("WhatsApp Web ready (chats showing)");
+  const language = await whatsAppLanguage(page);
+  if (!isEnglish(language)) {
+    // The extension cannot find WhatsApp's buttons in another language.
+    step(`WhatsApp Web is in ${language}`);
+    await safeState(station.id, { error: NOT_ENGLISH(language) });
+    return { error: NOT_ENGLISH(language) };
+  }
+  // Calls go out from whichever account WhatsApp Web is logged in as.
+  const linkedPhone = await loggedInPhone(page);
+  if (linkedPhone && digitsOf(linkedPhone) !== digitsOf(station.phone)) {
+    const error = `WhatsApp Web is logged in as ${linkedPhone}, not ${station.phone} — not calling from the wrong number`;
+    step(error);
+    await safeState(station.id, { linkedPhone });
+    return { error };
+  }
+  await safeState(station.id, { status: "active", error: null, ...(linkedPhone ? { linkedPhone } : {}) });
+  const dialogs = await dismissDialogs(page);
+  if (dialogs) step(`closed ${dialogs} WhatsApp dialog(s) over the chats`);
+  return { page };
+}
+
+/**
+ * Places a cloud call. `open` is the number's WhatsApp Web already open
+ * (openStations.ts) — used as is and left open; without it, a browser is
+ * opened for this call and closed after.
+ */
+export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null): Promise<void> {
   const { station, call } = job;
   const cfg = config();
   const tag = `call ${call.id} @ ${station.name}`;
-  let browser: StationBrowser | null = null;
+  let browser: StationBrowser | null = open?.browser ?? null;
   let released = false;
   let stopExtensionLog = async () => {};
+  let stopWatching = () => {};
   // Every timed step of the call, the worker's and the extension's, saved
   // with the call (call_sessions.timeline) as it goes and at the end.
   const timeline: CallTimelineEntry[] = [];
@@ -95,65 +151,61 @@ export async function runCall(job: CallJob): Promise<void> {
     await safeRelease(call.id, error);
   };
   try {
-    step(`opening browser (${station.launcher})`);
-    try {
-      browser = await openStationBrowser(station, { note: step });
-    } catch (e) {
-      step(`browser failed: ${message(e)}`);
-      if (e instanceof Error && e.stack) log(`${tag}: ${e.stack.split("\n").slice(0, 8).join("\n  ")}`);
-      await release(`Could not open the station's browser: ${message(e)}`);
-      return;
+    let page: Page;
+    if (open) {
+      step("using the number's open WhatsApp Web");
+      page = open.page;
+      if (page.isClosed() || (await isLoginScreen(page))) {
+        const error = page.isClosed()
+          ? `WhatsApp Web on ${station.name} was closed — try again in a minute`
+          : `WhatsApp Web on ${station.name} is logged out — link it again`;
+        step(error);
+        if (!page.isClosed()) await safeState(station.id, { status: "logged_out", error });
+        await release(error);
+        return;
+      }
+      const dialogs = await dismissDialogs(page);
+      if (dialogs) step(`closed ${dialogs} WhatsApp dialog(s) over the chats`);
+    } else {
+      step(`opening browser (${station.launcher})`);
+      try {
+        browser = await openStationBrowser(station, { note: step });
+      } catch (e) {
+        step(`browser failed: ${message(e)}`);
+        if (e instanceof Error && e.stack) log(`${tag}: ${e.stack.split("\n").slice(0, 8).join("\n  ")}`);
+        await release(`Could not open the station's browser: ${message(e)}`);
+        return;
+      }
+      watchConsole(browser, tag);
+      const prepared = await prepareWhatsApp(station, browser, step);
+      if ("error" in prepared) {
+        await release(prepared.error);
+        return;
+      }
+      page = prepared.page;
     }
-    const page = await openWhatsApp(browser.context);
-    step("WhatsApp Web page opened");
+    const opened = browser!;
     // The browser closing or WhatsApp's tab crashing ends the call with no
     // report from the extension; without this the worker would wait out the
     // whole call timeout with the station held busy.
-    const lost = new Promise<string>((resolve) => {
-      browser?.context.on("close", () => resolve("The station's browser closed during the call"));
-      page.on("crash", () => resolve("WhatsApp Web crashed during the call"));
-      page.on("close", () => resolve("WhatsApp Web's tab closed during the call"));
-    });
-    watchConsole(browser, tag);
-    step(`waiting for WhatsApp Web`);
-    const state = await waitForWhatsAppState(page, 120_000);
-    if (state === "ready") step("WhatsApp Web ready (chats showing)");
-    if (state === "logged_out") {
-      step(`WhatsApp Web is logged out`);
-      const error = `WhatsApp Web on ${station.name} is logged out — link it again`;
-      await safeState(station.id, { status: "logged_out", error });
-      await release(error);
-      return;
-    }
-    if (state === "timeout") {
-      step(`WhatsApp Web did not load`);
-      await release(`WhatsApp Web on ${station.name} did not load in time`);
-      return;
-    }
-    const language = await whatsAppLanguage(page);
-    if (!isEnglish(language)) {
-      // The extension cannot find WhatsApp's buttons in another language.
-      step(`WhatsApp Web is in ${language}`);
-      await safeState(station.id, { error: NOT_ENGLISH(language) });
-      await release(NOT_ENGLISH(language));
-      return;
-    }
-    // Calls go out from whichever account WhatsApp Web is logged in as.
-    const linkedPhone = await loggedInPhone(page);
-    if (linkedPhone && digitsOf(linkedPhone) !== digitsOf(station.phone)) {
-      const error = `WhatsApp Web is logged in as ${linkedPhone}, not ${station.phone} — not calling from the wrong number`;
-      step(`${error}`);
-      await safeState(station.id, { linkedPhone });
-      await release(error);
-      return;
-    }
-    await safeState(station.id, { status: "active", error: null, ...(linkedPhone ? { linkedPhone } : {}) });
-    const dialogs = await dismissDialogs(page);
-    if (dialogs) step(`closed ${dialogs} WhatsApp dialog(s) over the chats`);
+    let lostReason: (reason: string) => void = () => {};
+    const lost = new Promise<string>((resolve) => (lostReason = resolve));
+    const onBrowserClose = () => lostReason("The station's browser closed during the call");
+    const onCrash = () => lostReason("WhatsApp Web crashed during the call");
+    const onTabClose = () => lostReason("WhatsApp Web's tab closed during the call");
+    opened.context.on("close", onBrowserClose);
+    page.on("crash", onCrash);
+    page.on("close", onTabClose);
+    // An open number's browser outlives the call: its listeners must not pile up.
+    stopWatching = () => {
+      opened.context.off("close", onBrowserClose);
+      page.off("crash", onCrash);
+      page.off("close", onTabClose);
+    };
 
     let worker: StationWorker;
     try {
-      worker = await stationWorker(browser.context);
+      worker = await stationWorker(opened.context);
     } catch (e) {
       await release(message(e));
       return;
@@ -174,16 +226,17 @@ export async function runCall(job: CallJob): Promise<void> {
       await release(started.error);
       return;
     }
-    step(`call running`);
+    step("call running");
     // The extension's own log of the call (dialing, the AI's steps, the
     // transcript), fetched — CloakBrowser hides console messages.
     let drained = 0;
-    log(`${tag}: tabs: ${browser.context.pages().map((p) => p.url().slice(0, 60)).join(" | ")}`);
+    log(`${tag}: tabs: ${opened.context.pages().map((p) => p.url().slice(0, 60)).join(" | ")}`);
     // The extension's call log, written into the WhatsApp page (wa-agent's pageLog) —
     // read from every WhatsApp tab, in case the call runs in one this worker did not open.
     const drain = () =>
       Promise.all(
-        (browser?.context.pages() ?? [])
+        opened.context
+          .pages()
           .filter((p) => p.url().startsWith("https://web.whatsapp.com"))
           .map((p, index) =>
             p
@@ -219,27 +272,29 @@ export async function runCall(job: CallJob): Promise<void> {
     };
     const outcome = await Promise.race([waitDone(call.id, cfg.callTimeoutMs), lost]);
     if (typeof outcome === "string") {
-      step(`${outcome}`);
+      step(outcome);
       // The extension may still have reported the end just before; give it a moment.
       if (!(await waitDone(call.id, 5_000))) await release(outcome);
       return;
     }
     let done = outcome;
     if (!done) {
-      step(`timed out, hanging up`);
+      step("timed out, hanging up");
       await worker.endCall(call.id).catch((e) => step(`endCall failed: ${message(e)}`));
       done = await waitDone(call.id, 30_000);
       if (!done) await release("The call timed out");
     }
-    step(`finished`);
-    await sleep(3000);
+    step("finished");
+    // A browser opened for this call stays a moment, so the extension's last reports go out.
+    if (!open) await sleep(3000);
   } catch (e) {
     step(`error: ${message(e)}`);
     if (!released) await release(`Call worker error: ${message(e)}`);
   } finally {
     await stopExtensionLog();
+    stopWatching();
     current = null;
-    if (browser) {
+    if (browser && !open) {
       step("closing the browser");
       await browser.close().catch((e) => step(`close failed: ${message(e)}`));
       step("browser closed");
@@ -333,7 +388,7 @@ export async function runLink(job: LinkJob): Promise<void> {
  * steps and transcript ("[agentsdr agent]"), the recorder's warnings, and page
  * errors — the only record of what happened inside a cloud call.
  */
-function watchConsole(browser: StationBrowser | null, tag: string): void {
+export function watchConsole(browser: StationBrowser | null, tag: string): void {
   if (!browser) return;
   browser.context.on("console", (msg) => {
     const text = msg.text();

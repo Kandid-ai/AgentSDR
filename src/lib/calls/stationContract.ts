@@ -59,6 +59,8 @@ export type CallingStation = {
    * differs from `phone` — they would go out from the other number.
    */
   linkedPhone: string | null;
+  /** The call worker keeping its WhatsApp Web open right now, if any (see WorkerLeaseRequest). */
+  openOn: string | null;
 };
 
 /**
@@ -172,6 +174,29 @@ export type WorkerClaimRequest = {
   /** The launchers this worker can open; it is only given stations that use one of them. */
   launchers: StationLauncher[];
 };
+
+/**
+ * POST /api/call-worker/leases — keep numbers' WhatsApp Web open. Sent every
+ * LEASE_RENEW_MS: the worker names the stations it holds open (renewed) and
+ * how many more it can hold; it is granted new ones up to `capacity` and told
+ * which of its held ones to close (paused, logged out, moved to another
+ * launcher, deleted). A lease not renewed for LEASE_TTL_MS lapses.
+ */
+export type WorkerLeaseRequest = {
+  workerId: string;
+  launchers: StationLauncher[];
+  /** The most stations this worker keeps open at once. */
+  capacity: number;
+  held: string[];
+};
+export type WorkerLeaseResponse = {
+  /** Stations newly leased to this worker: open them. */
+  granted: WorkerStation[];
+  /** Held stations this worker must close: no longer to be kept open, or now someone else's. */
+  release: string[];
+};
+export const LEASE_TTL_MS = 60_000;
+export const LEASE_RENEW_MS = 20_000;
 
 export type WorkerStation = {
   id: string;

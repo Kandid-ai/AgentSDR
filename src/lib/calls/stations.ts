@@ -16,6 +16,7 @@ import { createRecorderToken } from "./token";
 import {
   STATION_LAUNCHERS,
   usesGoLogin,
+  LEASE_TTL_MS,
   MAX_TIMELINE_ENTRIES,
   type CallTimelineEntry,
   type CallingStation,
@@ -26,6 +27,8 @@ import {
   type WorkerCallStatus,
   type WorkerClaimRequest,
   type WorkerJob,
+  type WorkerLeaseRequest,
+  type WorkerLeaseResponse,
   type WorkerProfileCommitRequest,
   type WorkerProfileCommitResponse,
   type WorkerProfileUploadResponse,
@@ -93,6 +96,7 @@ export function toCallingStation(row: StationRow, busyCallId: string | null, pro
       savedAt: row.profileSavedAt ? row.profileSavedAt.toISOString() : null,
     },
     linkedPhone: row.linkedPhone,
+    openOn: row.leaseHolder && row.leaseUntil && row.leaseUntil.getTime() > Date.now() ? row.leaseHolder : null,
   };
 }
 
@@ -449,6 +453,14 @@ export async function claimWorkerJob(input: WorkerClaimRequest): Promise<WorkerJ
   return (await claimCall(input)) ?? (await claimLink(input));
 }
 
+/**
+ * A station this worker may run: no other worker holds it open, or that
+ * worker's lease has lapsed (see leaseStations).
+ */
+function leasableBy(workerId: string) {
+  return sql`(${callingStations.leaseHolder} IS NULL OR ${callingStations.leaseUntil} < now() OR ${callingStations.leaseHolder} = ${workerId})`;
+}
+
 /** A station is free when no claimed cloud call on it is still open. */
 const stationIsFree = sql`NOT EXISTS (
   SELECT 1 FROM call_sessions busy
@@ -476,6 +488,7 @@ async function claimCall({ workerId, launchers }: WorkerClaimRequest): Promise<W
           // Never call from a number whose WhatsApp Web is another account.
           or(isNull(callingStations.linkedPhone), eq(callingStations.linkedPhone, callingStations.phone)),
           stationIsFree,
+          leasableBy(workerId),
         ),
       )
       .orderBy(asc(callSessions.createdAt))
@@ -534,6 +547,7 @@ async function claimLink({ workerId, launchers }: WorkerClaimRequest): Promise<W
           inArray(callingStations.launcher, launchers),
           or(isNull(callingStations.linkUpdatedAt), lt(callingStations.linkUpdatedAt, new Date(Date.now() - LINK_STALE_MS))),
           stationIsFree,
+          leasableBy(workerId),
         ),
       )
       .orderBy(asc(callingStations.linkRequestedAt))
@@ -547,6 +561,86 @@ async function claimLink({ workerId, launchers }: WorkerClaimRequest): Promise<W
     return locked;
   });
   return station ? { kind: "link", station: await workerStation(station), fresh: station.linkFresh } : null;
+}
+
+// --- keeping numbers' WhatsApp Web open (leases) ------------------------------------
+
+export function parseLeaseRequest(value: unknown): WorkerLeaseRequest {
+  const { workerId, launchers } = parseWorkerClaimRequest(value);
+  const body = value as Record<string, unknown>;
+  const capacity = typeof body.capacity === "number" && Number.isInteger(body.capacity) ? Math.max(0, Math.min(50, body.capacity)) : 0;
+  if (!Array.isArray(body.held) || body.held.length > 100 || !body.held.every((id) => typeof id === "string" && UUID_PATTERN.test(id))) {
+    throw new CallApiError(400, "held must be a list of station ids");
+  }
+  return { workerId, launchers, capacity, held: body.held as string[] };
+}
+
+/**
+ * Renews the leases on the stations a worker holds open, releases its others,
+ * and grants it more up to its capacity. A station is kept open only while it
+ * is active, on one of the worker's launchers, logged in as its own number
+ * and not waiting to be relinked; granting also needs it free of any open call
+ * and of another worker's live lease. Unscoped like the rest of the worker's
+ * API: one worker serves every organization.
+ */
+export async function leaseStations(input: WorkerLeaseRequest): Promise<WorkerLeaseResponse> {
+  const { workerId, launchers, capacity, held } = input;
+  const until = new Date(Date.now() + LEASE_TTL_MS);
+  const keepOpen = and(
+    eq(callingStations.status, "active"),
+    inArray(callingStations.launcher, launchers),
+    or(isNull(callingStations.linkedPhone), eq(callingStations.linkedPhone, callingStations.phone)),
+    isNull(callingStations.linkRequestedAt),
+  );
+  const result = await db.transaction(async (tx) => {
+    const renewed = held.length
+      ? await tx
+          .update(callingStations)
+          .set({ leaseUntil: until })
+          .where(and(inArray(callingStations.id, held), eq(callingStations.leaseHolder, workerId), keepOpen))
+          .returning({ id: callingStations.id })
+      : [];
+    const kept = new Set(renewed.map((row) => row.id));
+    // Everything else this worker held is let go.
+    await tx
+      .update(callingStations)
+      .set({ leaseHolder: null, leaseUntil: null })
+      .where(
+        and(
+          eq(callingStations.leaseHolder, workerId),
+          kept.size ? sql`${callingStations.id} NOT IN (${sql.join([...kept].map((id) => sql`${id}`), sql`, `)})` : sql`true`,
+        ),
+      );
+    const room = capacity - kept.size;
+    const grantable =
+      room > 0
+        ? await tx
+            .select()
+            .from(callingStations)
+            .where(
+              and(
+                keepOpen,
+                stationIsFree,
+                sql`(${callingStations.leaseHolder} IS NULL OR ${callingStations.leaseUntil} < now())`,
+                held.length ? sql`${callingStations.id} NOT IN (${sql.join(held.map((id) => sql`${id}`), sql`, `)})` : sql`true`,
+              ),
+            )
+            .orderBy(sql`${callingStations.lastCallAt} DESC NULLS LAST`)
+            .limit(room)
+            .for("update", { skipLocked: true })
+        : [];
+    if (grantable.length) {
+      await tx
+        .update(callingStations)
+        .set({ leaseHolder: workerId, leaseUntil: until, workerId })
+        .where(inArray(callingStations.id, grantable.map((row) => row.id)));
+    }
+    return { kept, grantable };
+  });
+  return {
+    granted: await Promise.all(result.grantable.map((row) => workerStation(row))),
+    release: held.filter((id) => !result.kept.has(id)),
+  };
 }
 
 async function workerStationRow(id: string): Promise<StationRow> {

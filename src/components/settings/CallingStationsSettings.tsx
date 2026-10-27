@@ -604,6 +604,11 @@ function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, on
                   On a call
                 </Badge.Root>
               )}
+              {station.openOn && !station.busyCallId && (
+                <Badge.Root variant="light" size="medium" color="green" title={`WhatsApp Web is kept open on ${station.openOn}, so calls start right away`}>
+                  Ready on {station.openOn}
+                </Badge.Root>
+              )}
             </div>
             <p className="text-paragraph-sm tabular-nums text-text-sub-600">
               {station.phone} · {LAUNCHER_LABEL[station.launcher]}

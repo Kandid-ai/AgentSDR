@@ -12,6 +12,14 @@ number whose WhatsApp Web lives in a browser profile. The worker polls AgentSDR
 
 One job at a time per worker. Run several workers for more concurrency.
 
+With `KEEP_OPEN` > 0 the worker keeps that many numbers' WhatsApp Web open
+between calls (`src/openStations.ts`): leased from AgentSDR
+(`/api/call-worker/leases`, renewed every 20 s) so no other worker opens the
+same profile, checked every tick (closed or crashed → reopened, logged out →
+let go), and restarted every 4 hours, which saves the profile. A call on an
+open number skips the browser start and WhatsApp's load (~13 s); a link
+closes it first.
+
 ## Environment
 
 | Variable | Default | |
@@ -24,6 +32,7 @@ One job at a time per worker. Run several workers for more concurrency.
 | `PROFILES_DIR` | `~/.agentsdr-call-worker/profiles` | `local` profiles, one folder per station id |
 | `HEADLESS` | `false` | `true` for new headless Chromium |
 | `CLAIM_INTERVAL_MS` | `1000` | poll gap when idle |
+| `KEEP_OPEN` | `0` (`3` in Docker) | numbers whose WhatsApp Web stays open between calls (~0.7–1 GB RAM each); 0 opens a browser per call |
 | `CALL_TIMEOUT_MS` | 30 min | then the worker hangs up |
 | `CHROMIUM_PATH` | – | Chromium executable override |
 

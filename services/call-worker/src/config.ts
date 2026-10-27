@@ -45,6 +45,8 @@ export type Config = {
   cloakLocale: string;
   /** Keep WebRTC's UDP from leaving around a number's proxy (it then carries no call audio). */
   strictProxyUdp: boolean;
+  /** How many numbers' WhatsApp Web this worker keeps open between calls (0: open a browser per call). */
+  keepOpen: number;
 };
 
 export function loadConfig(): Config {
@@ -63,6 +65,7 @@ export function loadConfig(): Config {
     // English, which the extension needs: it finds WhatsApp's buttons by their English labels.
     cloakLocale: process.env.CLOAK_LOCALE?.trim() || "en-US",
     strictProxyUdp: process.env.STRICT_PROXY_UDP?.trim().toLowerCase() === "true",
+    keepOpen: process.env.KEEP_OPEN?.trim() === "0" ? 0 : int("KEEP_OPEN", 0),
   };
 }
 

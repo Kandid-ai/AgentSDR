@@ -1,9 +1,48 @@
-import { claim } from "./api";
+import { LEASE_RENEW_MS } from "../../../src/lib/calls/stationContract";
+import { claim, leaseStations, reportStationState } from "./api";
 import { config } from "./config";
-import { activeCallForShutdown, requestStop, runCall, runLink } from "./jobs";
+import { activeCallForShutdown, prepareWhatsApp, requestStop, runCall, runLink, watchConsole } from "./jobs";
+import { openStationBrowser } from "./launchers";
+import { OpenStations } from "./openStations";
+import { isLoginScreen } from "./whatsapp";
 import { log } from "./log";
 
 let stopping = false;
+/** Numbers kept open between calls (KEEP_OPEN > 0). */
+let openStations: OpenStations | null = null;
+
+function startOpenStations(): OpenStations {
+  const cfg = config();
+  const manager = new OpenStations(cfg.keepOpen, {
+    lease: (held, capacity) => leaseStations({ workerId: cfg.workerId, launchers: cfg.launchers, capacity, held }),
+    open: async (station) => {
+      const note = (text: string) => log(`open @ ${station.name}: ${text}`);
+      const browser = await openStationBrowser(station, { note });
+      watchConsole(browser, `open @ ${station.name}`);
+      const prepared = await prepareWhatsApp(station, browser, note).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+      if ("error" in prepared) {
+        await browser.close().catch(() => {});
+        return prepared;
+      }
+      return { browser, page: prepared.page };
+    },
+    close: (ready) => ready.browser.close(),
+    health: async (ready, station) => {
+      if (ready.page.isClosed()) return "gone";
+      if (await isLoginScreen(ready.page)) {
+        await reportStationState(station.id, { status: "logged_out", error: `WhatsApp Web on ${station.name} is logged out — link it again` }).catch(() => {});
+        return "logged_out";
+      }
+      return "ok";
+    },
+    log,
+    now: () => Date.now(),
+  });
+  const tick = () => void manager.tick();
+  tick();
+  setInterval(tick, LEASE_RENEW_MS).unref();
+  return manager;
+}
 let wake: (() => void) | null = null;
 
 function interruptibleSleep(ms: number): Promise<void> {
@@ -39,7 +78,8 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 async function main(): Promise<void> {
   const cfg = config();
-  log(`call worker ${cfg.workerId} -> ${cfg.agentsdrUrl}, launchers: ${cfg.launchers.join(", ")}, headless: ${cfg.headless}`);
+  log(`call worker ${cfg.workerId} -> ${cfg.agentsdrUrl}, launchers: ${cfg.launchers.join(", ")}, headless: ${cfg.headless}, keeps open: ${cfg.keepOpen}`);
+  if (cfg.keepOpen > 0) openStations = startOpenStations();
   let backoff = 0;
   while (!stopping) {
     try {
@@ -50,14 +90,26 @@ async function main(): Promise<void> {
         continue;
       }
       log(`claimed ${job.kind} job for station ${job.station.name}`);
-      if (job.kind === "call") await runCall(job);
-      else await runLink(job);
+      if (job.kind === "call") {
+        const open = (await openStations?.acquire(job.station.id)) ?? null;
+        try {
+          await runCall(job, open);
+        } finally {
+          await openStations?.done(job.station.id);
+        }
+      } else {
+        // Its profile must not be open twice.
+        await openStations?.closeFor(job.station.id);
+        await runLink(job);
+      }
     } catch (e) {
       backoff = Math.min(backoff ? backoff * 2 : 1000, 30_000);
       log(`error: ${e instanceof Error ? e.message : String(e)} (retry in ${backoff / 1000}s)`);
       await interruptibleSleep(backoff);
     }
   }
+  // Close the open numbers, saving their profiles, and give their leases back.
+  await openStations?.shutdown();
   log("stopped");
   process.exit(0);
 }

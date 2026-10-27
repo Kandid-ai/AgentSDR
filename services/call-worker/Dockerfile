@@ -34,6 +34,7 @@ ENV EXTENSION_PATH=/app/extensions/whatsapp-recorder/dist \
     PROFILES_DIR=/data/profiles \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     LAUNCHERS=gologin_sdk \
+    KEEP_OPEN=3 \
     CLOAK_TIMEZONE=Asia/Kolkata
 # /data/profiles holds the cloak/local launchers' browser profiles (WhatsApp's
 # login, CloakBrowser's fingerprint). GoLogin keeps its profiles in its own

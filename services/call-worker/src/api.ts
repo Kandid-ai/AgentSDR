@@ -6,6 +6,8 @@ import type {
   WorkerCallStatus,
   WorkerClaimRequest,
   WorkerClaimResponse,
+  WorkerLeaseRequest,
+  WorkerLeaseResponse,
   WorkerReleaseRequest,
   WorkerStationStateRequest,
 } from "../../../src/lib/calls/stationContract";
@@ -46,6 +48,10 @@ async function request<T>(method: "GET" | "POST", path: string, body?: unknown):
 
 export function claim(body: WorkerClaimRequest): Promise<WorkerClaimResponse> {
   return request("POST", "/api/call-worker/claim", body);
+}
+
+export function leaseStations(body: WorkerLeaseRequest): Promise<WorkerLeaseResponse> {
+  return request("POST", "/api/call-worker/leases", body);
 }
 
 export async function reportStationState(stationId: string, body: WorkerStationStateRequest): Promise<void> {

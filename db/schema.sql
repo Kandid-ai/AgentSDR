@@ -1076,6 +1076,8 @@ CREATE TABLE public.calling_stations (
     profile_saved_at timestamp with time zone,
     linked_phone text,
     link_fresh boolean DEFAULT false NOT NULL,
+    lease_holder text,
+    lease_until timestamp with time zone,
     CONSTRAINT calling_stations_launcher_chk CHECK ((launcher = ANY (ARRAY['cloak'::text, 'local'::text, 'gologin_sdk'::text, 'gologin_cloud'::text]))),
     CONSTRAINT calling_stations_seed_chk CHECK (((fingerprint_seed >= 10000) AND (fingerprint_seed <= 99999))),
     CONSTRAINT calling_stations_status_chk CHECK ((status = ANY (ARRAY['onboarding'::text, 'active'::text, 'paused'::text, 'logged_out'::text, 'banned'::text])))
