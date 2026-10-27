@@ -65,6 +65,7 @@ export const SCOPED_TABLES: readonly ScopedTable[] = [
   snake("calling_proxies"),
   snake("calling_stations"),
   snake("call_messages"),
+  snake("station_message_jobs"),
   snake("whatsapp_accounts"),
   snake("whatsapp_campaigns"),
   // LinkedIn (ex-Prisma, camelCase columns)
@@ -106,6 +107,8 @@ export const INHERITED: Readonly<Record<string, string>> = {
   grid_cell_runs: "grid_tables",
   grid_provider_credentials: "grid_providers",
   call_campaign_contacts: "call_campaigns",
+  call_campaign_stations: "call_campaigns",
+  call_campaign_step_runs: "call_campaign_contacts",
   whatsapp_chats: "whatsapp_accounts",
   whatsapp_messages: "whatsapp_chats",
   whatsapp_campaign_accounts: "whatsapp_campaigns",

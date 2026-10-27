@@ -52,6 +52,14 @@ export const whatsappAccounts = pgTable(
     isDefault: boolean("is_default").notNull().default(false),
     /** New chats a day for this number; null = the organization's rule (Settings → WhatsApp → Sending rules). */
     newChatsPerDay: integer("new_chats_per_day"),
+    /**
+     * Where its messages go through: Unipile, or AgentSDR's own automation in
+     * a calling station's WhatsApp Web (station_id set; unipile_account_id is
+     * then "station:<station id>", never a real Unipile id).
+     * scripts/add-ai-calling-campaigns.ts.
+     */
+    provider: text("provider").notNull().default("unipile").$type<"unipile" | "station">(),
+    stationId: uuid("station_id"),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -59,6 +67,8 @@ export const whatsappAccounts = pgTable(
   (table) => [
     index("whatsapp_accounts_organization_idx").on(table.organizationId),
     unique("whatsapp_accounts_unipile_account_uq").on(table.unipileAccountId),
+    uniqueIndex("whatsapp_accounts_station_uq").on(table.stationId).where(sql`${table.stationId} IS NOT NULL`),
+    check("whatsapp_accounts_provider_chk", sql`${table.provider} IN ('unipile', 'station') AND ((${table.provider} = 'station') = (${table.stationId} IS NOT NULL))`),
     check(
       "whatsapp_accounts_status_chk",
       sql`${table.status} IN ('connected', 'disconnected', 'credentials', 'error')`,

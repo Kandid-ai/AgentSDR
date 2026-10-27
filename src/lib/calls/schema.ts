@@ -7,12 +7,15 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { WeeklyHours } from "@/lib/channels/rules";
+import type { AiCallResult, AiCampaignGoal, AiCampaignStep, AiContactStatus, AiStepRunKind, AiStepRunStatus } from "./aiCampaigns/contract";
 import { crmRecords } from "@/lib/crm/schema";
 import { people } from "@/lib/leads/schema";
 import type {
@@ -118,6 +121,14 @@ export const callingStations = pgTable(
     profileSavedAt: timestamp("profile_saved_at", { withTimezone: true }),
     /** The account its WhatsApp Web is logged in as (E.164), as the worker last read it. */
     linkedPhone: text("linked_phone"),
+    /** AI campaign calls a day from this number; null = the organization's rule. scripts/add-ai-calling-campaigns.ts. */
+    callsPerDay: integer("calls_per_day"),
+    /** When AI campaigns may call from this number; null = the organization's rule (WeeklyHours). */
+    callingHours: jsonb("calling_hours").$type<WeeklyHours>(),
+    /** AI campaigns place no call from it before this (the random gap after the last). */
+    nextCallAt: timestamp("next_call_at", { withTimezone: true }),
+    /** Its first AI campaign call: starts the warm-up ramp. */
+    automationStartedAt: timestamp("automation_started_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -153,6 +164,23 @@ export const callCampaigns = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     status: text("status").notNull().default("active").$type<CallCampaignStatus>(),
+    /**
+     * Who places the calls: a rep working through the list, or the AI agent
+     * on its own (src/lib/calls/aiCampaigns/). scripts/add-ai-calling-campaigns.ts
+     * adds this and every ai_* column below.
+     */
+    runBy: text("run_by").notNull().default("rep").$type<"rep" | "ai">(),
+    aiGoal: text("ai_goal").notNull().default("book_meeting").$type<AiCampaignGoal>(),
+    aiInstructions: text("ai_instructions").notNull().default(""),
+    aiAgentName: text("ai_agent_name"),
+    aiAgentVoice: text("ai_agent_voice"),
+    aiSteps: jsonb("ai_steps").$type<AiCampaignStep[]>().notNull().default([]),
+    aiChaseSteps: jsonb("ai_chase_steps").$type<AiCampaignStep[]>().notNull().default([]),
+    aiBookingUrl: text("ai_booking_url"),
+    aiBookingMessage: text("ai_booking_message"),
+    aiMaxCallbacks: integer("ai_max_callbacks").notNull().default(2),
+    /** First switched on; a draft AI campaign (null) places no calls. */
+    aiLaunchedAt: timestamp("ai_launched_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -161,6 +189,25 @@ export const callCampaigns = pgTable(
     index("call_campaigns_organization_idx").on(table.organizationId),
     check("call_campaigns_name_chk", sql`length(btrim(${table.name})) > 0`),
     check("call_campaigns_status_chk", sql`${table.status} IN ('active', 'paused')`),
+    check("call_campaigns_run_by_chk", sql`${table.runBy} IN ('rep', 'ai')`),
+    check("call_campaigns_ai_goal_chk", sql`${table.aiGoal} IN ('book_meeting', 'human_callback', 'either')`),
+    check("call_campaigns_ai_max_callbacks_chk", sql`${table.aiMaxCallbacks} BETWEEN 0 AND 3`),
+  ],
+);
+
+/** The calling numbers an AI campaign places its calls (and sends its messages) from. */
+export const callCampaignStations = pgTable(
+  "call_campaign_stations",
+  {
+    campaignId: uuid("campaign_id").notNull(),
+    stationId: uuid("station_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "call_campaign_stations_pkey", columns: [table.campaignId, table.stationId] }),
+    foreignKey({ columns: [table.campaignId], foreignColumns: [callCampaigns.id], name: "call_campaign_stations_campaign_fk" }).onDelete("cascade"),
+    foreignKey({ columns: [table.stationId], foreignColumns: [callingStations.id], name: "call_campaign_stations_station_fk" }).onDelete("cascade"),
+    index("call_campaign_stations_station_idx").on(table.stationId),
   ],
 );
 
@@ -192,6 +239,20 @@ export const callCampaignContacts = pgTable(
     notes: text("notes"),
     callCount: integer("call_count").notNull().default(0),
     lastCalledAt: timestamp("last_called_at", { withTimezone: true }),
+    /** AI campaigns only (null for a rep's list): where the lead stands; see aiCampaigns/contract.ts. */
+    aiStatus: text("ai_status").$type<AiContactStatus>(),
+    /** The next step of the sequence its status runs (steps or chase steps), 0-based. */
+    aiStep: integer("ai_step").notNull().default(0),
+    /** When the engine may act on it next. */
+    aiNextAt: timestamp("ai_next_at", { withTimezone: true }),
+    /** The number it is called from, fixed by its first call so a lead always hears the same number. */
+    aiStationId: uuid("ai_station_id"),
+    aiCallbacks: integer("ai_callbacks").notNull().default(0),
+    /** Failed attempts at the current step (worker errors); the lead fails after a few. */
+    aiFailures: integer("ai_failures").notNull().default(0),
+    /** Why it stopped or failed, or the last error, for the person reading the list. */
+    aiNote: text("ai_note"),
+    aiBookedAt: timestamp("ai_booked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -201,6 +262,12 @@ export const callCampaignContacts = pgTable(
       foreignColumns: [callCampaigns.id],
       name: "call_campaign_contacts_campaign_fk",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.aiStationId],
+      foreignColumns: [callingStations.id],
+      name: "call_campaign_contacts_ai_station_fk",
+    }).onDelete("set null"),
+    index("call_campaign_contacts_ai_due_idx").on(table.aiStatus, table.aiNextAt).where(sql`${table.aiStatus} IS NOT NULL`),
     foreignKey({
       columns: [table.personId],
       foreignColumns: [people.id],
@@ -215,6 +282,80 @@ export const callCampaignContacts = pgTable(
       sql`${table.callStatus} IN ('new', 'calling', 'no_answer', 'busy', 'connected', 'not_on_whatsapp', 'wrong_number', 'failed')`,
     ),
     check("call_campaign_contacts_unanswered_attempts_chk", sql`${table.unansweredAttempts} >= 0`),
+    check(
+      "call_campaign_contacts_ai_status_chk",
+      sql`${table.aiStatus} IS NULL OR ${table.aiStatus} IN ('queued', 'reaching', 'callback', 'chasing', 'booked', 'handoff', 'not_interested', 'unreached', 'replied', 'stopped', 'failed')`,
+    ),
+  ],
+);
+
+/**
+ * A WhatsApp message for a calling station's worker to send through the
+ * number's own WhatsApp Web (AgentSDR's messaging, no Unipile). The message
+ * itself is a whatsapp_messages row reserved before sending (origin
+ * 'agentsdr'); this is the worker's queue entry for it. A station sends one
+ * thing at a time: a call and a message never share its page.
+ * scripts/add-ai-calling-campaigns.ts.
+ */
+export const stationMessageJobs = pgTable(
+  "station_message_jobs",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    id: uuid("id").primaryKey().defaultRandom(),
+    stationId: uuid("station_id").notNull(),
+    whatsappMessageId: uuid("whatsapp_message_id").notNull(),
+    /** E.164. */
+    phone: text("phone").notNull(),
+    body: text("body").notNull(),
+    status: text("status").notNull().default("queued").$type<"queued" | "claimed" | "sent" | "failed">(),
+    claimedBy: text("claimed_by"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("station_message_jobs_organization_idx").on(table.organizationId),
+    index("station_message_jobs_queue_idx").on(table.stationId, table.createdAt).where(sql`${table.status} IN ('queued', 'claimed')`),
+    unique("station_message_jobs_message_uq").on(table.whatsappMessageId),
+    foreignKey({ columns: [table.stationId], foreignColumns: [callingStations.id], name: "station_message_jobs_station_fk" }).onDelete("cascade"),
+    check("station_message_jobs_status_chk", sql`${table.status} IN ('queued', 'claimed', 'sent', 'failed')`),
+  ],
+);
+
+/**
+ * Each action an AI campaign took for a lead: a call placed or a WhatsApp
+ * sent. Inserted before the action, and unique per (lead, step key), so a
+ * crash or a second engine can never repeat it; finished when the call or
+ * message settles. Step keys: aiCampaigns/contract.ts.
+ */
+export const callCampaignStepRuns = pgTable(
+  "call_campaign_step_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    contactId: uuid("contact_id").notNull(),
+    stepKey: text("step_key").notNull(),
+    kind: text("kind").notNull().$type<AiStepRunKind>(),
+    status: text("status").notNull().default("started").$type<AiStepRunStatus>(),
+    stationId: uuid("station_id"),
+    callSessionId: uuid("call_session_id"),
+    whatsappMessageId: uuid("whatsapp_message_id"),
+    /** For a call: what it amounted to (AiCallResult). For a message: null. */
+    result: text("result").$type<AiCallResult>(),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({ columns: [table.contactId], foreignColumns: [callCampaignContacts.id], name: "call_campaign_step_runs_contact_fk" }).onDelete("cascade"),
+    unique("call_campaign_step_runs_contact_step_uq").on(table.contactId, table.stepKey),
+    index("call_campaign_step_runs_call_idx").on(table.callSessionId),
+    index("call_campaign_step_runs_message_idx").on(table.whatsappMessageId),
+    index("call_campaign_step_runs_open_idx").on(table.status).where(sql`${table.status} = 'started'`),
+    check("call_campaign_step_runs_kind_chk", sql`${table.kind} IN ('call', 'message')`),
+    check("call_campaign_step_runs_status_chk", sql`${table.status} IN ('started', 'done', 'failed')`),
   ],
 );
 

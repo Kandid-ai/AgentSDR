@@ -629,19 +629,23 @@ export type AgentTokenRequest = { brief: string; lead: RecorderLead | null; name
 export const AGENT_OUTCOMES = [
   "meeting_booked",
   "interested",
+  "human_callback",
   "call_back",
   "not_interested",
   "wrong_person",
+  "do_not_contact",
   "no_response",
   "other",
 ] as const;
 export type AgentOutcomeKind = (typeof AGENT_OUTCOMES)[number];
 export const AGENT_OUTCOME_LABELS: Record<AgentOutcomeKind, string> = {
-  meeting_booked: "Meeting booked",
+  meeting_booked: "Meeting agreed",
   interested: "Interested",
+  human_callback: "Wants the team to call",
   call_back: "Call back",
   not_interested: "Not interested",
   wrong_person: "Wrong person",
+  do_not_contact: "Do not contact",
   no_response: "No response",
   other: "Other",
 };
@@ -653,6 +657,8 @@ export type AgentOutcome = {
   summary: string | null;
   /** The meeting or call-back time as agreed, in the person's words ("Thursday around 4"). */
   when: string | null;
+  /** The same time as an exact instant (ISO 8601 with offset), when the agent could work it out. */
+  whenAt?: string | null;
   recordedAt: string;
 };
 

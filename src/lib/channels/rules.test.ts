@@ -22,7 +22,7 @@ describe("registry", () => {
       invitesPerDayPremium: 30, invitesPerDayFree: 5, invitesPerRun: [3, 4], inviteDelaySeconds: [30, 60],
       runGapMinutes: [30, 60], followUpsPerRun: [3, 6], profileLookupsPerRun: [4, 8], searchLeadsPerDay: 400,
     });
-    expect(defaultValues("whatsapp")).toEqual({ sendingHours: null, warmupHours: 24, newChatsPerDay: 25, secondsBetweenSends: 10, crmFollowUpGapMinutes: 30 });
+    expect(defaultValues("whatsapp")).toEqual({ sendingHours: null, warmupHours: 24, newChatsPerDay: 25, secondsBetweenSends: 10, crmFollowUpGapMinutes: 30, callsPerDay: 30, callWarmupDays: 14, callGapMinutes: [3, 6], callingHours: { timezone: "Asia/Kolkata", days: [1, 2, 3, 4, 5, 6], start: "12:00", end: "19:00" } });
     // Accounts without their own hours send at any time today.
     expect(defaultValues("linkedin").workingHours).toBeNull();
   });
@@ -82,7 +82,7 @@ describe("validation", () => {
 describe("resolveValues", () => {
   test("stored values override defaults; invalid or unknown ones fall back", () => {
     const resolved = resolveValues("whatsapp", { newChatsPerDay: 40, secondsBetweenSends: 1, legacy: true });
-    expect(resolved).toEqual({ sendingHours: null, warmupHours: 24, newChatsPerDay: 40, secondsBetweenSends: 10, crmFollowUpGapMinutes: 30 });
+    expect(resolved).toEqual({ sendingHours: null, warmupHours: 24, newChatsPerDay: 40, secondsBetweenSends: 10, crmFollowUpGapMinutes: 30, callsPerDay: 30, callWarmupDays: 14, callGapMinutes: [3, 6], callingHours: { timezone: "Asia/Kolkata", days: [1, 2, 3, 4, 5, 6], start: "12:00", end: "19:00" } });
   });
   test("nothing stored means today's defaults", () => {
     expect(resolveValues("email", null)).toEqual(defaultValues("email"));
@@ -105,6 +105,7 @@ test("WhatsApp's contract constants (shown by the recorder and the website, kept
     newChatsPerDay: contract.WHATSAPP_NEW_CHATS_PER_DAY,
     secondsBetweenSends: contract.WHATSAPP_MIN_SECONDS_BETWEEN_SENDS,
     crmFollowUpGapMinutes: 30,
+    callsPerDay: 30, callWarmupDays: 14, callGapMinutes: [3, 6], callingHours: { timezone: "Asia/Kolkata", days: [1, 2, 3, 4, 5, 6], start: "12:00", end: "19:00" },
   });
 });
 

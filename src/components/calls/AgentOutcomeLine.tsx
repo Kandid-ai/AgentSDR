@@ -4,12 +4,14 @@ import { AGENT_OUTCOME_LABELS, type AgentOutcome } from "@/lib/calls/contract";
 const COLOR = {
   meeting_booked: "green",
   interested: "green",
+  human_callback: "green",
   call_back: "blue",
   not_interested: "red",
   wrong_person: "orange",
+  do_not_contact: "red",
   no_response: "gray",
   other: "gray",
-} as const;
+} as const satisfies Record<AgentOutcome["outcome"], string>;
 
 /** What the AI agent reported with record_outcome: a badge, when, and a one-line summary. */
 export function AgentOutcomeLine({ outcome }: { outcome: AgentOutcome }) {
