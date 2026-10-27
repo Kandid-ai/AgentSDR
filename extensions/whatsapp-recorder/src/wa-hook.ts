@@ -229,6 +229,16 @@ async function describeCallTransport(): Promise<string[]> {
     if (!stats) continue;
     const byId = new Map<string, Record<string, unknown>>();
     stats.forEach((report) => byId.set(report.id, report as Record<string, unknown>));
+    // Which routes ICE found at all: no udp srflx means UDP never got an answer from the network.
+    const counts = new Map<string, number>();
+    for (const report of byId.values()) {
+      if (report.type !== "local-candidate") continue;
+      const key = `${report.candidateType}/${report.protocol}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const udpPairs = [...byId.values()].filter((r) => r.type === "candidate-pair" && byId.get(String(r.localCandidateId))?.protocol === "udp");
+    const udpStates = udpPairs.map((r) => String(r.state)).join(",") || "none";
+    lines.push(`peer ${pc.connectionState} found: ${[...counts].map(([k, n]) => `${k}×${n}`).join(" ") || "no local candidates"}; udp pairs: ${udpStates}`);
     const pair = [...byId.values()].find((r) => r.type === "candidate-pair" && (r.nominated || r.selected) && r.state === "succeeded");
     if (!pair) {
       lines.push(`peer ${pc.connectionState}, no selected route yet`);

@@ -1,4 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { createSocket } from "node:dgram";
 import { lookup } from "node:dns/promises";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -151,10 +153,57 @@ export async function startTunnel(proxy: WorkerProxy, dir: string, log: (text: s
     throw new Error(`could not route UDP into the tunnel: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
   }
   log(`tunnel: up — UDP goes through ${server.host}; TCP untouched`);
+  // Proof, not hope: ask a public STUN server which address our UDP comes from.
+  const seen = await stunPublicAddress().catch((error: unknown) => `failed (${error instanceof Error ? error.message : String(error)})`);
+  log(
+    seen === proxyIp
+      ? `tunnel: UDP check passed — STUN sees ${seen}, the proxy's IP`
+      : `tunnel: UDP check FAILED — STUN answered ${seen}, expected the proxy's ${proxyIp}; call audio will fall back to TCP`,
+  );
   return {
     stop: async () => {
       await unroute();
       await stopSingBox();
     },
   };
+}
+
+/** The public IPv4 address a STUN server sees for our UDP (RFC 5389 binding request), or throws on no answer. */
+export function stunPublicAddress(host = "stun.l.google.com", port = 19302, timeoutMs = 5_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = createSocket("udp4");
+    const id = randomBytes(12);
+    const request = Buffer.alloc(20);
+    request.writeUInt16BE(0x0001, 0); // binding request
+    request.writeUInt16BE(0, 2);
+    request.writeUInt32BE(0x2112a442, 4); // magic cookie
+    id.copy(request, 8);
+    const timer = setTimeout(() => {
+      socket.close();
+      reject(new Error(`no answer from ${host}:${port} in ${timeoutMs / 1000} s`));
+    }, timeoutMs);
+    socket.on("message", (message) => {
+      clearTimeout(timer);
+      socket.close();
+      // Walk the attributes for XOR-MAPPED-ADDRESS (0x0020) or MAPPED-ADDRESS (0x0001).
+      for (let at = 20; at + 4 <= message.length; ) {
+        const type = message.readUInt16BE(at);
+        const length = message.readUInt16BE(at + 2);
+        const value = message.subarray(at + 4, at + 4 + length);
+        if ((type === 0x0020 || type === 0x0001) && value[1] === 0x01) {
+          const raw = value.readUInt32BE(4) ^ (type === 0x0020 ? 0x2112a442 : 0);
+          resolve([raw >>> 24, (raw >>> 16) & 255, (raw >>> 8) & 255, raw & 255].join("."));
+          return;
+        }
+        at += 4 + length + ((4 - (length % 4)) % 4);
+      }
+      reject(new Error("the STUN answer had no address"));
+    });
+    socket.on("error", (error) => {
+      clearTimeout(timer);
+      socket.close();
+      reject(error);
+    });
+    socket.send(request, port, host);
+  });
 }
