@@ -22,6 +22,8 @@ const KIND_LABELS: Record<string, string> = {
 /** What a call reads of the selected documents (liveAgent.ts budgetKnowledge): each cut to 5,000 characters, 12,000 in all. */
 const PER_DOCUMENT_CHARS = 5_000;
 const TOTAL_CHARS = 12_000;
+/** Chips shown in the closed dropdown before "+N". */
+const MAX_CHIPS = 4;
 
 /**
  * Which CRM Knowledge documents an AI campaign's calls know: a dropdown of the
@@ -78,17 +80,16 @@ export function KnowledgePicker({ value, onChange, disabled }: {
     onChange((options ?? []).filter((option) => next.has(option.id)).map((option) => option.id));
   };
 
+  // The closed dropdown names what is picked: each title as a short chip ("Kandid Dyna…").
   const summary = options === null
     ? "Loading…"
     : !options.length
       ? "No Knowledge documents yet"
       : !chosen.length
         ? "None — the calls only know the instructions"
-        : allSelected
-          ? `All ${options.length} documents`
-          : chosen.length <= 2
-            ? chosen.map((option) => option.title).join(", ")
-            : `${chosen.length} of ${options.length} documents`;
+        : null;
+  const shown = chosen.slice(0, MAX_CHIPS);
+  const hidden = chosen.length - shown.length;
 
   return (
     <div className="space-y-1.5">
@@ -100,7 +101,18 @@ export function KnowledgePicker({ value, onChange, disabled }: {
             aria-label="Knowledge documents"
           >
             {options === null ? <RiLoader4Line className="size-4 shrink-0 animate-spin text-text-soft-400" /> : <RiBookOpenLine className="size-4 shrink-0 text-text-soft-400" />}
-            <span className="min-w-0 flex-1 truncate">{summary}</span>
+            {summary !== null ? (
+              <span className="min-w-0 flex-1 truncate">{summary}</span>
+            ) : (
+              <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden" title={chosen.map((option) => option.title).join(", ")}>
+                {shown.map((option) => (
+                  <span key={option.id} className="max-w-[9rem] shrink truncate rounded-md bg-bg-weak-50 px-1.5 py-0.5 text-label-xs text-text-sub-600 ring-1 ring-inset ring-stroke-soft-200">
+                    {option.title}
+                  </span>
+                ))}
+                {hidden > 0 && <span className="shrink-0 text-label-xs text-text-soft-400">+{hidden}</span>}
+              </span>
+            )}
             <RiArrowDownSLine className="size-4 shrink-0 text-text-soft-400" />
           </button>
         </Popover.Trigger>
