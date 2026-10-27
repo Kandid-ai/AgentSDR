@@ -172,6 +172,11 @@ async function placeCall(next: WaCall): Promise<void> {
   trace(next.callId, `WhatsApp tab: placing the call (agent ${next.agent}, station ${next.station}, speakers ${!next.station})`);
   trace(next.callId, "WhatsApp tab: looking for the Voice call button");
   toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent, monitor: !next.station });
+  // The AI's session opens now, not when WhatsApp's call session starts: that
+  // came 4 s after Voice call on the call worker, and a lead who picked up at
+  // once found the AI not ready, so its greeting could not be prepared while
+  // WhatsApp connected (27 Oct 2026).
+  if (next.agent) startAgent(next.callId);
   phase({ kind: "opening" });
 
   const savedName = whatsappContactName(next.lead)?.display ?? null;
@@ -181,8 +186,10 @@ async function placeCall(next: WaCall): Promise<void> {
     void send({ target: "background", type: "wa:dialed", callId: next.callId, pressed: true });
     phase({ kind: "calling" });
   } else if (outcome === "not-on-whatsapp") {
+    stopAgent();
     reportNotOnWhatsApp(next);
   } else if (outcome === "no-call-button") {
+    stopAgent();
     reportNotOnWhatsApp(next, true);
   } else {
     // Counted as dialed so a later reload of this tab never dials on its own;
@@ -650,7 +657,8 @@ function onHookMessage(event: MessageEvent): void {
   switch (data.type) {
     case "dialing":
       phase({ kind: "ringing" });
-      if (call.agent) startAgent(callId);
+      // Opened when the call was placed; a call dialed by hand starts it here.
+      if (call.agent && agentCallId !== callId) startAgent(callId);
       break;
     case "agent-audio":
       agent?.sendAudio(data.pcm);

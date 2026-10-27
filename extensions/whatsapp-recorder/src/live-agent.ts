@@ -62,6 +62,8 @@ export class LiveAgent {
   private heardThisTurn = "";
   /** The greeting was asked for during "Connecting…"; its audio is held until the pick-up. */
   private greetPrepared = false;
+  private prepareWhenReady = false;
+  private pickedUp = false;
   private holding = false;
   private held: [ArrayBuffer, number][] = [];
   /** The test option's copy of exactly what is sent to the model (null when off). */
@@ -107,7 +109,12 @@ export class LiveAgent {
    * ~1 s to start speaking.
    */
   prepareGreeting(): void {
-    if (!this.ready || this.greetPrepared || this.leadSpoke) return;
+    if (this.greetPrepared || this.leadSpoke) return;
+    // Not connected to the model yet: prepare it the moment the session is ready.
+    if (!this.ready) {
+      this.prepareWhenReady = true;
+      return;
+    }
     this.greetPrepared = true;
     this.holding = true;
     this.handlers.trace("AI agent: lead accepted — preparing the greeting while WhatsApp connects");
@@ -115,6 +122,8 @@ export class LiveAgent {
   }
 
   greet(): void {
+    this.pickedUp = true;
+    this.prepareWhenReady = false;
     if (this.greetPrepared) {
       this.holding = false;
       const held = this.held.splice(0);
@@ -208,6 +217,7 @@ export class LiveAgent {
       this.ready = true;
       this.handlers.trace("AI agent: session ready");
       if (this.greetPending) this.sendGreeting();
+      else if (this.prepareWhenReady && !this.pickedUp) this.prepareGreeting();
       return;
     }
 
