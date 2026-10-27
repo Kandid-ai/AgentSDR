@@ -202,13 +202,37 @@ function fixIgnoredSampleRates(): boolean {
  * this says why. Watching only — the connections are not changed.
  */
 const peers = new Set<WeakRef<RTCPeerConnection>>();
+/** Notes on the peer connections (servers asked for, gathering time), logged with the call's transport. */
+const peerNotes: string[] = [];
+/**
+ * On a cloud station, WhatsApp's STUN (UDP) servers are taken out of each new
+ * peer connection's configuration. WhatsApp's call servers never completed UDP
+ * from the call worker, and the browser spent ~4 s on UDP before the call
+ * rang; GoLogin overrides Chromium's own WebRTC flags, so this happens here,
+ * in the page (27 Oct 2026). The call's TCP route comes from WhatsApp's relay
+ * candidates and needs no STUN. Set when a station call is armed.
+ */
+let stripUdpServers = false;
+
 function trackPeerConnections(): void {
   const Native = window.RTCPeerConnection;
   if (!Native) return;
   class TrackedPeerConnection extends Native {
     constructor(configuration?: RTCConfiguration) {
-      super(configuration);
+      const servers = configuration?.iceServers ?? [];
+      const urlsOf = (server: RTCIceServer) => (Array.isArray(server.urls) ? server.urls : [server.urls]);
+      const isUdp = (url: string) => /^stun:/i.test(url) || (/^turn:/i.test(url) && !/transport=tcp/i.test(url));
+      const kept = stripUdpServers
+        ? servers.map((server) => ({ ...server, urls: urlsOf(server).filter((url) => !isUdp(url)) })).filter((server) => server.urls.length)
+        : servers;
+      const describe = (list: RTCIceServer[]) => list.flatMap(urlsOf).map((url) => url.replace(/\?.*$/, "")).join(" ") || "none";
+      super(stripUdpServers ? { ...configuration, iceServers: kept } : configuration);
       peers.add(new WeakRef(this));
+      const madeAt = performance.now();
+      peerNotes.push(`peer made with ICE servers: ${describe(servers)}${stripUdpServers ? ` → kept: ${describe(kept)}` : ""}`);
+      this.addEventListener("icegatheringstatechange", () => {
+        if (this.iceGatheringState === "complete") peerNotes.push(`peer gathered its routes in ${Math.round(performance.now() - madeAt)} ms`);
+      });
     }
   }
   Object.defineProperty(TrackedPeerConnection, "name", { value: "RTCPeerConnection" });
@@ -217,7 +241,7 @@ function trackPeerConnections(): void {
 
 /** One line per live peer connection: the selected route and its round-trip time. */
 async function describeCallTransport(): Promise<string[]> {
-  const lines: string[] = [];
+  const lines: string[] = peerNotes.splice(0);
   for (const ref of peers) {
     const pc = ref.deref();
     if (!pc) {
@@ -412,6 +436,8 @@ function install(): void {
     armedCallId = callId;
     armedAgent = agent;
     armedMonitor = monitor;
+    // A cloud station's call (no one listening at the machine): no UDP servers, see trackPeerConnections.
+    stripUdpServers = !monitor;
     armedAt = Date.now();
     armSawCallUi = false;
     armCallUiMissing = 0;
