@@ -18,6 +18,7 @@ export async function verifyPlatformCredentials<K extends PlatformKey>(
   if (key === "google") return verifyGoogle(credentials as PlatformCredentials["google"]);
   if (key === "r2") return verifyR2(credentials as PlatformCredentials["r2"]);
   if (key === "gologin") return verifyGoLogin(credentials as PlatformCredentials["gologin"]);
+  if (key === "calcom") return verifyCalcom(credentials as PlatformCredentials["calcom"]);
   throw new Error("Unknown integration");
 }
 
@@ -48,6 +49,26 @@ async function verifyGoLogin({ apiToken }: PlatformCredentials["gologin"]): Prom
     throw new Error("Could not reach GoLogin");
   }
   if (!response.ok) throw new Error(`GoLogin didn't accept this token (HTTP ${response.status})`);
+}
+
+/**
+ * The webhook secret cannot be checked against Cal.com (it is ours as much as
+ * theirs): it only has to be there. An API key, when given, gets one call.
+ */
+async function verifyCalcom({ webhookSecret, apiKey }: PlatformCredentials["calcom"]): Promise<void> {
+  if (webhookSecret.length < 8) throw new Error("Use a webhook secret of at least 8 characters");
+  if (!apiKey) return;
+  let response: Response;
+  try {
+    response = await fetch("https://api.cal.com/v2/me", {
+      headers: { Authorization: `Bearer ${apiKey}`, accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    throw new Error("Could not reach Cal.com");
+  }
+  if (response.status === 401 || response.status === 403) throw new Error("Cal.com didn't accept this API key");
+  if (!response.ok) throw new Error(`Cal.com answered ${response.status}`);
 }
 
 async function verifyGoogle(credentials: PlatformCredentials["google"]): Promise<void> {

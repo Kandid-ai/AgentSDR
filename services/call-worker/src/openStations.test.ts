@@ -8,7 +8,7 @@ const station = (id: string): WorkerStation =>
 const ready = (id: string) => ({ browser: { id }, page: { id } }) as unknown as ReadyWhatsApp;
 
 /** A fake AgentSDR and fake browsers, recording what the manager did. */
-function harness(options: { openFails?: number } = {}) {
+function harness(options: { openFails?: number; messageWaitMs?: number } = {}) {
   let now = 1_000;
   let failsLeft = options.openFails ?? 0;
   const events: string[] = [];
@@ -35,7 +35,7 @@ function harness(options: { openFails?: number } = {}) {
     log: () => {},
     now: () => now,
   };
-  const manager = new OpenStations(3, deps, 10_000);
+  const manager = new OpenStations(3, deps, 10_000, options.messageWaitMs ?? 1_000);
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   return {
     manager,
@@ -151,5 +151,97 @@ describe("OpenStations", () => {
     finishClose();
     await stopping;
     expect(shutDown).toBe(true);
+  });
+
+  test("a message takes only a ready, unused number, and holds it against checks and other messages", async () => {
+    const h = harness();
+    h.grant("a");
+    h.grant("b");
+    await h.tick();
+    expect(h.manager.idleReady().map((r) => r.station.id)).toEqual(["a", "b"]);
+    const hold = h.manager.acquireIdle("a");
+    expect(hold?.ready).toEqual(ready("a"));
+    expect(h.manager.acquireIdle("a")).toBeNull();
+    expect(h.manager.idleReady().map((r) => r.station.id)).toEqual(["b"]);
+    h.health.set("a", "gone");
+    h.advance(20_000);
+    await h.tick();
+    expect(h.events.filter((e) => e.endsWith(" a"))).toEqual(["open a"]);
+    await hold!.done();
+    await hold!.done(); // twice is harmless
+    expect(h.manager.idleReady().map((r) => r.station.id)).toContain("a");
+  });
+
+  test("a number in a call is not given to a message, and a message ending does not clear the call", async () => {
+    const h = harness();
+    h.grant("a");
+    await h.tick();
+    await h.manager.acquire("a");
+    expect(h.manager.idleReady()).toEqual([]);
+    expect(h.manager.acquireIdle("a")).toBeNull();
+    await h.manager.done("a");
+    const hold = h.manager.acquireIdle("a")!;
+    // A call arriving now waits for the message; the message ending leaves the call's hold in place.
+    const call = h.manager.acquire("a");
+    let got: unknown = "pending";
+    void call.then((r) => (got = r));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(got).toBe("pending");
+    await hold.done();
+    expect(await call).toEqual(ready("a"));
+    expect(h.manager.acquireIdle("a")).toBeNull();
+    h.health.set("a", "gone");
+    await h.tick();
+    expect(h.events).toEqual(["open a"]);
+    await h.manager.done("a");
+    expect(h.manager.acquireIdle("a")).not.toBeNull();
+  });
+
+  test("a call waits for a stuck message only so long, then goes ahead", async () => {
+    const h = harness({ messageWaitMs: 20 });
+    h.grant("a");
+    await h.tick();
+    h.manager.acquireIdle("a");
+    const started = Date.now();
+    expect(await h.manager.acquire("a")).toEqual(ready("a"));
+    expect(Date.now() - started).toBeGreaterThanOrEqual(15);
+  });
+
+  test("a number let go during a message closes after it; during a call and a message, after both", async () => {
+    const h = harness({ messageWaitMs: 5_000 });
+    h.grant("a");
+    await h.tick();
+    const hold = h.manager.acquireIdle("a")!;
+    h.release("a");
+    await h.tick();
+    expect(h.events).toEqual(["open a"]);
+    expect(h.manager.idleReady()).toEqual([]);
+    await hold.done();
+    expect(h.events).toEqual(["open a", "close a"]);
+
+    h.grant("b");
+    await h.tick();
+    const holdB = h.manager.acquireIdle("b")!;
+    const call = h.manager.acquire("b");
+    h.release("b");
+    await h.tick();
+    await holdB.done();
+    await call;
+    expect(h.events).toEqual(["open a", "close a", "open b"]);
+    await h.manager.done("b");
+    expect(h.events).toEqual(["open a", "close a", "open b", "close b"]);
+  });
+
+  test("closing for a link waits for a message on the number", async () => {
+    const h = harness({ messageWaitMs: 5_000 });
+    h.grant("a");
+    await h.tick();
+    const hold = h.manager.acquireIdle("a")!;
+    const closing = h.manager.closeFor("a");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(h.events).toEqual(["open a"]);
+    await hold.done();
+    await closing;
+    expect(h.events).toEqual(["open a", "close a"]);
   });
 });

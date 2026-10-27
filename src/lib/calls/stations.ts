@@ -18,6 +18,7 @@ import {
   usesGoLogin,
   LEASE_TTL_MS,
   MAX_TIMELINE_ENTRIES,
+  MESSAGE_CLAIM_STALE_MS,
   type CallTimelineEntry,
   type CallingStation,
   type CloudCallPhase,
@@ -36,6 +37,7 @@ import {
   type WorkerStationStateRequest,
 } from "./stationContract";
 import { MAX_AGENT_BRIEF_CHARS, TERMINAL_CALL_STATUSES, type RecorderCallPhase } from "./contract";
+import { disconnectStationWhatsappAccount, ensureStationWhatsappAccount } from "@/lib/whatsapp/accounts";
 
 /**
  * Cloud calling stations: WhatsApp numbers whose WhatsApp Web runs in a remote
@@ -269,6 +271,8 @@ export async function updateStation(id: string, input: UpdateStationRequest): Pr
     .set({ ...input, ...(fixesWrongAccount ? { lastError: null } : {}), updatedAt: new Date() })
     .where(and(inOrg(callingStations), eq(callingStations.id, id)))
     .returning();
+  // Its WhatsApp number (messaging) follows: renamed, renumbered, paused or resumed.
+  if (row) await ensureStationWhatsappAccount(row);
   return stationView(row ?? current);
 }
 
@@ -277,6 +281,8 @@ export async function deleteStation(id: string): Promise<void> {
   const busy = await busyCalls([id]);
   if (busy.size > 0) throw new CallApiError(409, "This number is on a call — wait for it to end");
   await db.delete(callingStations).where(and(inOrg(callingStations), eq(callingStations.id, id)));
+  // Its chats stay readable; the number can no longer send.
+  await disconnectStationWhatsappAccount(id);
 }
 
 /** The operator wants WhatsApp Web linked: the next free worker opens its login screen. */
@@ -481,6 +487,18 @@ const stationIsFree = sql`NOT EXISTS (
      AND busy.claimed_at IS NOT NULL
      AND busy.status IN ('pending', 'in_progress'))`;
 
+/**
+ * No WhatsApp message is being sent from the station (a claimed
+ * station_message_jobs row, not yet stale): a call or a link waits the few
+ * seconds it takes. See src/lib/whatsapp/stationMessaging.ts, whose claim
+ * waits for open calls in turn.
+ */
+const stationIsNotMessaging = sql`NOT EXISTS (
+  SELECT 1 FROM station_message_jobs sending
+   WHERE sending.station_id = ${callingStations.id}
+     AND sending.status = 'claimed'
+     AND sending.claimed_at > now() - interval '${sql.raw(String(MESSAGE_CLAIM_STALE_MS))} milliseconds')`;
+
 async function claimCall({ workerId, launchers, stations }: WorkerClaimRequest): Promise<WorkerJob | null> {
   const claimed = await db.transaction(async (tx) => {
     const [locked] = await tx
@@ -500,6 +518,7 @@ async function claimCall({ workerId, launchers, stations }: WorkerClaimRequest):
           // Never call from a number whose WhatsApp Web is another account.
           or(isNull(callingStations.linkedPhone), eq(callingStations.linkedPhone, callingStations.phone)),
           stationIsFree,
+          stationIsNotMessaging,
           leasableBy(workerId),
           pinnedTo(stations),
         ),
@@ -560,6 +579,7 @@ async function claimLink({ workerId, launchers, stations }: WorkerClaimRequest):
           inArray(callingStations.launcher, launchers),
           or(isNull(callingStations.linkUpdatedAt), lt(callingStations.linkUpdatedAt, new Date(Date.now() - LINK_STALE_MS))),
           stationIsFree,
+          stationIsNotMessaging,
           leasableBy(workerId),
           pinnedTo(stations),
         ),
@@ -721,7 +741,11 @@ export async function reportStationState(id: string, state: WorkerStationStateRe
     const wrongAccount = wrongAccountError({ phone: row.phone, linkedPhone: state.linkedPhone });
     if (wrongAccount) set.lastError = wrongAccount;
   }
-  await db.update(callingStations).set(set).where(eq(callingStations.id, row.id));
+  const [updated] = await db.update(callingStations).set(set).where(eq(callingStations.id, row.id)).returning();
+  // The number's WhatsApp messaging is up while the station is active and logged in as itself.
+  if (updated && (state.status !== undefined || state.linkedPhone !== undefined || state.linkDone)) {
+    await runInOrganization(updated.organizationId, () => ensureStationWhatsappAccount(updated));
+  }
 }
 
 async function workerCallRow(id: string): Promise<CallSessionRow> {

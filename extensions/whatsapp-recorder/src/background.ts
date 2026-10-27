@@ -32,7 +32,11 @@ import {
   type WaCall,
   type WaHeardAudioPortMessage,
   type WaRecordingPortMessage,
+  type WaScanResult,
+  type WaSendOutcome,
 } from "./messages";
+import type { StationInboundSource, StationInboundTake, StationSendResult } from "../../../src/lib/calls/stationContract";
+import { mergeInbound, type InboundBuffer } from "./inbound";
 import { allowedOrigins, customOrigins, isCustomOriginsChange, originPattern } from "./origins";
 import { callApi, getCallStatus, uploadRecording } from "./upload";
 
@@ -252,6 +256,19 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
         returnToAgentSdr(message.callId, "WhatsApp is ringing");
         void reportTiming(message.callId);
       }
+      break;
+    // Station messaging (see "station messaging" below):
+    case "wa:messaging-hello":
+      void messagingEnabled().then((enabled) => sendResponse({ enabled }));
+      return true;
+    case "wa:messaging-source":
+      void setHookCapability(message.capability);
+      break;
+    case "wa:inbound":
+      void bufferInbound(message.messages);
+      break;
+    case "wa:msg-log":
+      msgLog(message.step);
       break;
   }
 });
@@ -773,6 +790,248 @@ const station = {
     return lines;
   },
   version: chrome.runtime.getManifest().version,
+  /** Sends a WhatsApp text from this number to `phone` (E.164); see "station messaging" below. */
+  sendMessage: (request: { phone: string; text: string }): Promise<StationSendResult> => sendStationMessage(request),
+  /** The messages this number saw since the last take (inbound, and outbound from the phone or sendMessage); clears them. */
+  takeInbound: (): Promise<StationInboundTake> => takeStationInbound(),
 };
 
 (globalThis as unknown as { agentsdrStation?: typeof station }).agentsdrStation = station;
+
+// =============================================================================
+// --- station messaging (calling stations only) --------------------------------
+// =============================================================================
+//
+// A calling station also sends and reads WhatsApp messages for AgentSDR: the
+// call worker calls agentsdrStation.sendMessage / takeInbound. Nothing here
+// runs on a rep's laptop: reading messages is enabled only once one of those
+// is called (MESSAGING_ENABLED_KEY), and wa-agent asks for that flag on every
+// load before it lets wa-hook read WhatsApp's message store.
+//
+// Messages never interrupt a call: a send is refused (retryable) while a call
+// is being placed, rings, is on or is being finished off, and the tab is never
+// reloaded for a message then.
+
+const MESSAGING_ENABLED_KEY = "messagingEnabled";
+/** "store" | "none": whether wa-hook's message-store listener is attached, as wa-agent last reported. */
+const MESSAGING_HOOK_SOURCE_KEY = "messagingHookSource";
+/** The messages waiting for the next take, and the key ids already buffered (InboundBuffer). */
+const INBOUND_BUFFER_KEY = "inboundBuffer";
+const LAST_DOM_SCAN_KEY = "lastDomScan";
+/** One send, from the worker's call to its answer. */
+const SEND_TIMEOUT_MS = 30_000;
+/** The DOM fallback opens chats, so it runs at most this often. */
+const DOM_SCAN_EVERY_MS = 10_000;
+const DOM_SCAN_TIMEOUT_MS = 25_000;
+/** A call dialed this long ago and never answered is not ringing any more (its end was missed). */
+const RINGING_AT_MOST_MS = 3 * 60 * 1000;
+/** A call requested this long ago and never dialed is not being placed any more. */
+const PLACING_AT_MOST_MS = 2 * 60 * 1000;
+const WHATSAPP_TABS = "https://web.whatsapp.com/*";
+
+function msgLog(step: string): void {
+  const line = `msg ${new Date().toISOString().slice(11, 23)} ${step}`;
+  console.log(`[recorder] ${line}`);
+  keepStationLogLine(line);
+}
+
+async function messagingEnabled(): Promise<boolean> {
+  return (await chrome.storage.session.get(MESSAGING_ENABLED_KEY))[MESSAGING_ENABLED_KEY] === true;
+}
+
+/** Turns messaging on for this browser (station mode) and tells every WhatsApp tab. Idempotent. */
+async function enableMessaging(): Promise<void> {
+  if (!(await messagingEnabled())) {
+    await chrome.storage.session.set({ [MESSAGING_ENABLED_KEY]: true });
+    msgLog("messaging enabled on this station");
+  }
+  const command: AgentCommand = { target: "wa-agent", type: "messaging-enable" };
+  for (const tab of await chrome.tabs.query({ url: WHATSAPP_TABS })) {
+    if (tab.id !== undefined) await chrome.tabs.sendMessage(tab.id, command).catch(() => {});
+  }
+}
+
+async function setHookCapability(capability: Exclude<StationInboundSource, "dom">): Promise<void> {
+  const previous = (await chrome.storage.session.get(MESSAGING_HOOK_SOURCE_KEY))[MESSAGING_HOOK_SOURCE_KEY];
+  if (previous === capability) return;
+  await chrome.storage.session.set({ [MESSAGING_HOOK_SOURCE_KEY]: capability });
+  msgLog(`message source: ${capability === "store" ? "WhatsApp's message store" : "not readable from the store (yet)"}`);
+}
+
+async function hookCapability(): Promise<Exclude<StationInboundSource, "dom">> {
+  return (await chrome.storage.session.get(MESSAGING_HOOK_SOURCE_KEY))[MESSAGING_HOOK_SOURCE_KEY] === "store" ? "store" : "none";
+}
+
+/** Why a message must wait for a call, from the call this worker knows about; null when there is none. */
+async function stationCallBusy(): Promise<string | null> {
+  const call = await getActiveCall();
+  if (!call) return null;
+  const now = Date.now();
+  if (now - call.requestedAt >= ACTIVE_CALL_TTL_MS) return null;
+  const id = call.callId.slice(0, 8);
+  if (call.answeredAt) return (await stillBusy(call)) ? `call ${id} is on` : null;
+  if (call.dialedAt) return now - call.dialedAt < RINGING_AT_MOST_MS ? `call ${id} is ringing` : null;
+  return now - call.requestedAt < PLACING_AT_MOST_MS ? `call ${id} is being placed` : null;
+}
+
+type AgentAnswer<T> = { kind: "answer"; result: T } | { kind: "no-receiver" } | { kind: "timeout" };
+
+/** A command to wa-agent in `tabId`. "no-receiver": no wa-agent there (yet); "timeout": it did not answer in time. */
+async function askAgent<T>(tabId: number, command: AgentCommand, timeoutMs: number): Promise<AgentAnswer<T>> {
+  try {
+    const answer = await Promise.race([
+      chrome.tabs.sendMessage<AgentCommand, T>(tabId, command).then((result): AgentAnswer<T> => ({ kind: "answer", result })),
+      new Promise<AgentAnswer<T>>((resolve) => setTimeout(() => resolve({ kind: "timeout" }), Math.max(timeoutMs, 0))),
+    ]);
+    return answer.kind === "answer" && answer.result === undefined ? { kind: "no-receiver" } : answer;
+  } catch {
+    return { kind: "no-receiver" };
+  }
+}
+
+function isSendOutcome(value: unknown): value is WaSendOutcome {
+  if (!value || typeof value !== "object") return false;
+  const outcome = value as Record<string, unknown>;
+  if (outcome.ok === true) return "providerMessageId" in outcome;
+  return outcome.ok === false && typeof outcome.error === "string";
+}
+
+async function sendStationMessage(request: { phone: string; text: string }): Promise<StationSendResult> {
+  const phone = typeof request?.phone === "string" ? request.phone : "";
+  const text = typeof request?.text === "string" ? request.text : "";
+  const digits = digitsOnly(phone);
+  if (digits.length < 7) return { ok: false, retryable: false, error: `"${phone}" is not a valid WhatsApp number` };
+  if (!text.trim()) return { ok: false, retryable: false, error: "The message is empty" };
+  await enableMessaging();
+  msgLog(`send: to +${digits} (${text.length} characters)`);
+  const deadline = Date.now() + SEND_TIMEOUT_MS;
+  const timedOut: StationSendResult = {
+    ok: false,
+    retryable: false,
+    error: `No answer from WhatsApp Web within ${SEND_TIMEOUT_MS / 1000} s — the message may have been sent`,
+  };
+  const result = await Promise.race([
+    sendStationMessageNow(digits, text, deadline).catch(
+      (error: unknown): StationSendResult => ({ ok: false, retryable: false, error: error instanceof Error ? error.message : String(error) }),
+    ),
+    new Promise<StationSendResult>((resolve) => setTimeout(() => resolve(timedOut), SEND_TIMEOUT_MS)),
+  ]);
+  msgLog(result.ok ? `send: done (${result.providerMessageId ?? "no id"})` : `send: not sent (${result.retryable ? "retryable" : "final"}) — ${result.error}`);
+  return result;
+}
+
+async function sendStationMessageNow(digits: string, text: string, deadline: number): Promise<StationSendResult> {
+  const busy = await stationCallBusy();
+  if (busy) return { ok: false, retryable: true, error: `Not sent: ${busy}` };
+  const [tab] = await chrome.tabs.query({ url: WHATSAPP_TABS });
+  if (tab?.id === undefined) return { ok: false, retryable: true, error: "No WhatsApp Web tab is open" };
+  if (tab.status !== "complete") return { ok: false, retryable: true, error: "WhatsApp Web is still loading" };
+
+  const command: AgentCommand = { target: "wa-agent", type: "send-message", phone: digits, text, afterReload: false };
+  const first = await askAgent<WaSendOutcome>(tab.id, command, deadline - Date.now());
+  if (first.kind === "no-receiver") {
+    return { ok: false, retryable: true, error: "WhatsApp Web's tab did not answer (still loading, or opened before this extension build)" };
+  }
+  if (first.kind === "timeout") return { ok: false, retryable: false, error: "WhatsApp Web did not finish the send in time — it may have been sent" };
+  if (!isSendOutcome(first.result)) return { ok: false, retryable: false, error: "WhatsApp Web gave an unexpected answer" };
+  if (!("reload" in first.result)) return first.result;
+
+  // Not opened in place, and nothing typed: load the tab at the chat — never during a call.
+  const busyNow = await stationCallBusy();
+  if (busyNow) return { ok: false, retryable: true, error: `The chat could not be opened in place, and ${busyNow} — not reloading WhatsApp` };
+  msgLog(`send: ${first.result.error} — reloading WhatsApp Web at the chat`);
+  await chrome.tabs.update(tab.id, { url: `https://web.whatsapp.com/send?phone=${digits}` });
+  await waitForTabLoad(tab.id, deadline);
+  while (Date.now() < deadline - 500) {
+    const answer = await askAgent<WaSendOutcome>(tab.id, { ...command, afterReload: true }, deadline - Date.now());
+    if (answer.kind === "no-receiver") {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      continue;
+    }
+    if (answer.kind === "timeout") return { ok: false, retryable: false, error: "WhatsApp Web did not finish the send in time — it may have been sent" };
+    if (!isSendOutcome(answer.result)) return { ok: false, retryable: false, error: "WhatsApp Web gave an unexpected answer" };
+    if ("reload" in answer.result) return { ok: false, retryable: true, error: answer.result.error };
+    return answer.result;
+  }
+  return { ok: false, retryable: true, error: "WhatsApp Web did not come back after reloading it at the chat" };
+}
+
+/** Waits for the navigation to start (the old page must not answer), then for the new page to finish loading. */
+async function waitForTabLoad(tabId: number, deadline: number): Promise<void> {
+  const status = async () => (await chrome.tabs.get(tabId).catch(() => null))?.status;
+  const started = Date.now();
+  while (Date.now() - started < 3_000 && Date.now() < deadline && (await status()) === "complete") {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  while (Date.now() < deadline && (await status()) !== "complete") {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+// The inbound buffer's writes run one at a time (read, merge, write back), like the active call's.
+let inboundWrites: Promise<unknown> = Promise.resolve();
+
+function serializedInbound<T>(write: () => Promise<T>): Promise<T> {
+  const next = inboundWrites.then(write, write);
+  inboundWrites = next.catch(() => {});
+  return next;
+}
+
+async function readInboundBuffer(): Promise<InboundBuffer> {
+  const stored = (await chrome.storage.session.get(INBOUND_BUFFER_KEY))[INBOUND_BUFFER_KEY] as InboundBuffer | undefined;
+  return { messages: stored?.messages ?? [], seen: stored?.seen ?? [] };
+}
+
+function bufferInbound(messages: unknown): Promise<void> {
+  return serializedInbound(async () => {
+    if (!Array.isArray(messages) || !messages.length || !(await messagingEnabled())) return;
+    const merged = mergeInbound(await readInboundBuffer(), messages.filter((message) => message && typeof message === "object"));
+    await chrome.storage.session.set({ [INBOUND_BUFFER_KEY]: { messages: merged.messages, seen: merged.seen } satisfies InboundBuffer });
+    if (merged.added) msgLog(`inbound: ${merged.added} new message(s) waiting (${merged.messages.length} in all)`);
+  });
+}
+
+async function takeStationInbound(): Promise<StationInboundTake> {
+  await enableMessaging();
+  let source: StationInboundSource = await hookCapability();
+  if (source !== "store" && (await scanUnreadFromPage())) source = "dom";
+  const messages = await serializedInbound(async () => {
+    const buffer = await readInboundBuffer();
+    await chrome.storage.session.set({ [INBOUND_BUFFER_KEY]: { messages: [], seen: buffer.seen } satisfies InboundBuffer });
+    return buffer.messages;
+  });
+  if (messages.length) msgLog(`inbound: ${messages.length} message(s) taken (source ${source})`);
+  return { source, messages };
+}
+
+/**
+ * The DOM fallback: wa-agent opens the chat list's unread chats and reads
+ * them. At most every 10 s, never during a call. True when the page could be
+ * read (now, or at the last scan within those 10 s).
+ */
+async function scanUnreadFromPage(): Promise<boolean> {
+  const last = (await chrome.storage.session.get(LAST_DOM_SCAN_KEY))[LAST_DOM_SCAN_KEY] as { at: number; ok: boolean } | undefined;
+  if (last && Date.now() - last.at < DOM_SCAN_EVERY_MS) return last.ok;
+  const busy = await stationCallBusy();
+  if (busy) {
+    msgLog(`scan: skipped — ${busy}`);
+    return last?.ok ?? false;
+  }
+  const [tab] = await chrome.tabs.query({ url: WHATSAPP_TABS });
+  if (tab?.id === undefined || tab.status !== "complete") return false;
+  await chrome.storage.session.set({ [LAST_DOM_SCAN_KEY]: { at: Date.now(), ok: last?.ok ?? false } });
+  const answer = await askAgent<WaScanResult>(tab.id, { target: "wa-agent", type: "scan-inbound" }, DOM_SCAN_TIMEOUT_MS);
+  if (answer.kind !== "answer") {
+    msgLog(`scan: WhatsApp Web ${answer.kind === "timeout" ? "did not finish in time" : "did not answer"}`);
+    return false;
+  }
+  if (!answer.result.ok) {
+    msgLog(`scan: ${answer.result.skipped ? "skipped" : "failed"} — ${answer.result.error}`);
+    if (answer.result.skipped) return last?.ok ?? false;
+    await chrome.storage.session.set({ [LAST_DOM_SCAN_KEY]: { at: Date.now(), ok: false } });
+    return false;
+  }
+  await chrome.storage.session.set({ [LAST_DOM_SCAN_KEY]: { at: Date.now(), ok: true } });
+  await bufferInbound(answer.result.messages);
+  return true;
+}

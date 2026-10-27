@@ -43,7 +43,18 @@
  */
 
 import { createDownsampler } from "./downsample";
-import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from "./wa-protocol";
+import type { StationInboundMessage } from "../../../src/lib/calls/stationContract";
+import { isNonPersonalJid, parseMessageId, storeMessage } from "./inbound";
+import {
+  AGENT_MESSAGING_SOURCE,
+  AGENT_SOURCE,
+  HOOK_MESSAGING_SOURCE,
+  HOOK_SOURCE,
+  type AgentToHook,
+  type AgentToHookMessaging,
+  type HookToAgent,
+  type HookToAgentMessaging,
+} from "./wa-protocol";
 
 /**
  * A getUserMedia track stopped sooner than this was a permission check, not a
@@ -1056,4 +1067,336 @@ function post(message: HookToAgent): void {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// =============================================================================
+// --- station messaging (calling stations only) --------------------------------
+// =============================================================================
+//
+// Separate from the call recorder above and sharing nothing with it. On a
+// calling station, wa-agent enables this (`messaging-enable`, sent only when
+// the service worker's station mode asked for messages), and it then reads
+// messages from WhatsApp Web's own message store — Meta's module system
+// (`window.require`): WAWebCollections' Msg / Chat / Contact collections, and
+// WAWebSocketModel's Socket.hasSynced for readiness, as whatsapp-web.js does.
+// A rep's own WhatsApp Web is never read: nothing here runs until enabled.
+//
+// Every access to WhatsApp's modules is guarded; this must never throw into
+// WhatsApp's code or disturb a call.
+
+type WaRequire = (name: string) => unknown;
+type WaWid = { user?: string; server?: string; _serialized?: string; toString(): string };
+type WaMsg = {
+  id?: { _serialized?: string; fromMe?: boolean; remote?: WaWid | string; id?: string };
+  t?: number;
+  type?: string;
+  body?: unknown;
+  caption?: unknown;
+  notifyName?: string;
+  isNewMsg?: boolean;
+  once?: (event: string, listener: () => void) => void;
+  off?: (event: string, listener: () => void) => void;
+};
+type WaCollection<T> = {
+  on?: (event: string, listener: (model: T) => void) => void;
+  get?: (id: unknown) => T | undefined;
+  getModelsArray?: () => T[];
+  models?: T[];
+};
+type WaChat = { id?: WaWid | string; unreadCount?: number; msgs?: WaCollection<WaMsg> };
+type WaContact = { name?: string; pushname?: string; verifiedName?: string };
+type WaCollections = { Msg?: WaCollection<WaMsg>; Chat?: WaCollection<WaChat>; Contact?: WaCollection<WaContact> };
+
+/** Tries every 2 s for the first five minutes after it is enabled, then every 30 s. */
+const MESSAGING_ATTACH_POLL_MS = 2_000;
+const MESSAGING_ATTACH_FAST_FOR_MS = 5 * 60_000;
+const MESSAGING_ATTACH_SLOW_POLL_MS = 30_000;
+/** A message still encrypted when added gets this long to decrypt. */
+const MESSAGING_DECRYPT_WAIT_MS = 15_000;
+/** At most this many unread messages per chat are read when the listener attaches. */
+const MESSAGING_BACKFILL_PER_CHAT = 50;
+
+const messaging = {
+  enabled: false,
+  enabledAt: 0,
+  attached: false,
+  timer: 0,
+};
+
+const messagingScope = window as unknown as { __agentsdrMessaging?: boolean };
+try {
+  if (!messagingScope.__agentsdrMessaging) {
+    messagingScope.__agentsdrMessaging = true;
+    window.addEventListener("message", onMessagingRequest);
+  }
+} catch {
+  // Messaging is optional; the call recorder above carries on regardless.
+}
+
+function onMessagingRequest(event: MessageEvent): void {
+  try {
+    if (event.source !== window) return;
+    const data = event.data as Partial<AgentToHookMessaging> | null;
+    if (data?.source !== AGENT_MESSAGING_SOURCE) return;
+    if (data.type === "messaging-enable") enableMessaging();
+    else if (data.type === "messaging-status") postMessagingSource();
+    else if (data.type === "find-sent" && data.requestId) {
+      postMessaging({
+        source: HOOK_MESSAGING_SOURCE,
+        type: "found-sent",
+        requestId: data.requestId,
+        providerMessageId: findSent(data.chatDigits ?? "", data.body ?? "", data.sinceMs ?? 0, data.keyId ?? null),
+      });
+    }
+  } catch (error) {
+    messagingLog(`request failed: ${describe(error)}`);
+  }
+}
+
+function enableMessaging(): void {
+  if (messaging.enabled) {
+    postMessagingSource();
+    return;
+  }
+  messaging.enabled = true;
+  messaging.enabledAt = Date.now();
+  postMessagingSource();
+  tryAttachMessaging();
+}
+
+function postMessagingSource(): void {
+  postMessaging({ source: HOOK_MESSAGING_SOURCE, type: "messaging-source", capability: messaging.attached ? "store" : "none" });
+}
+
+/** Attaches the Msg listener once WhatsApp's modules are loaded and it has synced; otherwise tries again later. */
+function tryAttachMessaging(): void {
+  window.clearTimeout(messaging.timer);
+  if (messaging.attached) return;
+  try {
+    const collections = waCollections();
+    const socket = waModule<{ Socket?: { hasSynced?: boolean } }>("WAWebSocketModel")?.Socket;
+    if (collections?.Msg?.on && socket?.hasSynced === true) {
+      collections.Msg.on("add", onMsgAdded);
+      messaging.attached = true;
+      const version = (window as unknown as { Debug?: { VERSION?: string } }).Debug?.VERSION ?? "unknown";
+      messagingLog(`listening to WhatsApp's message store (WhatsApp Web ${version})`);
+      postMessagingSource();
+      backfillUnread(collections);
+      return;
+    }
+  } catch (error) {
+    messagingLog(`could not attach yet: ${describe(error)}`);
+  }
+  const fast = Date.now() - messaging.enabledAt < MESSAGING_ATTACH_FAST_FOR_MS;
+  messaging.timer = window.setTimeout(tryAttachMessaging, fast ? MESSAGING_ATTACH_POLL_MS : MESSAGING_ATTACH_SLOW_POLL_MS);
+}
+
+function waRequire(): WaRequire | null {
+  const candidate = (window as unknown as { require?: unknown }).require;
+  return typeof candidate === "function" ? (candidate as WaRequire) : null;
+}
+
+/** One of WhatsApp's modules, or null when it is not (yet) defined. */
+function waModule<T>(name: string): T | null {
+  try {
+    return (waRequire()?.(name) as T | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function waCollections(): WaCollections | null {
+  return waModule<WaCollections>("WAWebCollections");
+}
+
+function modelsOf<T>(collection: WaCollection<T> | null | undefined): T[] {
+  try {
+    return collection?.getModelsArray?.() ?? collection?.models ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function onMsgAdded(msg: WaMsg): void {
+  try {
+    if (!msg?.isNewMsg) return;
+    if (msg.type !== "ciphertext") {
+      emitMessages([msg]);
+      return;
+    }
+    // Still being decrypted: it is read once its real type arrives.
+    let done = false;
+    const onDecrypted = () => {
+      if (done) return;
+      done = true;
+      try {
+        emitMessages([msg]);
+      } catch {
+        // never into WhatsApp's code
+      }
+    };
+    msg.once?.("change:type", onDecrypted);
+    window.setTimeout(() => {
+      if (done) return;
+      done = true;
+      try {
+        msg.off?.("change:type", onDecrypted);
+      } catch {
+        // ignore
+      }
+    }, MESSAGING_DECRYPT_WAIT_MS);
+  } catch (error) {
+    messagingLog(`a message could not be read: ${describe(error)}`);
+  }
+}
+
+/** Unread messages already in the store when the listener attaches — those that came in while it was not listening. */
+function backfillUnread(collections: WaCollections): void {
+  try {
+    const found: WaMsg[] = [];
+    for (const chat of modelsOf(collections.Chat)) {
+      const unread = Math.min(chat?.unreadCount ?? 0, MESSAGING_BACKFILL_PER_CHAT);
+      if (unread <= 0 || isNonPersonalJid(widString(chat.id))) continue;
+      found.push(...modelsOf(chat.msgs).filter((msg) => msg?.id?.fromMe === false).slice(-unread));
+    }
+    if (found.length) {
+      messagingLog(`read ${found.length} unread message(s) already in the store`);
+      emitMessages(found);
+    }
+  } catch (error) {
+    messagingLog(`could not read unread chats: ${describe(error)}`);
+  }
+}
+
+function emitMessages(msgs: WaMsg[]): void {
+  const messages: StationInboundMessage[] = [];
+  for (const msg of msgs) {
+    try {
+      const message = readStoreMessage(msg);
+      if (message) messages.push(message);
+    } catch {
+      // one unreadable message never stops the rest
+    }
+  }
+  if (messages.length) postMessaging({ source: HOOK_MESSAGING_SOURCE, type: "messages", messages });
+}
+
+function readStoreMessage(msg: WaMsg): StationInboundMessage | null {
+  const remote = msg.id?.remote;
+  const chatJid = widString(remote);
+  if (!chatJid || isNonPersonalJid(chatJid)) return null;
+  const fromMe = msg.id?.fromMe === true;
+  return storeMessage({
+    id: msg.id?._serialized ?? null,
+    fromMe,
+    chatJid,
+    lidPhone: chatJid.endsWith("@lid") ? lidToPhoneDigits(remote) : null,
+    t: typeof msg.t === "number" ? msg.t : null,
+    type: msg.type ?? null,
+    body: msg.body,
+    caption: msg.caption,
+    // For a message from this number, notifyName is this number's own name.
+    chatName: contactName(remote) ?? (fromMe ? null : (msg.notifyName ?? null)),
+  });
+}
+
+/** A Wid (or jid string) as "<user>@<server>". */
+function widString(wid: WaWid | string | null | undefined): string | null {
+  if (!wid) return null;
+  if (typeof wid === "string") return wid.includes("@") ? wid : null;
+  if (typeof wid._serialized === "string" && wid._serialized.includes("@")) return wid._serialized;
+  if (wid.user && wid.server) return `${wid.user}@${wid.server}`;
+  const text = typeof wid.toString === "function" ? wid.toString() : "";
+  return text.includes("@") ? text : null;
+}
+
+function asWid(wid: WaWid | string | null | undefined): WaWid | null {
+  if (!wid) return null;
+  if (typeof wid !== "string") return wid;
+  try {
+    return waModule<{ createWid?: (jid: string) => WaWid }>("WAWebWidFactory")?.createWid?.(wid) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The number behind a "@lid" chat, from WhatsApp's in-memory lid↔phone map — digits, or null when it is not known. */
+function lidToPhoneDigits(remote: WaWid | string | null | undefined): string | null {
+  const wid = asWid(remote);
+  if (!wid) return null;
+  const lookups: (() => unknown)[] = [
+    () => waModule<{ getPhoneNumber?: (wid: WaWid) => unknown }>("WAWebApiContact")?.getPhoneNumber?.(wid),
+    () => waModule<{ toPn?: (wid: WaWid) => unknown }>("WAWebLidMigrationUtils")?.toPn?.(wid),
+  ];
+  for (const lookup of lookups) {
+    try {
+      const found = lookup() as WaWid | string | null | undefined;
+      const jid = widString(found);
+      const digits = jid && /@(c\.us|s\.whatsapp\.net)$/.test(jid) ? jid.split("@")[0].replace(/\D/g, "") : "";
+      if (digits.length >= 6) return digits;
+    } catch {
+      // try the next
+    }
+  }
+  return null;
+}
+
+function contactName(remote: WaWid | string | null | undefined): string | null {
+  try {
+    const contact = waCollections()?.Contact?.get?.(remote);
+    return contact?.name || contact?.pushname || contact?.verifiedName || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The id of a message just sent from this number: by its key id when wa-agent
+ * read one from the page, else the newest one to `chatDigits` with this body
+ * since `sinceMs`.
+ */
+function findSent(chatDigits: string, body: string, sinceMs: number, keyId: string | null): string | null {
+  const collections = waCollections();
+  if (!collections) return null;
+  const candidates = [...modelsOf(collections.Msg)];
+  try {
+    const chat = collections.Chat?.get?.(`${chatDigits}@c.us`);
+    candidates.push(...modelsOf(chat?.msgs));
+  } catch {
+    // the Msg collection alone
+  }
+  const wanted = normalizeBody(body);
+  let best: { id: string; t: number } | null = null;
+  for (const msg of candidates) {
+    try {
+      const id = msg?.id?._serialized;
+      if (!id || msg.id?.fromMe !== true) continue;
+      if (keyId && (msg.id.id === keyId || parseMessageId(id)?.keyId === keyId)) return id;
+      const t = (msg.t ?? 0) * 1000;
+      if (t < sinceMs || normalizeBody(msg.body) !== wanted) continue;
+      const jid = widString(msg.id.remote) ?? "";
+      const digits = jid.endsWith("@lid") ? lidToPhoneDigits(msg.id.remote) : jid.split("@")[0];
+      if (digits !== chatDigits) continue;
+      if (!best || t >= best.t) best = { id, t };
+    } catch {
+      // skip it
+    }
+  }
+  return best?.id ?? null;
+}
+
+function normalizeBody(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\r\n?/g, "\n").trim() : "";
+}
+
+function messagingLog(text: string): void {
+  postMessaging({ source: HOOK_MESSAGING_SOURCE, type: "messaging-log", text });
+}
+
+function postMessaging(message: HookToAgentMessaging): void {
+  try {
+    window.postMessage(message, location.origin);
+  } catch {
+    // nothing to tell
+  }
 }

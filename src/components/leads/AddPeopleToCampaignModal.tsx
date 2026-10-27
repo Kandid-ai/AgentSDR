@@ -11,11 +11,14 @@ type PersonRow = {
 export default function AddPeopleToCampaignModal({
   campaignId,
   channel,
+  endpoint,
   onClose,
   onAdded,
 }: {
   campaignId: string;
   channel: "email" | "linkedin" | "whatsapp";
+  /** Where to POST the chosen people, for a campaign kind with its own route (AI calling campaigns; it answers like the WhatsApp one). */
+  endpoint?: string;
   onClose: () => void;
   /** The WhatsApp route reports skippedMissingPhone instead of the identity/suppressed counts. */
   onAdded: (result: { requested: number; added: number; skippedMissingIdentity: number; skippedDuplicate: number; skippedSuppressed: number }) => void;
@@ -54,7 +57,7 @@ export default function AddPeopleToCampaignModal({
     setSaving(true);
     setError(null);
     try {
-      const url = channel === "whatsapp" ? `/api/whatsapp/campaigns/${campaignId}/leads` : `/api/${channel === "email" ? "outreach" : "linkedin"}/campaigns/${campaignId}/people`;
+      const url = endpoint ?? (channel === "whatsapp" ? `/api/whatsapp/campaigns/${campaignId}/leads` : `/api/${channel === "email" ? "outreach" : "linkedin"}/campaigns/${campaignId}/people`);
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

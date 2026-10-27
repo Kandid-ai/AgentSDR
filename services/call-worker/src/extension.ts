@@ -1,6 +1,8 @@
 import type { BrowserContext, Worker } from "playwright-core";
 import type { RecorderCallRequest } from "../../../src/lib/calls/contract";
+import type { StationInboundTake, StationSendResult } from "../../../src/lib/calls/stationContract";
 
+/** Station mode for calls. Messaging needs 0.21.0+, detected by its functions (supportsMessaging). */
 export const MIN_EXTENSION_VERSION = "0.17.0";
 
 export type StationCallRequest = Omit<RecorderCallRequest, "source" | "type" | "requestId">;
@@ -14,6 +16,12 @@ export type StationWorker = {
   activeCall(): Promise<ActiveCall>;
   /** The extension's call log since the last drain (empty on extensions before 0.17.4). */
   drainLog(): Promise<string[]>;
+  /** The extension has sendMessage and takeInbound (0.21.0+); without them both throw. */
+  supportsMessaging: boolean;
+  /** Sends a WhatsApp message from the number (0.21.0+). */
+  sendMessage(req: { phone: string; text: string }): Promise<StationSendResult>;
+  /** Takes (and clears) the messages the extension saw since the last take (0.21.0+). */
+  takeInbound(): Promise<StationInboundTake>;
 };
 
 function versionAtLeast(version: string, min: string): boolean {
@@ -28,25 +36,26 @@ function versionAtLeast(version: string, min: string): boolean {
 
 const isRecorderWorker = (w: Worker) => w.url().startsWith("chrome-extension://") && w.url().endsWith("/background.js");
 
-type Probe = { version: string | null; api: boolean };
+type Probe = { version: string | null; api: boolean; messaging: boolean };
 
 /** The extension's station version in this worker, and whether its chrome.* calls work. */
 async function probe(worker: Worker): Promise<Probe> {
   return worker
     .evaluate(async () => {
       const scope = globalThis as unknown as {
-        agentsdrStation?: { version: string };
+        agentsdrStation?: { version: string; sendMessage?: unknown; takeInbound?: unknown };
         chrome: { storage: { session: { get(keys: null): Promise<unknown> } } };
       };
       const version = scope.agentsdrStation?.version ?? null;
+      const messaging = typeof scope.agentsdrStation?.sendMessage === "function" && typeof scope.agentsdrStation?.takeInbound === "function";
       try {
         await scope.chrome.storage.session.get(null);
-        return { version, api: true };
+        return { version, api: true, messaging };
       } catch {
-        return { version, api: false };
+        return { version, api: false, messaging };
       }
     })
-    .catch(() => ({ version: null, api: false }));
+    .catch(() => ({ version: null, api: false, messaging: false }));
 }
 
 /**
@@ -57,12 +66,12 @@ async function probe(worker: Worker): Promise<Probe> {
  * first found failed every call on a relinked number, so each candidate is
  * tested with a real API call, newest first.
  */
-async function liveWorker(context: BrowserContext, timeoutMs: number): Promise<{ worker: Worker; version: string } | null> {
+async function liveWorker(context: BrowserContext, timeoutMs: number): Promise<{ worker: Worker; version: string; messaging: boolean } | null> {
   const deadline = Date.now() + timeoutMs;
   do {
     for (const worker of context.serviceWorkers().filter(isRecorderWorker).reverse()) {
-      const { version, api } = await probe(worker);
-      if (version && api) return { worker, version };
+      const { version, api, messaging } = await probe(worker);
+      if (version && api) return { worker, version, messaging };
     }
     await new Promise((r) => setTimeout(r, 500));
   } while (Date.now() < deadline);
@@ -96,6 +105,8 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
     endCall(id: string): Promise<unknown>;
     activeCall(): Promise<unknown>;
     drainLog?(): string[] | Promise<string[]>;
+    sendMessage(r: { phone: string; text: string }): Promise<unknown>;
+    takeInbound(): Promise<unknown>;
   };
   return {
     version,
@@ -110,6 +121,15 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
         drainFailed = true;
         return [];
       }
+    },
+    supportsMessaging: found.messaging,
+    sendMessage: async (req) => {
+      if (!found.messaging) throw new Error(`The recorder extension ${version} cannot send messages (needs 0.21.0+)`);
+      return (await live()).evaluate((r) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.sendMessage(r), req) as Promise<StationSendResult>;
+    },
+    takeInbound: async () => {
+      if (!found.messaging) throw new Error(`The recorder extension ${version} cannot read messages (needs 0.21.0+)`);
+      return (await live()).evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.takeInbound()) as Promise<StationInboundTake>;
     },
   };
 }

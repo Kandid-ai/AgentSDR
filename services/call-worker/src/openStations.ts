@@ -14,7 +14,14 @@ import type { ReadyWhatsApp } from "./jobs";
  * numbers AgentSDR no longer wants open (paused, logged out, being relinked);
  * check the open ones (closed or crashed → reopened; logged out → reported and
  * let go); reopen each after RECYCLE_MS, which also saves its profile and keeps
- * a long-running page's memory in check. A number in a call is left alone.
+ * a long-running page's memory in check. A number in use is left alone.
+ *
+ * Two things use an open number: a call (acquire/done, from the claim loop)
+ * and a message send or inbound read (acquireIdle, from src/messaging.ts).
+ * They hold separate flags, so neither clears the other's. A message only
+ * takes a number that is ready and unused; a call always takes it, but first
+ * waits (up to MESSAGE_WAIT_MS) for a message already on it to finish, so the
+ * two never drive the same page at once.
  */
 
 export type OpenStationsDeps = {
@@ -39,12 +46,30 @@ type Slot = {
   retryAt: number;
   /** A call is using it (open or not): no check, reopen or close until it ends. */
   inCall: boolean;
-  /** AgentSDR let it go during a call: close it once the call ends. */
-  releaseAfterCall: boolean;
+  /** A message send or inbound read is using it; `done` settles when it ends. */
+  message: { done: Promise<void>; finish(): void } | null;
+  /** AgentSDR let it go while in use: close it once the call and message end. */
+  releaseAfterUse: boolean;
 };
+
+/** A ready number held for a message send or inbound read. Pair with done(). */
+export type MessageHold = { station: WorkerStation; ready: ReadyWhatsApp; done(): Promise<void> };
+
+const inUse = (slot: Slot) => slot.inCall || slot.message !== null;
 
 export const RECYCLE_MS = 4 * 60 * 60 * 1000;
 const MAX_RETRY_MS = 10 * 60 * 1000;
+/** How long a call, a link or a close waits for a message already on the number (a send times out at 45 s). */
+export const MESSAGE_WAIT_MS = 50_000;
+
+const waitAtMost = (p: Promise<unknown>, ms: number) =>
+  new Promise<boolean>((resolve) => {
+    const t = setTimeout(() => resolve(false), ms);
+    void p.then(() => {
+      clearTimeout(t);
+      resolve(true);
+    });
+  });
 
 export class OpenStations {
   private readonly slots = new Map<string, Slot>();
@@ -58,6 +83,7 @@ export class OpenStations {
     private readonly capacity: number,
     private readonly deps: OpenStationsDeps,
     private readonly recycleMs = RECYCLE_MS,
+    private readonly messageWaitMs = MESSAGE_WAIT_MS,
   ) {}
 
   /** Station ids held, open or not. */
@@ -67,6 +93,42 @@ export class OpenStations {
 
   state(stationId: string): Slot["state"] | null {
     return this.slots.get(stationId)?.state ?? null;
+  }
+
+  /** Numbers open, ready and unused right now: what a message may take. */
+  idleReady(): { station: WorkerStation; ready: ReadyWhatsApp }[] {
+    const out: { station: WorkerStation; ready: ReadyWhatsApp }[] = [];
+    for (const slot of this.slots.values()) {
+      if (slot.state === "ready" && slot.ready && !inUse(slot) && !slot.releaseAfterUse && !this.stopped) {
+        out.push({ station: slot.station, ready: slot.ready });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * For a message send or inbound read on `stationId`: its WhatsApp Web if it
+   * is ready and unused right now (then held until done()), else null. Never waits.
+   */
+  acquireIdle(stationId: string): MessageHold | null {
+    const slot = this.slots.get(stationId);
+    if (!slot || this.stopped || slot.state !== "ready" || !slot.ready || inUse(slot) || slot.releaseAfterUse) return null;
+    let finish = () => {};
+    const done = new Promise<void>((resolve) => (finish = resolve));
+    const hold = { done, finish };
+    slot.message = hold;
+    return {
+      station: slot.station,
+      ready: slot.ready,
+      done: async () => {
+        if (slot.message !== hold) return;
+        slot.message = null;
+        hold.finish();
+        if (this.slots.get(stationId) === slot && slot.releaseAfterUse && !slot.inCall) {
+          await this.drop(stationId, "no longer to be kept open");
+        }
+      },
+    };
   }
 
   async tick(): Promise<void> {
@@ -83,7 +145,7 @@ export class OpenStations {
       for (const id of lease.release) {
         const slot = this.slots.get(id);
         if (!slot) continue;
-        if (slot.inCall) slot.releaseAfterCall = true;
+        if (inUse(slot)) slot.releaseAfterUse = true;
         else await this.drop(id, "no longer to be kept open");
       }
       for (const station of lease.granted) {
@@ -91,12 +153,12 @@ export class OpenStations {
       }
       const now = this.deps.now();
       for (const [id, slot] of this.slots) {
-        if (slot.inCall) continue;
+        if (inUse(slot)) continue;
         if (slot.state === "failed" && now >= slot.retryAt) {
           this.startOpening(slot.station, slot.failures);
         } else if (slot.state === "ready" && slot.ready) {
           const health = await this.deps.health(slot.ready, slot.station).catch(() => "gone" as const);
-          if (slot.inCall) continue;
+          if (inUse(slot)) continue;
           if (health === "logged_out") await this.drop(id, "WhatsApp Web is logged out");
           else if (health === "gone") await this.reopen(slot, "its WhatsApp Web closed or crashed");
           else if (now - slot.openedAt >= this.recycleMs) await this.reopen(slot, "routine restart (saves the profile)");
@@ -110,12 +172,19 @@ export class OpenStations {
   /**
    * For a call on `stationId`: its open WhatsApp Web (waiting if it is still
    * opening), or null to open a browser for the call — the number is then
-   * marked in a call, so it is not reopened under it. Pair with done().
+   * marked in a call, so it is not reopened under it, and no new message
+   * takes it. A message already on it is waited for first (bounded). Pair with done().
    */
   async acquire(stationId: string, timeoutMs = 90_000): Promise<ReadyWhatsApp | null> {
     const slot = this.slots.get(stationId);
     if (!slot) return null;
     slot.inCall = true;
+    if (slot.message) {
+      this.deps.log(`open numbers: call on ${slot.station.name} waits for a message in progress`);
+      if (!(await waitAtMost(slot.message.done, this.messageWaitMs))) {
+        this.deps.log(`open numbers: the message on ${slot.station.name} did not finish in ${Math.round(this.messageWaitMs / 1000)} s; the call goes ahead`);
+      }
+    }
     if (slot.state === "opening" && slot.opening) {
       await Promise.race([slot.opening, new Promise((resolve) => setTimeout(resolve, timeoutMs))]);
     }
@@ -127,7 +196,8 @@ export class OpenStations {
     const slot = this.slots.get(stationId);
     if (!slot) return;
     slot.inCall = false;
-    if (slot.releaseAfterCall) await this.drop(stationId, "no longer to be kept open");
+    if (slot.message) return; // the message's done() closes it if it was let go
+    if (slot.releaseAfterUse) await this.drop(stationId, "no longer to be kept open");
     // Opened for the call instead (it was not ready): the next tick retries.
     else if (slot.state === "failed") slot.retryAt = this.deps.now();
   }
@@ -156,7 +226,8 @@ export class OpenStations {
       failures,
       retryAt: 0,
       inCall: this.slots.get(station.id)?.inCall ?? false,
-      releaseAfterCall: false,
+      message: null,
+      releaseAfterUse: false,
     };
     this.slots.set(station.id, slot);
     // One at a time: each opening is a browser start and a WhatsApp load.
@@ -197,6 +268,9 @@ export class OpenStations {
     if (!slot) return;
     this.slots.delete(stationId);
     this.deps.log(`open numbers: closing ${slot.station.name} — ${why}`);
+    if (slot.message && !(await waitAtMost(slot.message.done, this.messageWaitMs))) {
+      this.deps.log(`open numbers: the message on ${slot.station.name} did not finish in ${Math.round(this.messageWaitMs / 1000)} s; closing anyway`);
+    }
     if (slot.state === "opening" && slot.opening) await slot.opening.catch(() => {});
     if (slot.ready) await this.track(this.deps.close(slot.ready, slot.station));
   }

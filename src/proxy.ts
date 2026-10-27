@@ -36,6 +36,9 @@ const PUBLIC = [
   "/api/webhooks/whatsapp-message",
   // The single messaging webhook AgentSDR registers; routes to the two above.
   "/api/webhooks/unipile-message",
+  // Cal.com bookings for AI calling campaigns; checks the organization's
+  // webhook secret (x-cal-signature-256) itself. See aiCampaigns/booking.ts.
+  "/api/webhooks/calcom",
   // Called by the WhatsApp call-recorder Chrome extension's service worker,
   // which holds a per-call bearer token, not the site cookie. Every route
   // under this prefix authenticates itself with authorizeRecorder() (see

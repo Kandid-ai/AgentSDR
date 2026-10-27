@@ -1,6 +1,8 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { leads as linkedinLeads } from "@/lib/linkedin/schema";
 import { whatsappCampaignLeads, whatsappCampaigns } from "@/lib/whatsapp/schema";
+import { callCampaignContacts, callCampaigns } from "@/lib/calls/schema";
+import { AI_OPEN_STATUSES } from "@/lib/calls/aiCampaigns/contract";
 import { outreachCampaigns, outreachLeads, outreachMailboxQueue } from "@/lib/outreach/schema";
 import {
   crmConversationMessages,
@@ -392,6 +394,17 @@ export async function ingestInboundReplyInTransaction(
       ),
       eq(whatsappCampaignLeads.personId, current.personId),
       inArray(whatsappCampaignLeads.status, ["queued", "in_sequence"]),
+    ));
+  // AI calling campaigns: the engine stops calling and messaging them; a
+  // call or message already under way finishes, and settling it leaves them replied.
+  await tx.update(callCampaignContacts).set({ aiStatus: "replied", aiNextAt: null, updatedAt: now })
+    .where(and(
+      inArray(
+        callCampaignContacts.campaignId,
+        tx.select({ id: callCampaigns.id }).from(callCampaigns).where(inOrg(callCampaigns)),
+      ),
+      eq(callCampaignContacts.personId, current.personId),
+      inArray(callCampaignContacts.aiStatus, [...AI_OPEN_STATUSES]),
     ));
 
   await enqueueCrmJobInTransaction(tx, {

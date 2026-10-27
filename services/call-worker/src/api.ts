@@ -6,6 +6,11 @@ import type {
   WorkerCallStatus,
   WorkerClaimRequest,
   WorkerClaimResponse,
+  WorkerInboundRequest,
+  WorkerInboundResponse,
+  WorkerMessageClaimRequest,
+  WorkerMessageClaimResponse,
+  WorkerMessageResultRequest,
   WorkerLeaseRequest,
   WorkerLeaseResponse,
   WorkerReleaseRequest,
@@ -77,4 +82,16 @@ export function profileUploadUrl(stationId: string, bytes: number): Promise<Work
 
 export function commitProfile(stationId: string, body: WorkerProfileCommitRequest): Promise<WorkerProfileCommitResponse> {
   return request("POST", `/api/call-worker/stations/${encodeURIComponent(stationId)}/profile`, body);
+}
+
+export function claimMessage(body: WorkerMessageClaimRequest): Promise<WorkerMessageClaimResponse> {
+  return request("POST", "/api/call-worker/messages/claim", body);
+}
+
+export async function reportMessageResult(messageId: string, body: WorkerMessageResultRequest): Promise<void> {
+  await request<{ ok: true }>("POST", `/api/call-worker/messages/${encodeURIComponent(messageId)}/result`, body);
+}
+
+export function postInbound(stationId: string, body: WorkerInboundRequest): Promise<WorkerInboundResponse> {
+  return request("POST", `/api/call-worker/stations/${encodeURIComponent(stationId)}/inbound`, body);
 }

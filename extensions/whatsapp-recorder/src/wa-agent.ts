@@ -24,7 +24,18 @@ import { digitsOnly } from "../../../src/lib/calls/digits";
 import { whatsappContactName, type WhatsappContactName } from "../../../src/lib/calls/whatsappContact";
 import { LiveAgent } from "./live-agent";
 import { pcm16Wav } from "./wav";
-import { AGENT_SOURCE, HOOK_SOURCE, type AgentToHook, type HookToAgent } from "./wa-protocol";
+import type { StationInboundMessage } from "../../../src/lib/calls/stationContract";
+import { isNonPersonalJid, jidToPhone, parseMessageId, parsePrePlainText } from "./inbound";
+import {
+  AGENT_MESSAGING_SOURCE,
+  AGENT_SOURCE,
+  HOOK_MESSAGING_SOURCE,
+  HOOK_SOURCE,
+  type AgentToHook,
+  type AgentToHookMessaging,
+  type HookToAgent,
+  type HookToAgentMessaging,
+} from "./wa-protocol";
 import {
   WA_HEARD_AUDIO_PORT,
   WA_RECORDING_PORT,
@@ -36,6 +47,8 @@ import {
   type WaCall,
   type WaHeardAudioPortMessage,
   type WaRecordingPortMessage,
+  type WaScanResult,
+  type WaSendOutcome,
 } from "./messages";
 
 /** WhatsApp Web can take a while to load a chat after a cold start. */
@@ -152,6 +165,7 @@ chrome.runtime.onMessage.addListener((message: AgentCommand, _sender, sendRespon
     );
     return true;
   }
+  if (message.type !== "open") return; // station messaging: its own listener, below
   if (message.call) trace(message.call.callId, "WhatsApp tab: asked to open the chat in place");
   const savedName = whatsappContactName(message.call?.lead ?? null)?.display ?? null;
   void openInPlace(message.phone, message.text, message.call?.callId ?? null, savedName).then((outcome) => {
@@ -509,9 +523,12 @@ async function openInPlace(
   callId: string | null,
   /** The name the extension saves this lead under, once it has — "Rahul (Acme)". */
   savedName: string | null = null,
+  /** Where the steps go when there is no call (station messaging). */
+  log?: (step: string) => void,
 ): Promise<"opened" | "not-on-whatsapp" | "failed"> {
   const note = (step: string) => {
     if (callId) trace(callId, step);
+    else log?.(step);
   };
   const digits = digitsOnly(phone);
   const before = chatTitle();
@@ -877,6 +894,461 @@ async function sendHeardAudio(callId: string, pcm: Int16Array): Promise<void> {
   const answer = await result;
   trace(callId, answer.ok ? `AI agent: saved what it heard (${Math.round(pcm.length / 16_000)} s)` : `AI agent: could not save what it heard — ${answer.error}`);
   port.disconnect();
+}
+
+// =============================================================================
+// --- station messaging (calling stations only) --------------------------------
+// =============================================================================
+//
+// A calling station also sends and reads WhatsApp messages for AgentSDR (the
+// call worker drives it through the service worker's agentsdrStation). Kept
+// apart from the call path above, which it only reuses (openInPlace, probe,
+// chatTitle, invalidNumberShown); it never runs during a call.
+//
+// Reading messages is wa-hook's job (WhatsApp's own message store), enabled
+// only once the service worker's station mode asked for messages, so a rep's
+// own WhatsApp Web is never read. When the store cannot be read, the service
+// worker asks this script to scan the chat list's unread chats instead.
+
+/** After a reload at /send?phone=…, how long WhatsApp gets to open the chat. */
+const SEND_OPEN_AFTER_RELOAD_MS = 20_000;
+/** How long a pressed Send gets to show the message in the chat. */
+const SEND_CONFIRM_MS = 10_000;
+/** Send pressed and nothing happened this long: try Enter in the message box. */
+const SEND_ENTER_FALLBACK_MS = 1_500;
+const FIND_SENT_WAIT_MS = 1_500;
+/** A DOM scan opens at most this many unread chats, and reads at most this many messages from each. */
+const SCAN_MAX_CHATS = 10;
+const SCAN_MAX_MESSAGES_PER_CHAT = 50;
+const COMPOSER_SELECTOR = '#main footer [contenteditable="true"]';
+
+let sendingMessage = false;
+
+function msgLog(step: string): void {
+  void send({ target: "background", type: "wa:msg-log", step }).catch(() => {});
+}
+
+window.addEventListener("message", onHookMessagingMessage);
+
+// On every load, including a reload: read messages only on a station that asked for them.
+void send<{ enabled: boolean } | undefined>({ target: "background", type: "wa:messaging-hello" })
+  .then((answer) => {
+    if (answer?.enabled) enableHookMessaging();
+  })
+  .catch(() => {});
+
+chrome.runtime.onMessage.addListener((message: AgentCommand, _sender, sendResponse) => {
+  if (message.target !== "wa-agent") return;
+  if (message.type === "messaging-enable") {
+    enableHookMessaging();
+    sendResponse({ ok: true } satisfies BridgeResult);
+    return;
+  }
+  if (message.type === "send-message") {
+    void sendWhatsappMessage(message.phone, message.text, message.afterReload).then(sendResponse, (error: unknown) =>
+      // Past this point Send may have been pressed: never say it is safe to retry.
+      sendResponse({ ok: false, retryable: false, error: `Sending failed: ${describeError(error)}` } satisfies WaSendOutcome),
+    );
+    return true;
+  }
+  if (message.type === "scan-inbound") {
+    void scanUnreadChats().then(sendResponse, (error: unknown) =>
+      sendResponse({ ok: false, skipped: false, error: describeError(error) } satisfies WaScanResult),
+    );
+    return true;
+  }
+});
+
+function enableHookMessaging(): void {
+  toHookMessaging({ source: AGENT_MESSAGING_SOURCE, type: "messaging-enable" });
+}
+
+function onHookMessagingMessage(event: MessageEvent): void {
+  if (event.source !== window) return;
+  const data = event.data as HookToAgentMessaging | null;
+  if (data?.source !== HOOK_MESSAGING_SOURCE) return;
+  if (data.type === "messaging-source") {
+    void send({ target: "background", type: "wa:messaging-source", capability: data.capability }).catch(() => {});
+  } else if (data.type === "messages" && Array.isArray(data.messages) && data.messages.length) {
+    void send({ target: "background", type: "wa:inbound", messages: data.messages }).catch(() => {});
+  } else if (data.type === "messaging-log") {
+    msgLog(`hook: ${data.text}`);
+  }
+}
+
+/** Why messaging must wait: a call is being placed, is on, or is being finished off here. Null when clear. */
+async function callBlocksMessaging(): Promise<string | null> {
+  if (agent) return "the AI agent is on a call";
+  if (document.querySelector('[aria-label="End call"]')) return "WhatsApp shows a call";
+  const probed = await probe();
+  if (probed.busyCallIds.length) return `a call is in progress (${probed.busyCallIds[0].slice(0, 8)})`;
+  return null;
+}
+
+/** Logged in and loaded: the chat list is showing. */
+function whatsappReady(): boolean {
+  return Boolean(document.querySelector("#pane-side"));
+}
+
+/**
+ * Sends `text` to `phone` (digits) and confirms it showed in the chat. Never
+ * reloads the tab itself: when the chat cannot be opened in place it answers
+ * `reload` before anything is typed, and the service worker decides.
+ */
+async function sendWhatsappMessage(phone: string, text: string, afterReload: boolean): Promise<WaSendOutcome> {
+  if (sendingMessage) return { ok: false, retryable: true, error: "Another message is being sent from this number" };
+  sendingMessage = true;
+  try {
+    return await sendWhatsappMessageNow(digitsOnly(phone), text, afterReload);
+  } finally {
+    sendingMessage = false;
+  }
+}
+
+async function sendWhatsappMessageNow(digits: string, text: string, afterReload: boolean): Promise<WaSendOutcome> {
+  const busy = await callBlocksMessaging();
+  if (busy) return { ok: false, retryable: true, error: `Not sent: ${busy}` };
+
+  let opened: "opened" | "not-on-whatsapp" | "failed";
+  if (afterReload) {
+    msgLog(`send: WhatsApp reloaded at the chat with +${digits}; waiting for it`);
+    opened = await waitForChatAfterReload(digits);
+  } else {
+    if (!whatsappReady()) return { ok: false, retryable: true, error: "WhatsApp Web is not ready (still loading, or not logged in)" };
+    msgLog(`send: opening the chat with +${digits} in place`);
+    opened = await openInPlace(digits, null, null, null, (step) => msgLog(`send: ${step}`));
+  }
+  if (opened === "not-on-whatsapp") {
+    msgLog(`send: +${digits} is not on WhatsApp`);
+    await dismissInvalidNumberPopup();
+    return { ok: false, retryable: false, error: `+${digits} is not on WhatsApp` };
+  }
+  if (opened === "failed") {
+    return afterReload
+      ? { ok: false, retryable: true, error: "The chat did not open after reloading WhatsApp Web" }
+      : { ok: false, reload: true, error: "The chat could not be opened in place" };
+  }
+
+  // Opening took a moment: a call may have started meanwhile. Nothing is typed yet.
+  const busyNow = await callBlocksMessaging();
+  if (busyNow) return { ok: false, retryable: true, error: `Not sent: ${busyNow}` };
+  const box = await waitFor(() => document.querySelector<HTMLElement>(COMPOSER_SELECTOR), "the message box", 5_000).catch(() => null);
+  if (!box) return { ok: false, retryable: true, error: "The chat has no message box (WhatsApp does not let this number message it)" };
+
+  if (!(await typeMessage(box, text))) {
+    await clearComposer(box);
+    return { ok: false, retryable: true, error: "The message could not be typed into WhatsApp's message box" };
+  }
+  msgLog(`send: typed ${text.length} characters; pressing Send`);
+
+  const before = outgoingRowIds();
+  const pressedAt = Date.now();
+  const button = sendButton();
+  if (button) pressLikeUser(button);
+  else {
+    msgLog("send: no Send button found; pressing Enter");
+    pressEnter(box);
+  }
+
+  let row: HTMLElement | null = null;
+  let enterTried = !button;
+  while (Date.now() - pressedAt < SEND_CONFIRM_MS) {
+    await sleep(250);
+    row = newOutgoingRow(before);
+    if (row) break;
+    if (!enterTried && composerHasText() && Date.now() - pressedAt > SEND_ENTER_FALLBACK_MS) {
+      enterTried = true;
+      msgLog("send: Send did not take; pressing Enter");
+      pressEnter(document.querySelector<HTMLElement>(COMPOSER_SELECTOR) ?? box);
+    }
+  }
+
+  if (!row) {
+    if (composerHasText()) {
+      // Still in the box and nothing in the chat: it did not go.
+      await clearComposer(document.querySelector<HTMLElement>(COMPOSER_SELECTOR) ?? box);
+      msgLog("send: WhatsApp did not send it (the text stayed in the message box)");
+      return { ok: false, retryable: true, error: "WhatsApp did not send the message (Send had no effect)" };
+    }
+    msgLog("send: the message box emptied but no sent message showed in the chat");
+    return {
+      ok: false,
+      retryable: false,
+      error: `The message box emptied but the sent message did not show within ${SEND_CONFIRM_MS / 1000} s — it may have been sent`,
+    };
+  }
+
+  const domId = row.getAttribute("data-id");
+  const keyId = parseMessageId(domId)?.keyId ?? null;
+  const storeId = await findSentViaHook(digits, text, pressedAt - 5_000, keyId);
+  const providerMessageId = storeId ?? (parseMessageId(domId) ? domId : null);
+  msgLog(`send: sent (${providerMessageId ?? "no id"}${storeId ? ", from the store" : domId ? ", from the page" : ""})`);
+  return { ok: true, providerMessageId };
+}
+
+/** After a load at /send?phone=…: the chat WhatsApp opens for it, or its "invalid number" popup. */
+async function waitForChatAfterReload(digits: string): Promise<"opened" | "not-on-whatsapp" | "failed"> {
+  const deadline = Date.now() + SEND_OPEN_AFTER_RELOAD_MS;
+  while (Date.now() < deadline) {
+    if (invalidNumberShown()) return "not-on-whatsapp";
+    const title = chatTitle();
+    // A fresh load opens no chat but the one in its URL.
+    if (title && document.querySelector(COMPOSER_SELECTOR)) {
+      msgLog(`send: chat open after the reload ("${title}"${digitsOnly(title) === digits ? "" : ", a saved contact"})`);
+      return "opened";
+    }
+    await sleep(OPEN_POLL_MS);
+  }
+  msgLog(`send: no chat ${SEND_OPEN_AFTER_RELOAD_MS / 1000} s after the reload`);
+  return "failed";
+}
+
+/** Answers WhatsApp's "isn't on WhatsApp" / "invalid" popup, so it does not sit over the next job. */
+async function dismissInvalidNumberPopup(): Promise<void> {
+  const popups = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [data-animate-modal-popup="true"]'));
+  const popup = popups.find((element) => /invalid|isn.t on WhatsApp/i.test(element.textContent ?? ""));
+  if (!popup) return;
+  const ok = Array.from(popup.querySelectorAll<HTMLElement>('button, [role="button"]')).find((element) =>
+    /^(ok|close)$/i.test(element.innerText?.trim() ?? ""),
+  );
+  if (ok) press(ok);
+  else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+  await sleep(300);
+}
+
+/** The message box's text, line breaks included — read from the nodes, so it needs no layout. */
+function composerText(box: HTMLElement | null = document.querySelector<HTMLElement>(COMPOSER_SELECTOR)): string {
+  if (!box) return "";
+  let text = "";
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent ?? "";
+      return;
+    }
+    if (!(node instanceof HTMLElement)) return;
+    if (node.tagName === "BR") {
+      text += "\n";
+      return;
+    }
+    if (node.tagName === "IMG") {
+      text += node.getAttribute("alt") ?? "";
+      return;
+    }
+    const block = node !== box && /^(P|DIV)$/.test(node.tagName);
+    if (block && text && !text.endsWith("\n")) text += "\n";
+    node.childNodes.forEach(walk);
+  };
+  walk(box);
+  return text.replace(/[​﻿]/g, "");
+}
+
+function composerHasText(): boolean {
+  return composerText().trim() !== "";
+}
+
+/** Same words in the same order, and no line break lost. Spacing is not compared. */
+function composerMatches(actual: string, wanted: string): boolean {
+  const squash = (value: string) => value.replace(/\s+/g, "");
+  const lines = (value: string) => value.split("\n").filter((line) => line.trim()).length;
+  return squash(actual) === squash(wanted) && lines(actual) >= lines(wanted);
+}
+
+async function clearComposer(box: HTMLElement): Promise<void> {
+  box.focus();
+  document.execCommand("selectAll");
+  document.execCommand("delete");
+  await sleep(100);
+}
+
+/**
+ * Types the message without sending any of it. Tried first as one insertText
+ * of the whole text; if WhatsApp's editor drops its line breaks, again line by
+ * line with insertLineBreak between — what Shift+Enter inserts. Enter itself
+ * sends, so it is never used to break a line.
+ */
+async function typeMessage(box: HTMLElement, raw: string): Promise<boolean> {
+  const wanted = raw.replace(/\r\n?/g, "\n").trim();
+  if (!wanted) return false;
+  await clearComposer(box);
+  if (composerHasText()) {
+    msgLog("send: could not clear a draft in the message box");
+    return false;
+  }
+  box.focus();
+  document.execCommand("insertText", false, wanted);
+  await sleep(200);
+  if (composerMatches(composerText(), wanted)) return true;
+  if (!wanted.includes("\n")) {
+    msgLog(`send: the message box shows ${JSON.stringify(composerText().slice(0, 80))}, not the message`);
+    return false;
+  }
+  msgLog("send: line breaks were lost; typing line by line");
+  const current = document.querySelector<HTMLElement>(COMPOSER_SELECTOR) ?? box;
+  await clearComposer(current);
+  current.focus();
+  wanted.split("\n").forEach((line, index) => {
+    if (index > 0) document.execCommand("insertLineBreak");
+    if (line) document.execCommand("insertText", false, line);
+  });
+  await sleep(200);
+  if (composerMatches(composerText(), wanted)) return true;
+  msgLog(`send: the message box shows ${JSON.stringify(composerText().slice(0, 80))}, not the message`);
+  return false;
+}
+
+/** WhatsApp's Send: by its label, else by its icon. */
+function sendButton(): HTMLElement | null {
+  const labelled = document.querySelector<HTMLElement>(
+    '#main footer button[aria-label="Send"], #main footer [role="button"][aria-label="Send"], #main button[aria-label="Send"]',
+  );
+  if (labelled) return labelled;
+  const icon = document.querySelector<HTMLElement>(
+    '#main footer [data-icon="send"], #main footer [data-icon="wds-ic-send-filled"], #main [data-icon="send"], #main [data-icon="wds-ic-send-filled"]',
+  );
+  return icon?.closest<HTMLElement>('button, [role="button"]') ?? icon ?? null;
+}
+
+function pressEnter(box: HTMLElement): void {
+  box.focus();
+  const init = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+  box.dispatchEvent(new KeyboardEvent("keydown", init));
+  box.dispatchEvent(new KeyboardEvent("keypress", init));
+  box.dispatchEvent(new KeyboardEvent("keyup", init));
+}
+
+/** The open chat's message rows sent from this number, by data-id ("true_<jid>_<key id>"). */
+function outgoingRows(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('#main [data-id^="true_"]'));
+}
+
+function outgoingRowIds(): Set<string> {
+  return new Set(outgoingRows().map((row) => row.getAttribute("data-id") ?? ""));
+}
+
+/** The chat's last sent row, when it was not there before Send. */
+function newOutgoingRow(before: Set<string>): HTMLElement | null {
+  const rows = outgoingRows();
+  const last = rows[rows.length - 1];
+  const id = last?.getAttribute("data-id");
+  return last && id && !before.has(id) ? last : null;
+}
+
+/** Asks wa-hook for the sent message's id in WhatsApp's store; null when the store cannot say. */
+async function findSentViaHook(chatDigits: string, body: string, sinceMs: number, keyId: string | null): Promise<string | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const found = await new Promise<string | null>((resolve) => {
+      const requestId = crypto.randomUUID();
+      const timeout = setTimeout(() => finish(null), FIND_SENT_WAIT_MS);
+      function finish(id: string | null) {
+        clearTimeout(timeout);
+        window.removeEventListener("message", onResult);
+        resolve(id);
+      }
+      function onResult(event: MessageEvent) {
+        const data = event.data as HookToAgentMessaging | null;
+        if (event.source === window && data?.source === HOOK_MESSAGING_SOURCE && data.type === "found-sent" && data.requestId === requestId) {
+          finish(data.providerMessageId);
+        }
+      }
+      window.addEventListener("message", onResult);
+      toHookMessaging({ source: AGENT_MESSAGING_SOURCE, type: "find-sent", requestId, chatDigits, body: body.replace(/\r\n?/g, "\n").trim(), sinceMs, keyId });
+    });
+    if (found) return found;
+    await sleep(500);
+  }
+  return null;
+}
+
+// --- reading unread chats from the page (when the store cannot be read) --------
+
+/**
+ * Opens each chat the chat list marks unread and reads its newest incoming
+ * messages — as many as its unread count. Opening a chat marks it read,
+ * which is the price of this fallback. Never while a call is on.
+ */
+async function scanUnreadChats(): Promise<WaScanResult> {
+  const busy = await callBlocksMessaging();
+  if (busy) return { ok: false, skipped: true, error: busy };
+  if (sendingMessage) return { ok: false, skipped: true, error: "a message is being sent" };
+  if (!whatsappReady()) return { ok: false, skipped: false, error: "WhatsApp Web is not ready (still loading, or not logged in)" };
+
+  const unread = unreadChats();
+  if (unread.length) msgLog(`scan: ${unread.length} unread chat(s) in the chat list`);
+  const messages: StationInboundMessage[] = [];
+  for (const chat of unread.slice(0, SCAN_MAX_CHATS)) {
+    if (await callBlocksMessaging()) break;
+    press(chat.row);
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline && chatTitle() !== chat.title) await sleep(OPEN_POLL_MS);
+    if (chatTitle() !== chat.title) {
+      msgLog(`scan: chat "${chat.title}" did not open`);
+      continue;
+    }
+    await sleep(600); // its messages render a moment after the header
+    messages.push(...readIncomingRows(chat.title, chat.count));
+  }
+  return { ok: true, messages };
+}
+
+/** Chat-list rows carrying an unread badge ("3 unread messages"), with their counts. */
+function unreadChats(): { row: HTMLElement; title: string; count: number }[] {
+  const counts = new Map<HTMLElement, number>();
+  for (const badge of Array.from(document.querySelectorAll<HTMLElement>("#pane-side [aria-label]"))) {
+    const label = badge.getAttribute("aria-label") ?? "";
+    if (!/unread message/i.test(label)) continue;
+    const row = badge.closest<HTMLElement>('[role="gridcell"], [role="listitem"], [role="row"]');
+    if (!row) continue;
+    const count = Number.parseInt(badge.textContent ?? "", 10) || Number.parseInt(label, 10) || 1;
+    counts.set(row, Math.max(counts.get(row) ?? 0, count));
+  }
+  return Array.from(counts, ([row, count]) => ({ row, count, title: row.querySelector("span[title]")?.getAttribute("title") ?? "" })).filter(
+    (chat) => chat.title,
+  );
+}
+
+/** The open chat's newest `count` incoming messages. Groups (and anything not a person's chat) are skipped. */
+function readIncomingRows(title: string, count: number): StationInboundMessage[] {
+  const seen = new Set<string>();
+  const rows = Array.from(document.querySelectorAll<HTMLElement>('#main [data-id^="false_"]')).filter((row) => {
+    const id = row.getAttribute("data-id") ?? "";
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  const parsed = rows.map((row) => ({ row, id: parseMessageId(row.getAttribute("data-id")) }));
+  if (parsed.some(({ id }) => id && isNonPersonalJid(id.jid))) {
+    msgLog(`scan: "${title}" is a group or broadcast — skipped`);
+    return [];
+  }
+  const headerPhone = /^\+?[\d\s()-]{7,}$/.test(title) ? `+${digitsOnly(title)}` : null;
+  const messages: StationInboundMessage[] = [];
+  for (const { row, id } of parsed.slice(-Math.min(Math.max(count, 1), SCAN_MAX_MESSAGES_PER_CHAT))) {
+    if (!id) continue;
+    const meta = row.querySelector<HTMLElement>("[data-pre-plain-text]");
+    const textElement = meta?.querySelector<HTMLElement>("span.selectable-text") ?? row.querySelector<HTMLElement>("span.selectable-text");
+    const { sentAt } = parsePrePlainText(meta?.getAttribute("data-pre-plain-text"));
+    messages.push({
+      providerMessageId: row.getAttribute("data-id") ?? "",
+      chatPhone: jidToPhone(id.jid) ?? headerPhone,
+      chatJid: id.jid,
+      chatName: headerPhone ? null : title,
+      direction: "inbound",
+      text: (textElement?.innerText ?? "").trim(),
+      sentAt: sentAt ?? Date.now(),
+      // A row with no text prefix is media, a voice note or the like.
+      kind: meta ? null : "media",
+    });
+  }
+  if (messages.length) msgLog(`scan: read ${messages.length} message(s) from "${title}"`);
+  return messages;
+}
+
+function toHookMessaging(message: AgentToHookMessaging): void {
+  window.postMessage(message, location.origin);
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 // --- plumbing ------------------------------------------------------------------

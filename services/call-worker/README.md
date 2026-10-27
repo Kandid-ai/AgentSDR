@@ -20,6 +20,32 @@ let go), and restarted every 4 hours, which saves the profile. A call on an
 open number skips the browser start and WhatsApp's load (~13 s); a link
 closes it first.
 
+## Messaging (KEEP_OPEN > 0, extension 0.21.0+)
+
+AgentSDR's own WhatsApp messages (no Unipile) go out through the numbers this worker keeps
+open (`src/messaging.ts`); with `KEEP_OPEN=0` the worker does no messaging.
+
+- **Send.** Every `MESSAGE_POLL_MS` it offers AgentSDR the open numbers that are ready, have
+  no call or message on them, and whose extension can message:
+  `POST /api/call-worker/messages/claim` `{ workerId, stations }` → `{ job }`. AgentSDR spaces
+  sends per number and never hands a message for a number with an open call. The number is
+  held while the extension sends (`agentsdrStation.sendMessage`, 45 s at most), then the
+  result goes to `POST /api/call-worker/messages/:id/result` (retried for about a minute).
+  A timeout or an error thrown by the extension is reported not retryable (it may have been
+  sent); a number that turned busy before the send is handed back retryable — the only case
+  AgentSDR requeues a message (once). A claimed message with no report for 2 minutes is never
+  resent: AgentSDR fails it as "Delivery uncertain" and keeps its message row.
+- **Receive.** Every `INBOUND_POLL_MS`, and right after a call on an open number ends, it takes
+  what the extension saw arrive (`agentsdrStation.takeInbound`) and posts it to
+  `POST /api/call-worker/stations/:id/inbound` in batches of at most 100. A failed post is
+  kept in memory (1000 messages a number at most, oldest dropped) and sent first next time.
+- **Calls come first.** A message only takes a number nobody is using. A call never waits on
+  messaging, except for a send already running on its own number (at most 50 s); checks,
+  restarts and closes wait the same way. On shutdown the worker stops claiming, finishes the
+  send in flight, posts what was received, then closes the numbers.
+- Extensions before 0.21.0 have no `sendMessage`/`takeInbound`: the worker says so once per
+  number and leaves its messages alone (calls still work from 0.17.0).
+
 ## Environment
 
 | Variable | Default | |
@@ -35,6 +61,8 @@ closes it first.
 | `STATIONS` | – | comma list of station ids this worker serves (all when empty) |
 | `KEEP_OPEN` | `0` (`3` in Docker) | numbers whose WhatsApp Web stays open between calls (~0.7–1 GB RAM each); 0 opens a browser per call |
 | `CALL_TIMEOUT_MS` | 30 min | then the worker hangs up |
+| `MESSAGE_POLL_MS` | `2000` | gap between message claims when there is nothing to send (open numbers only) |
+| `INBOUND_POLL_MS` | `10000` | how often each open number's received messages are read and posted |
 | `CHROMIUM_PATH` | – | Chromium executable override |
 
 ## Run locally

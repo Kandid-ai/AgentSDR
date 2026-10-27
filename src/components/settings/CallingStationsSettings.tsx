@@ -37,6 +37,10 @@ import {
   type StationLauncher,
   type StationStatus,
 } from "@/lib/calls/stationContract";
+import { hoursInvalid, hoursSummary, StationHoursEditor } from "@/components/calling/ai/StationHoursEditor";
+import type { StationAiSettings, StationAiSettingsResponse } from "@/lib/calls/aiCampaigns/api";
+import { listStationAiSettings, updateStationAiSettings } from "@/lib/calls/aiCampaigns/client";
+import type { WeeklyHours } from "@/lib/channels/rules";
 import { cn } from "@/utils/cn";
 
 const LAUNCHER_LABEL: Record<StationLauncher, string> = {
@@ -69,8 +73,19 @@ const POLL_IDLE_MS = 15000;
 /** Radix selects cannot hold an empty value, so "no IP" is this. */
 const NO_PROXY = "none";
 
-type Draft = { name: string; phone: string; launcher: StationLauncher; gologinProfileId: string; proxyId: string };
-const EMPTY_DRAFT: Draft = { name: "", phone: "", launcher: "cloak", gologinProfileId: "", proxyId: NO_PROXY };
+type Draft = {
+  name: string;
+  phone: string;
+  launcher: StationLauncher;
+  gologinProfileId: string;
+  proxyId: string;
+  /** AI campaign calls a day from this number; blank = the organization's rule. */
+  callsPerDay: string;
+  /** Its own calling hours; null = the organization's rule. */
+  callingHours: WeeklyHours | null;
+};
+const EMPTY_DRAFT: Draft = { name: "", phone: "", launcher: "cloak", gologinProfileId: "", proxyId: NO_PROXY, callsPerDay: "", callingHours: null };
+const FALLBACK_HOURS: WeeklyHours = { timezone: "Asia/Kolkata", days: [1, 2, 3, 4, 5, 6], start: "12:00", end: "19:00" };
 
 type ProxyDraft = {
   label: string;
@@ -110,6 +125,8 @@ export function CallingStationsSettings() {
   /** Numbers whose wrong-account question the operator put off ("Decide later"), until the page reloads. */
   const [putOff, setPutOff] = useState<ReadonlySet<string>>(new Set());
   const [proxies, setProxies] = useState<CallingProxy[]>([]);
+  /** Each number's own AI calls a day and calling hours, and the organization rules they fall back to. */
+  const [aiSettings, setAiSettings] = useState<StationAiSettingsResponse | null>(null);
   /** "new", or the id of the IP being edited. */
   const [proxyFormFor, setProxyFormFor] = useState<string | null>(null);
   const [proxyDraft, setProxyDraft] = useState<ProxyDraft>(EMPTY_PROXY_DRAFT);
@@ -118,9 +135,15 @@ export function CallingStationsSettings() {
 
   const load = useCallback(async () => {
     try {
-      const [stationList, proxyList] = await Promise.all([listCallingStations(), listCallingProxies()]);
+      const [stationList, proxyList, ai] = await Promise.all([
+        listCallingStations(),
+        listCallingProxies(),
+        // Shown beside each number; the page works without it.
+        listStationAiSettings().catch(() => null),
+      ]);
       setStations(stationList.stations);
       setProxies(proxyList.proxies);
+      if (ai) setAiSettings(ai);
       setError("");
     } catch (cause) {
       setError(errorMessage(cause));
@@ -157,8 +180,18 @@ export function CallingStationsSettings() {
     setFormError("");
     setFormFor("new");
   };
+  const aiOf = (stationId: string): StationAiSettings | null => aiSettings?.settings.find((item) => item.stationId === stationId) ?? null;
   const openEdit = (station: CallingStation) => {
-    setDraft({ name: station.name, phone: station.phone, launcher: station.launcher, gologinProfileId: station.gologinProfileId ?? "", proxyId: station.proxyId ?? NO_PROXY });
+    const own = aiOf(station.id);
+    setDraft({
+      name: station.name,
+      phone: station.phone,
+      launcher: station.launcher,
+      gologinProfileId: station.gologinProfileId ?? "",
+      proxyId: station.proxyId ?? NO_PROXY,
+      callsPerDay: own?.callsPerDay != null ? String(own.callsPerDay) : "",
+      callingHours: own?.callingHours ?? null,
+    });
     setFormError("");
     setFormFor(station.id);
   };
@@ -168,7 +201,17 @@ export function CallingStationsSettings() {
     setFormError("");
     const gologinProfileId = usesGoLogin(draft.launcher) ? draft.gologinProfileId.trim() || null : null;
     const proxyId = draft.proxyId === NO_PROXY ? null : draft.proxyId;
+    const callsPerDay = draft.callsPerDay.trim() === "" ? null : Number(draft.callsPerDay);
+    if (callsPerDay !== null && (!Number.isInteger(callsPerDay) || callsPerDay < 1 || callsPerDay > 100)) {
+      setSaving(false);
+      return setFormError("AI calls a day must be a whole number from 1 to 100, or blank to use the organization's rule.");
+    }
+    if (draft.callingHours && hoursInvalid(draft.callingHours)) {
+      setSaving(false);
+      return setFormError("Calling hours need at least one day and an end after the start.");
+    }
     try {
+      let savedId = formFor;
       if (formFor === "new") {
         const { station } = await createCallingStation({
           name: draft.name.trim(),
@@ -177,10 +220,16 @@ export function CallingStationsSettings() {
           gologinProfileId,
           proxyId,
         });
+        savedId = station.id;
         setStations((current) => [...(current ?? []), station]);
       } else if (formFor) {
         const { station } = await updateCallingStation(formFor, { name: draft.name.trim(), launcher: draft.launcher, gologinProfileId, proxyId });
         setStations((current) => (current ?? []).map((item) => (item.id === station.id ? station : item)));
+      }
+      // Only touched when it differs, so saving the other fields never rewrites a number's AI limits.
+      const before = savedId && savedId !== "new" ? aiOf(savedId) : null;
+      if (savedId && savedId !== "new" && (callsPerDay !== (before?.callsPerDay ?? null) || JSON.stringify(draft.callingHours) !== JSON.stringify(before?.callingHours ?? null))) {
+        await updateStationAiSettings(savedId, { callsPerDay, callingHours: draft.callingHours });
       }
       setFormFor(null);
       void load();
@@ -327,6 +376,8 @@ export function CallingStationsSettings() {
               <StationCard
                 key={station.id}
                 station={station}
+                ai={aiOf(station.id)}
+                rules={aiSettings?.rules ?? null}
                 busy={busyId === station.id}
                 // Relinking a number logged in as the wrong account starts it logged out.
                 onLink={() => void act(station, () => startStationLink(station.id, { fresh: station.linkedPhone !== null && station.linkedPhone !== station.phone }))}
@@ -413,6 +464,36 @@ export function CallingStationsSettings() {
                 disabled={saving}
               />
             )}
+            <div className="border-t border-stroke-soft-200 pt-3">
+              <p className="mb-2 text-label-sm text-text-strong-950">AI campaigns</p>
+              <TextField
+                label="AI calls a day"
+                inputMode="numeric"
+                value={draft.callsPerDay}
+                onChange={(callsPerDay) => setDraft((d) => ({ ...d, callsPerDay }))}
+                placeholder={aiSettings ? `Blank: the organization's rule (${aiSettings.rules.callsPerDay})` : "Blank: the organization's rule"}
+                disabled={saving}
+              />
+              <div className="mt-3">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <label className="text-label-sm text-text-strong-950">Calling hours</label>
+                  {draft.callingHours ? (
+                    <button type="button" disabled={saving} onClick={() => setDraft((d) => ({ ...d, callingHours: null }))} className="text-paragraph-xs text-text-sub-600 underline-offset-2 hover:underline disabled:opacity-50">
+                      Use the organization&apos;s hours
+                    </button>
+                  ) : (
+                    <button type="button" disabled={saving} onClick={() => setDraft((d) => ({ ...d, callingHours: aiSettings?.rules.callingHours ?? FALLBACK_HOURS }))} className="text-paragraph-xs text-text-sub-600 underline-offset-2 hover:underline disabled:opacity-50">
+                      Set hours for this number
+                    </button>
+                  )}
+                </div>
+                {draft.callingHours ? (
+                  <StationHoursEditor value={draft.callingHours} onChange={(callingHours) => setDraft((d) => ({ ...d, callingHours }))} disabled={saving} />
+                ) : (
+                  <p className="text-paragraph-xs text-text-sub-600">{aiSettings ? `The organization's hours: ${hoursSummary(aiSettings.rules.callingHours)}` : "The organization's calling hours (Settings → WhatsApp → Sending rules)."}</p>
+                )}
+              </div>
+            </div>
           </Modal.Body>
           <Modal.Footer>
             <Modal.Close asChild>
@@ -575,8 +656,11 @@ export function CallingStationsSettings() {
   );
 }
 
-function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, onDelete, onUseLinkedPhone }: {
+function StationCard({ station, ai, rules, busy, onLink, onCancelLink, onToggle, onEdit, onDelete, onUseLinkedPhone }: {
   station: CallingStation;
+  /** This number's own AI campaign limits (null fields: the organization's rule). */
+  ai: StationAiSettings | null;
+  rules: StationAiSettingsResponse["rules"] | null;
   busy: boolean;
   onLink: () => void;
   onCancelLink: () => void;
@@ -619,6 +703,12 @@ function StationCard({ station, busy, onLink, onCancelLink, onToggle, onEdit, on
               {station.lastCallAt ? ` · last call ${timeAgo(station.lastCallAt)}` : ""}
             </p>
             <p className="text-paragraph-xs text-text-sub-600">{station.proxyLabel ? `IP: ${station.proxyLabel}` : "Own IP"}</p>
+            {rules && (
+              <p className="text-paragraph-xs text-text-sub-600">
+                AI campaigns: {ai?.callsPerDay != null ? `${ai.callsPerDay} calls a day` : `${rules.callsPerDay} calls a day (rule)`} ·{" "}
+                {ai?.callingHours ? hoursSummary(ai.callingHours) : "organization's calling hours"}
+              </p>
+            )}
             {station.linkedPhone && (
               <p className={cn("text-paragraph-xs tabular-nums", wrongAccount ? "text-error-base" : "text-text-sub-600")}>
                 WhatsApp: logged in as {station.linkedPhone}

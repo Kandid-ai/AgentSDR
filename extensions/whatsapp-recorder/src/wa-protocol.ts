@@ -11,6 +11,8 @@
  * rep's own call.
  */
 
+import type { StationInboundMessage } from "../../../src/lib/calls/stationContract";
+
 export const HOOK_SOURCE = "agentsdr-wa-hook";
 export const AGENT_SOURCE = "agentsdr-wa-agent";
 
@@ -64,3 +66,39 @@ export type HookToAgent =
   | { source: typeof HOOK_SOURCE; type: "call-ui"; callId: string }
   /** The lead's side of an agent call, from the pick-up on: mono 16-bit PCM at 16 kHz. */
   | { source: typeof HOOK_SOURCE; type: "agent-audio"; callId: string; pcm: ArrayBuffer };
+
+// --- station messaging --------------------------------------------------------
+// A calling station's WhatsApp messaging (station mode only): wa-hook reads
+// messages from WhatsApp's own message store once wa-agent enables it. Its
+// own `source` values, so the call path's listeners never see these.
+
+export const HOOK_MESSAGING_SOURCE = "agentsdr-wa-hook-messaging";
+export const AGENT_MESSAGING_SOURCE = "agentsdr-wa-agent-messaging";
+
+export type AgentToHookMessaging =
+  /** Start reading WhatsApp's message store — only on a calling station, never a rep's own WhatsApp. */
+  | { source: typeof AGENT_MESSAGING_SOURCE; type: "messaging-enable" }
+  /** Answered with messaging-source. */
+  | { source: typeof AGENT_MESSAGING_SOURCE; type: "messaging-status" }
+  /**
+   * The newest message sent from this number to `chatDigits` with this body,
+   * since `sinceMs` — or, given `keyId`, that message. Answered with found-sent.
+   */
+  | {
+      source: typeof AGENT_MESSAGING_SOURCE;
+      type: "find-sent";
+      requestId: string;
+      chatDigits: string;
+      body: string;
+      sinceMs: number;
+      keyId: string | null;
+    };
+
+export type HookToAgentMessaging =
+  /** "store": the message-store listener is attached; "none": not (yet). */
+  | { source: typeof HOOK_MESSAGING_SOURCE; type: "messaging-source"; capability: "store" | "none" }
+  /** Messages WhatsApp added to its store (new ones, either direction). */
+  | { source: typeof HOOK_MESSAGING_SOURCE; type: "messages"; messages: StationInboundMessage[] }
+  | { source: typeof HOOK_MESSAGING_SOURCE; type: "found-sent"; requestId: string; providerMessageId: string | null }
+  /** A step worth the station's log. */
+  | { source: typeof HOOK_MESSAGING_SOURCE; type: "messaging-log"; text: string };

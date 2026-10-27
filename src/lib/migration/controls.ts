@@ -20,7 +20,8 @@ export type MigrationControl =
   | "crmAutoSend"
   | "linkedinResolution"
   | "linkedinSearch"
-  | "gridWorker";
+  | "gridWorker"
+  | "aiCalling";
 
 const CONTROL_ENV: Record<MigrationControl, string> = {
   emailOutbound: "PAUSE_EMAIL_OUTBOUND",
@@ -31,6 +32,8 @@ const CONTROL_ENV: Record<MigrationControl, string> = {
   linkedinResolution: "PAUSE_LINKEDIN_RESOLUTION",
   linkedinSearch: "PAUSE_LINKEDIN_SEARCH",
   gridWorker: "PAUSE_GRID_WORKER",
+  /** AI calling campaigns (src/lib/calls/aiCampaigns/engine.ts): no new calls or messages; open ones still settle. */
+  aiCalling: "PAUSE_AI_CALLING",
 };
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);

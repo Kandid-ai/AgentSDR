@@ -448,7 +448,9 @@ async function classifyCallTranscriptUnsafe(callId: string): Promise<void> {
     instructions: formatAiInstructions(settings[0]?.classificationInstructions),
   }));
 
-  const followUpAt = followUpFromSuggestion(result.suggestedNextActionAt, contact.followUpAt, new Date());
+  // An AI campaign's lead gets its follow-up date from its engine, which has
+  // already acted on the call's outcome; the transcript only sets the stage.
+  const followUpAt = contact.aiStatus === null ? followUpFromSuggestion(result.suggestedNextActionAt, contact.followUpAt, new Date()) : null;
   if (followUpAt) {
     // Only while it is still unset: a rep may have set one meanwhile.
     await db

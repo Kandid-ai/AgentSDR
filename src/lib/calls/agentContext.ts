@@ -1,0 +1,191 @@
+import "server-only";
+
+import { and, desc, eq, inArray, lt, ne } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { channelRules } from "@/lib/channels/rules.server";
+import { inOrg } from "@/lib/tenancy/scope";
+import { whatsappAccounts, whatsappChats, whatsappMessages } from "@/lib/whatsapp/schema";
+import { AGENT_OUTCOME_LABELS, type AgentOutcome } from "./contract";
+import type { AiCampaignGoal } from "./aiCampaigns/contract";
+import { callCampaignContacts, callCampaigns, callSessions } from "./schema";
+
+/**
+ * What the AI agent knows about this moment beyond its brief: the date and
+ * time, who it has talked to before, and what the campaign it calls for is
+ * trying to achieve. Built per call by loadAgentContext and rendered into the
+ * instructions by liveAgent.ts (agentInstructions).
+ */
+export type AgentPromptContext = {
+  /** "Tuesday, 27 October 2026, 14:35 (GMT+05:30) in Asia/Kolkata" */
+  now?: string | null;
+  /** The ready-made <history> section, or null for a stranger. */
+  history?: string | null;
+  /** Set for a call placed by an AI campaign; replaces the generic "Booking a next step". */
+  goal?: { goal: AiCampaignGoal; bookingUrl: string | null } | null;
+};
+
+const MAX_PREVIOUS_CALLS = 6;
+const MAX_PREVIOUS_MESSAGES = 6;
+const MESSAGE_CHARS = 200;
+
+/** "Tuesday, 27 October 2026, 14:35 (GMT+05:30) in Asia/Kolkata", so the agent can turn "Thursday at 4" into an exact instant. */
+export function formatNow(at: Date, timeZone: string): string {
+  const zone = safeZone(timeZone);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: zone,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "";
+  const offset =
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone, timeZoneName: "longOffset" }).formatToParts(at).find((entry) => entry.type === "timeZoneName")?.value ?? "";
+  return `${part("weekday")}, ${part("day")} ${part("month")} ${part("year")}, ${part("hour")}:${part("minute")}${offset ? ` (${offset})` : ""} in ${zone}`;
+}
+
+function safeZone(timeZone: string): string {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return timeZone;
+  } catch {
+    return "UTC";
+  }
+}
+
+export type PreviousCall = { at: Date; status: string; outcome: AgentOutcome | null };
+export type PreviousMessage = { at: Date; direction: "inbound" | "outbound"; body: string };
+
+/** The <history> section, newest call first; null when there is nothing to say. */
+export function formatHistory(calls: PreviousCall[], messages: PreviousMessage[], timeZone: string): string | null {
+  if (!calls.length && !messages.length) return null;
+  const zone = safeZone(timeZone);
+  const day = (at: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: zone, day: "numeric", month: "short", year: "numeric" }).format(at);
+  const lines: string[] = [];
+  if (calls.length) {
+    lines.push("Earlier calls (newest first):");
+    for (const call of calls.slice(0, MAX_PREVIOUS_CALLS)) {
+      const pickedUp = call.status === "recorded";
+      let line = `- ${day(call.at)}: ${pickedUp ? "they picked up" : "no answer"}`;
+      if (call.outcome) {
+        line += `; outcome: ${AGENT_OUTCOME_LABELS[call.outcome.outcome]}`;
+        if (call.outcome.summary) line += ` — ${call.outcome.summary}`;
+        if (call.outcome.when) line += ` (${call.outcome.when})`;
+      }
+      lines.push(line);
+    }
+  }
+  if (messages.length) {
+    lines.push("Recent WhatsApp messages (oldest first):");
+    for (const message of messages.slice(0, MAX_PREVIOUS_MESSAGES)) {
+      const text = message.body.replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      lines.push(`- ${day(message.at)}, ${message.direction === "inbound" ? "they wrote" : "we wrote"}: ${text.length > MESSAGE_CHARS ? `${text.slice(0, MESSAGE_CHARS)} …` : text}`);
+    }
+  }
+  const spoke = calls.some((call) => call.status === "recorded");
+  return [
+    "What happened with this person before:",
+    "<history>",
+    ...lines,
+    "</history>",
+    spoke
+      ? "You have spoken with them before: do not introduce yourself from scratch. Say you are calling back or following up and refer to what was said."
+      : "Earlier calls went unanswered: you may mention once that you tried before, briefly, and carry on as a first conversation.",
+    "Use this to be natural, never to recite it.",
+  ].join("\n");
+}
+
+/** The campaign goal's "next step" section; the manual-call version stays in liveAgent.ts. */
+export function goalGuidance(goal: AiCampaignGoal): string[] {
+  const always = [
+    "- If they ask you to call later, ask when suits them, then record call_back with whenAt.",
+    "- You cannot see a calendar. Never say a meeting is confirmed or booked in a calendar.",
+  ];
+  if (goal === "book_meeting") {
+    return [
+      "Next step (this campaign's goal is a short meeting with the team):",
+      "- If they are interested, propose a short meeting with the team and say you will send a WhatsApp message right after the call with a link to pick a time. Never read the link out.",
+      "- If they name a day or time, say that is fine to pick in the link. Record meeting_booked, with whenAt if they named a time.",
+      ...always,
+    ];
+  }
+  if (goal === "human_callback") {
+    return [
+      "Next step (this campaign's goal is a call from someone on the team):",
+      "- If they are interested, offer that someone from the team calls them. Agree a day and roughly what time, then record human_callback with whenAt.",
+      ...always,
+    ];
+  }
+  return [
+    "Next step (this campaign's goal is a meeting or a call with the team, their choice):",
+    "- If they are interested, offer to send a WhatsApp link right after the call to pick a time. Never read the link out. If they prefer, offer a call from the team instead.",
+    "- Link chosen: record meeting_booked (whenAt if they named a time). Team call chosen: agree a day and time and record human_callback with whenAt.",
+    ...always,
+  ];
+}
+
+type SessionRow = { id: string; personId: string; campaignContactId: string | null; createdAt: Date };
+
+/** The call's campaign goal, when its campaign contact belongs to an AI campaign. Runs in the organization's scope. */
+export async function loadCampaignGoal(campaignContactId: string | null): Promise<AgentPromptContext["goal"]> {
+  if (!campaignContactId) return null;
+  const [campaign] = await db
+    .select({ goal: callCampaigns.aiGoal, bookingUrl: callCampaigns.aiBookingUrl })
+    .from(callCampaignContacts)
+    .innerJoin(callCampaigns, eq(callCampaigns.id, callCampaignContacts.campaignId))
+    .where(and(inOrg(callCampaigns), eq(callCampaignContacts.id, campaignContactId), eq(callCampaigns.runBy, "ai")))
+    .limit(1);
+  return campaign ? { goal: campaign.goal, bookingUrl: campaign.bookingUrl } : null;
+}
+
+export async function organizationTimeZone(): Promise<string> {
+  try {
+    return (await channelRules("general")).timeZone ?? "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+/** Runs in the call's organization (withRecorderScope). */
+export async function loadAgentContext(row: SessionRow): Promise<AgentPromptContext> {
+  const timeZone = await organizationTimeZone();
+  const [goal, calls, messages] = await Promise.all([
+    loadCampaignGoal(row.campaignContactId),
+    db
+      .select({ at: callSessions.createdAt, status: callSessions.status, outcome: callSessions.agentOutcome })
+      .from(callSessions)
+      .where(
+        and(
+          inOrg(callSessions),
+          eq(callSessions.personId, row.personId),
+          ne(callSessions.id, row.id),
+          lt(callSessions.createdAt, row.createdAt),
+          inArray(callSessions.status, ["recorded", "no_recording", "failed"]),
+        ),
+      )
+      .orderBy(desc(callSessions.createdAt))
+      .limit(MAX_PREVIOUS_CALLS),
+    db
+      .select({ at: whatsappMessages.sentAt, direction: whatsappMessages.direction, body: whatsappMessages.body })
+      .from(whatsappMessages)
+      .innerJoin(whatsappChats, eq(whatsappChats.id, whatsappMessages.chatId))
+      .innerJoin(whatsappAccounts, eq(whatsappAccounts.id, whatsappChats.accountId))
+      .where(and(inOrg(whatsappAccounts), eq(whatsappChats.personId, row.personId)))
+      .orderBy(desc(whatsappMessages.sentAt))
+      .limit(MAX_PREVIOUS_MESSAGES),
+  ]);
+  return {
+    now: formatNow(new Date(), timeZone),
+    history: formatHistory(calls, messages.reverse(), timeZone),
+    goal,
+  };
+}
+
+/** The context of a rehearsal: the date and the campaign's goal, no history (the lead is made up). */
+export async function loadRehearsalContext(goal: AgentPromptContext["goal"]): Promise<AgentPromptContext> {
+  return { now: formatNow(new Date(), await organizationTimeZone()), history: null, goal };
+}

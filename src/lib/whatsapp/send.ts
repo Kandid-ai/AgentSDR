@@ -44,6 +44,7 @@ import {
   type WhatsappMessageRow,
 } from "./messages";
 import { whatsappAccounts, whatsappChats, whatsappMessages } from "./schema";
+import { queueStationSend } from "./stationMessaging";
 
 /**
  * Sending over WhatsApp through Unipile — POST /api/whatsapp/send and the
@@ -60,6 +61,11 @@ import { whatsappAccounts, whatsappChats, whatsappMessages } from "./schema";
  * Unipile id yet) before Unipile is called: that is what the webhook matches
  * an early echo against. A new chat's row holds "pending:<uuid>" until
  * Unipile names the chat. If Unipile refuses or fails, both are removed.
+ *
+ * A calling station's number (provider "station") does not go through
+ * Unipile: the message is reserved and queued for the station's worker
+ * (stationMessaging.ts), and the returned row has no provider id yet — it is
+ * sent asynchronously, its CRM record written when the worker reports it sent.
  */
 
 type SendTarget = {
@@ -96,6 +102,10 @@ async function storedChatWithPhone(accountId: string, phone: string): Promise<Wh
 
 export async function performWhatsappSend(target: SendTarget): Promise<SendResult> {
   const { account, text } = target;
+  if (account.provider === "station") {
+    const queued = await queueStationSend(target);
+    return { chat: queued.chat, message: queued.message };
+  }
   if (!text.trim()) throw new WhatsappSendRefusedError("The message is empty", 400, null, "empty");
   if (text.length > MAX_TEXT_LENGTH) throw new WhatsappSendRefusedError(`The message is longer than ${MAX_TEXT_LENGTH} characters`, 400, null, "too_long");
   if (account.status !== "connected") {

@@ -9,12 +9,21 @@ import { warmUpEndsAt } from "./guardrails";
 import { channelRules } from "@/lib/channels/rules.server";
 import { whatsappAccounts } from "./schema";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
+import type { callingStations } from "@/lib/calls/schema";
+import { stationAccountRef } from "./stationParse";
 
 /**
  * The WhatsApp numbers linked in Unipile, as whatsapp_accounts. Unipile is
- * the source of truth: sync re-reads it, and nothing here creates an account
- * Unipile does not list. LinkedIn accounts sync separately
- * (src/functions/syncAllAccounts.ts, type LINKEDIN only).
+ * the source of truth for those (provider "unipile"): sync re-reads it, and
+ * nothing here creates a Unipile account Unipile does not list. LinkedIn
+ * accounts sync separately (src/functions/syncAllAccounts.ts, type LINKEDIN
+ * only).
+ *
+ * A calling station's number is an account too (provider "station",
+ * unipile_account_id "station:<station id>"): AgentSDR's own messaging through
+ * the station's WhatsApp Web (stationMessaging.ts). Its row follows the
+ * station (ensureStationWhatsappAccount), never Unipile's list, and it is
+ * never made the default on its own.
  */
 
 export type WhatsappAccountRow = typeof whatsappAccounts.$inferSelect;
@@ -88,19 +97,25 @@ export async function syncWhatsappAccounts(): Promise<WhatsappAccountSummary[]> 
       });
   }
 
+  // Only Unipile's own numbers: a calling station's is never in its list.
   const listedIds = listed.map((account) => account.unipileAccountId);
+  const unipileOnly = eq(whatsappAccounts.provider, "unipile");
   await db
     .update(whatsappAccounts)
     .set({ status: "disconnected", lastSyncedAt: now, updatedAt: now })
     .where(listedIds.length
-      ? and(inOrg(whatsappAccounts), notInArray(whatsappAccounts.unipileAccountId, listedIds), sql`${whatsappAccounts.status} <> 'disconnected'`)
-      : and(inOrg(whatsappAccounts), sql`${whatsappAccounts.status} <> 'disconnected'`));
+      ? and(inOrg(whatsappAccounts), unipileOnly, notInArray(whatsappAccounts.unipileAccountId, listedIds), sql`${whatsappAccounts.status} <> 'disconnected'`)
+      : and(inOrg(whatsappAccounts), unipileOnly, sql`${whatsappAccounts.status} <> 'disconnected'`));
 
   await ensureDefaultAccount();
   return listWhatsappAccounts();
 }
 
-/** When no account is the default, the oldest connected one (else the oldest) becomes it. */
+/**
+ * When no account is the default, the oldest connected Unipile number (else
+ * the oldest Unipile number) becomes it. A calling station's number is the
+ * default only when someone chooses it: it belongs to AI calling first.
+ */
 async function ensureDefaultAccount(): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${defaultLockKey()}, 0))`);
@@ -113,7 +128,7 @@ async function ensureDefaultAccount(): Promise<void> {
     const [candidate] = await tx
       .select({ id: whatsappAccounts.id })
       .from(whatsappAccounts)
-      .where(inOrg(whatsappAccounts))
+      .where(and(inOrg(whatsappAccounts), eq(whatsappAccounts.provider, "unipile")))
       .orderBy(sql`(${whatsappAccounts.status} = 'connected') desc`, asc(whatsappAccounts.createdAt), asc(whatsappAccounts.id))
       .limit(1);
     if (!candidate) return;
@@ -177,4 +192,71 @@ export async function hasConnectedWhatsappAccount(): Promise<boolean> {
     .where(and(inOrg(whatsappAccounts), eq(whatsappAccounts.status, "connected")))
     .limit(1);
   return Boolean(row);
+}
+
+// --- calling stations' numbers -------------------------------------------------------
+
+type StationForAccount = Pick<
+  typeof callingStations.$inferSelect,
+  "id" | "organizationId" | "name" | "phone" | "linkedPhone" | "status" | "createdAt"
+>;
+
+/** A station's number can message while it is active and logged in as itself. */
+export function stationAccountStatus(station: Pick<StationForAccount, "status" | "phone" | "linkedPhone">): "connected" | "disconnected" {
+  const ownAccount = !station.linkedPhone || station.linkedPhone === station.phone;
+  return station.status === "active" && ownAccount ? "connected" : "disconnected";
+}
+
+/**
+ * The station's whatsapp_accounts row, created or brought up to date (name,
+ * number, connected while the station is active). Runs in the station's
+ * organization. Its warm-up starts from the station's creation: the number
+ * has been linked to automation since then.
+ */
+export async function ensureStationWhatsappAccount(station: StationForAccount): Promise<WhatsappAccountRow> {
+  if (station.organizationId !== currentOrganizationId()) throw new Error("ensureStationWhatsappAccount outside the station's organization");
+  const status = stationAccountStatus(station);
+  const phone = station.linkedPhone ?? station.phone;
+  const now = new Date();
+  const [row] = await db
+    .insert(whatsappAccounts)
+    .values({
+      organizationId: station.organizationId,
+      unipileAccountId: stationAccountRef(station.id),
+      provider: "station",
+      stationId: station.id,
+      name: station.name,
+      phone,
+      status,
+      connectedAt: status === "connected" ? station.createdAt : null,
+      lastSyncedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: whatsappAccounts.unipileAccountId,
+      setWhere: and(inOrg(whatsappAccounts), eq(whatsappAccounts.stationId, station.id)),
+      set: {
+        name: station.name,
+        phone,
+        status,
+        connectedAt: status === "connected"
+          ? sql`coalesce(${whatsappAccounts.connectedAt}, ${station.createdAt.toISOString()}::timestamptz)`
+          : sql`${whatsappAccounts.connectedAt}`,
+        lastSyncedAt: now,
+        updatedAt: now,
+      },
+    })
+    .returning();
+  if (row) return row;
+  // Nothing to update (another organization's row by that id cannot exist: the id is the station's).
+  const existing = await findWhatsappAccountByUnipileId(stationAccountRef(station.id));
+  if (!existing) throw new Error(`whatsapp_accounts row for station ${station.id} could not be written`);
+  return existing;
+}
+
+/** A station that is gone: its number stays (with its chats), disconnected. */
+export async function disconnectStationWhatsappAccount(stationId: string): Promise<void> {
+  await db
+    .update(whatsappAccounts)
+    .set({ status: "disconnected", updatedAt: new Date() })
+    .where(and(inOrg(whatsappAccounts), eq(whatsappAccounts.stationId, stationId)));
 }

@@ -29,8 +29,8 @@ import { isPlatformConnected, savePlatformIntegration } from "@/lib/platform/cre
 const apply = process.argv.includes("--apply");
 const overwrite = process.argv.includes("--overwrite");
 
-/** Platform field → the env var that used to hold it (GoLogin never lived in env). */
-const FROM_ENV: Record<Exclude<PlatformKey, "gologin">, Record<string, string>> = {
+/** Platform field → the env var that used to hold it (GoLogin and Cal.com never lived in env). */
+const FROM_ENV: Record<Exclude<PlatformKey, "gologin" | "calcom">, Record<string, string>> = {
   unipile: {
     baseUrl: "UNIPILE_BASE_URL",
     apiKey: "UNIPILE_API_KEY",

@@ -16,7 +16,7 @@
 
 import { docsPageUrl } from "@/lib/support";
 
-export type PlatformKey = "unipile" | "google" | "r2" | "gologin";
+export type PlatformKey = "unipile" | "google" | "r2" | "gologin" | "calcom";
 
 /** The decrypted credential object stored for each platform. */
 export type PlatformCredentials = {
@@ -47,6 +47,15 @@ export type PlatformCredentials = {
   gologin: {
     /** A GoLogin API token (Settings → API). */
     apiToken: string;
+  };
+  calcom: {
+    /**
+     * The secret set on the Cal.com webhook (Settings → Developer → Webhooks):
+     * Cal.com signs every delivery with it (x-cal-signature-256).
+     */
+    webhookSecret: string;
+    /** Optional Cal.com API key (cal_live_…); empty when not given. */
+    apiKey: string;
   };
 };
 
@@ -285,6 +294,40 @@ export const PLATFORM_INTEGRATIONS: readonly PlatformIntegration[] = [
       },
     ],
   },
+  {
+    key: "calcom",
+    name: "Cal.com",
+    description: "Tells AI calling campaigns when a lead books (or cancels) a meeting from the booking link the agent sent them.",
+    enables: ["Meetings booked from AI calling campaigns"],
+    websiteUrl: "https://cal.com",
+    iconUrl: "https://www.google.com/s2/favicons?domain=cal.com&sz=64",
+    docsUrl: "https://cal.com/docs/developing/guides/automation/webhooks",
+    setupSteps: [
+      "In Cal.com, open Settings → Developer → Webhooks and create a new webhook.",
+      "Paste the webhook URL shown on this page (it carries your organization) as the Subscriber URL.",
+      "Turn on the Booking created, Booking rescheduled and Booking cancelled triggers.",
+      "Type a long random secret into Secret, save the webhook, and paste the same secret below.",
+    ],
+    fields: [
+      {
+        key: "webhookSecret",
+        label: "Webhook secret",
+        help: "The Secret you typed on the Cal.com webhook. AgentSDR refuses deliveries that are not signed with it.",
+        inputType: "password",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "apiKey",
+        label: "API key (optional)",
+        placeholder: "cal_live_…",
+        help: "Cal.com → Settings → Developer → API keys. Only checked for now; leave it empty if you like.",
+        inputType: "password",
+        required: false,
+        secret: true,
+      },
+    ],
+  },
 ];
 
 /** OpenRouter is connected on the AI provider page; the Integrations page only shows its card. */
@@ -300,6 +343,7 @@ export const PLATFORM_SETTINGS_HREF: Record<PlatformKey, string> = {
   unipile: "/settings/linkedin-connection",
   r2: "/settings/whatsapp-connection",
   gologin: "/settings/whatsapp-connection",
+  calcom: "/settings/whatsapp-connection",
 };
 
 /** Where that page sits in the Settings sidebar, for messages. */
@@ -308,6 +352,7 @@ export const PLATFORM_SETTINGS_LABEL: Record<PlatformKey, string> = {
   unipile: "Settings → LinkedIn → Connection",
   r2: "Settings → WhatsApp → Integrations",
   gologin: "Settings → WhatsApp → Integrations",
+  calcom: "Settings → WhatsApp → Integrations",
 };
 
 export function getPlatformIntegration(key: string): PlatformIntegration | null {

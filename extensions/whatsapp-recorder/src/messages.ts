@@ -16,6 +16,11 @@ import type {
   RecorderCallPhase,
   RecorderLead,
 } from "../../../src/lib/calls/contract";
+import type {
+  StationInboundMessage,
+  StationInboundSource,
+  StationSendResult,
+} from "../../../src/lib/calls/stationContract";
 
 /** A call placed from the app, which the next recording belongs to. */
 export type ActiveCall = {
@@ -71,7 +76,27 @@ export type AgentCommand =
   /** Hang up `callId` — answered with a BridgeResult saying whether End call was pressed. */
   | { target: "wa-agent"; type: "end"; callId: string }
   /** Which calls this tab is still busy with — answered with a ProbeResult. */
-  | { target: "wa-agent"; type: "probe" };
+  | { target: "wa-agent"; type: "probe" }
+  // Station messaging (see "station messaging" in wa-agent.ts):
+  /** Start reading this number's messages (wa-hook's store listener). Answered with a BridgeResult. */
+  | { target: "wa-agent"; type: "messaging-enable" }
+  /**
+   * Send `text` to `phone` (digits) from this number. `afterReload`: the tab
+   * was just loaded at /send?phone=… for it. Answered with a WaSendOutcome.
+   */
+  | { target: "wa-agent"; type: "send-message"; phone: string; text: string; afterReload: boolean }
+  /** Read unread chats from the chat list (the DOM fallback). Answered with a WaScanResult. */
+  | { target: "wa-agent"; type: "scan-inbound" };
+
+/**
+ * wa-agent's answer to send-message: the station's result, or `reload` — the
+ * chat could not be opened in place and nothing was typed; the service worker
+ * may load the tab at /send?phone=… and ask again.
+ */
+export type WaSendOutcome = StationSendResult | { ok: false; reload: true; error: string };
+
+/** wa-agent's answer to scan-inbound. `skipped`: a call is on, nothing was opened. */
+export type WaScanResult = { ok: true; messages: StationInboundMessage[] } | { ok: false; skipped: boolean; error: string };
 
 /** A call is busy while it is being recorded, finished off, or uploaded. */
 export type ProbeResult = { busyCallIds: string[] };
@@ -110,7 +135,16 @@ export type BackgroundMessage =
   /** A Gemini Live token for the AI agent on this call; answered with an AgentTokenResult. */
   | { target: "background"; type: "wa:agent-token"; callId: string }
   /** The AI agent called record_outcome; answered with a BridgeResult. */
-  | { target: "background"; type: "wa:agent-outcome"; callId: string; outcome: AgentOutcomeReport };
+  | { target: "background"; type: "wa:agent-outcome"; callId: string; outcome: AgentOutcomeReport }
+  // Station messaging, from wa-agent:
+  /** On load: should this tab read its messages? Answered with { enabled: boolean }. */
+  | { target: "background"; type: "wa:messaging-hello" }
+  /** Whether wa-hook's message-store listener is attached. */
+  | { target: "background"; type: "wa:messaging-source"; capability: Exclude<StationInboundSource, "dom"> }
+  /** Messages read from the store, for the call worker's next take. */
+  | { target: "background"; type: "wa:inbound"; messages: StationInboundMessage[] }
+  /** A messaging step for the station's log (drainLog). */
+  | { target: "background"; type: "wa:msg-log"; step: string };
 
 /** What the AI agent reports through record_outcome (the body of POST .../outcome). */
 export type AgentOutcomeReport = { outcome: AgentOutcomeKind; summary: string | null; when: string | null; whenAt?: string | null };

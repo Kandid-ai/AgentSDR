@@ -30,17 +30,24 @@ export function PlatformConnection({
   platformKey,
   status,
   note,
+  webhookUrl,
 }: {
   platformKey: PlatformKey;
   status: PlatformStatus | null;
   note?: string;
+  /**
+   * A URL to paste into the provider's webhook settings (Cal.com), built on
+   * the server with the organization in it. Undefined: none; null: this
+   * deployment has no public URL to build it from.
+   */
+  webhookUrl?: string | null;
 }) {
   const integration = PLATFORM_INTEGRATIONS.find((candidate) => candidate.key === platformKey)!;
   const [editing, setEditing] = useState(false);
   return (
     <div className="flex flex-col gap-4">
       {note && <Callout tone="info">{note}</Callout>}
-      <PlatformCard integration={integration} status={status} onEdit={() => setEditing(true)} />
+      <PlatformCard integration={integration} status={status} webhookUrl={webhookUrl} onEdit={() => setEditing(true)} />
       {editing && <IntegrationDialog key={integration.key} integration={integration} status={status} onClose={() => setEditing(false)} />}
     </div>
   );
@@ -75,10 +82,12 @@ export function ComingSoonCard({ connection }: { connection: ComingSoonConnectio
 function PlatformCard({
   integration,
   status,
+  webhookUrl,
   onEdit,
 }: {
   integration: PlatformIntegration;
   status: PlatformStatus | null;
+  webhookUrl?: string | null;
   onEdit: () => void;
 }) {
   const router = useRouter();
@@ -162,6 +171,21 @@ function PlatformCard({
         )}
 
         {connected && integration.key === "unipile" && <UnipileWebhooks registration={status?.webhooks ?? null} />}
+        {webhookUrl !== undefined && (
+          <section className="flex flex-col gap-1.5 border-t border-stroke-soft-200 pt-3">
+            <span className="text-label-xs text-text-strong-950">Webhook URL</span>
+            {webhookUrl ? (
+              <>
+                <CopyValue value={webhookUrl} />
+                <p className="text-paragraph-xs text-text-soft-400">
+                  Paste it as the Subscriber URL of a {integration.name} webhook. It names your organization, so keep one per organization.
+                </p>
+              </>
+            ) : (
+              <p className="text-paragraph-xs text-text-soft-400">Set BETTER_AUTH_URL to this deployment&apos;s public address to get the webhook URL.</p>
+            )}
+          </section>
+        )}
       </FramePanel>
     </Frame>
   );

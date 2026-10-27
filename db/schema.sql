@@ -941,10 +941,50 @@ CREATE TABLE public.call_campaign_contacts (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     call_status text DEFAULT 'new'::text NOT NULL,
     unanswered_attempts integer DEFAULT 0 NOT NULL,
+    ai_status text,
+    ai_step integer DEFAULT 0 NOT NULL,
+    ai_next_at timestamp with time zone,
+    ai_station_id uuid,
+    ai_callbacks integer DEFAULT 0 NOT NULL,
+    ai_failures integer DEFAULT 0 NOT NULL,
+    ai_note text,
+    ai_booked_at timestamp with time zone,
+    CONSTRAINT call_campaign_contacts_ai_status_chk CHECK (((ai_status IS NULL) OR (ai_status = ANY (ARRAY['queued'::text, 'reaching'::text, 'callback'::text, 'chasing'::text, 'booked'::text, 'handoff'::text, 'not_interested'::text, 'unreached'::text, 'replied'::text, 'stopped'::text, 'failed'::text])))),
     CONSTRAINT call_campaign_contacts_call_count_chk CHECK ((call_count >= 0)),
     CONSTRAINT call_campaign_contacts_call_status_chk CHECK ((call_status = ANY (ARRAY['new'::text, 'calling'::text, 'no_answer'::text, 'busy'::text, 'connected'::text, 'not_on_whatsapp'::text, 'wrong_number'::text, 'failed'::text]))),
     CONSTRAINT call_campaign_contacts_stage_chk CHECK ((stage = ANY (ARRAY['to_call'::text, 'follow_up'::text, 'done'::text]))),
     CONSTRAINT call_campaign_contacts_unanswered_attempts_chk CHECK ((unanswered_attempts >= 0))
+);
+
+--
+-- Name: call_campaign_stations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.call_campaign_stations (
+    campaign_id uuid NOT NULL,
+    station_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
+-- Name: call_campaign_step_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.call_campaign_step_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    contact_id uuid NOT NULL,
+    step_key text NOT NULL,
+    kind text NOT NULL,
+    status text DEFAULT 'started'::text NOT NULL,
+    station_id uuid,
+    call_session_id uuid,
+    whatsapp_message_id uuid,
+    result text,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    CONSTRAINT call_campaign_step_runs_kind_chk CHECK ((kind = ANY (ARRAY['call'::text, 'message'::text]))),
+    CONSTRAINT call_campaign_step_runs_status_chk CHECK ((status = ANY (ARRAY['started'::text, 'done'::text, 'failed'::text])))
 );
 
 --
@@ -960,7 +1000,21 @@ CREATE TABLE public.call_campaigns (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     status text DEFAULT 'active'::text NOT NULL,
     organization_id uuid NOT NULL,
+    run_by text DEFAULT 'rep'::text NOT NULL,
+    ai_goal text DEFAULT 'book_meeting'::text NOT NULL,
+    ai_instructions text DEFAULT ''::text NOT NULL,
+    ai_agent_name text,
+    ai_agent_voice text,
+    ai_steps jsonb DEFAULT '[]'::jsonb NOT NULL,
+    ai_chase_steps jsonb DEFAULT '[]'::jsonb NOT NULL,
+    ai_booking_url text,
+    ai_booking_message text,
+    ai_max_callbacks integer DEFAULT 2 NOT NULL,
+    ai_launched_at timestamp with time zone,
+    CONSTRAINT call_campaigns_ai_goal_chk CHECK ((ai_goal = ANY (ARRAY['book_meeting'::text, 'human_callback'::text, 'either'::text]))),
+    CONSTRAINT call_campaigns_ai_max_callbacks_chk CHECK (((ai_max_callbacks >= 0) AND (ai_max_callbacks <= 3))),
     CONSTRAINT call_campaigns_name_chk CHECK ((length(btrim(name)) > 0)),
+    CONSTRAINT call_campaigns_run_by_chk CHECK ((run_by = ANY (ARRAY['rep'::text, 'ai'::text]))),
     CONSTRAINT call_campaigns_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text])))
 );
 
@@ -1081,6 +1135,10 @@ CREATE TABLE public.calling_stations (
     link_fresh boolean DEFAULT false NOT NULL,
     lease_holder text,
     lease_until timestamp with time zone,
+    calls_per_day integer,
+    calling_hours jsonb,
+    next_call_at timestamp with time zone,
+    automation_started_at timestamp with time zone,
     CONSTRAINT calling_stations_launcher_chk CHECK ((launcher = ANY (ARRAY['cloak'::text, 'local'::text, 'gologin_sdk'::text, 'gologin_cloud'::text]))),
     CONSTRAINT calling_stations_seed_chk CHECK (((fingerprint_seed >= 10000) AND (fingerprint_seed <= 99999))),
     CONSTRAINT calling_stations_status_chk CHECK ((status = ANY (ARRAY['onboarding'::text, 'active'::text, 'paused'::text, 'logged_out'::text, 'banned'::text])))
@@ -2430,6 +2488,26 @@ CREATE TABLE public.sessions (
 );
 
 --
+-- Name: station_message_jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.station_message_jobs (
+    organization_id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    station_id uuid NOT NULL,
+    whatsapp_message_id uuid NOT NULL,
+    phone text NOT NULL,
+    body text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    claimed_by text,
+    claimed_at timestamp with time zone,
+    sent_at timestamp with time zone,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT station_message_jobs_status_chk CHECK ((status = ANY (ARRAY['queued'::text, 'claimed'::text, 'sent'::text, 'failed'::text])))
+);
+
+--
 -- Name: targeted_domains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2528,6 +2606,9 @@ CREATE TABLE public.whatsapp_accounts (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     organization_id uuid NOT NULL,
     new_chats_per_day integer,
+    provider text DEFAULT 'unipile'::text NOT NULL,
+    station_id uuid,
+    CONSTRAINT whatsapp_accounts_provider_chk CHECK (((provider = ANY (ARRAY['unipile'::text, 'station'::text])) AND ((provider = 'station'::text) = (station_id IS NOT NULL)))),
     CONSTRAINT whatsapp_accounts_status_chk CHECK ((status = ANY (ARRAY['connected'::text, 'disconnected'::text, 'credentials'::text, 'error'::text])))
 );
 
@@ -2751,6 +2832,27 @@ ALTER TABLE ONLY public.call_campaign_contacts
 
 ALTER TABLE ONLY public.call_campaign_contacts
     ADD CONSTRAINT call_campaign_contacts_pkey PRIMARY KEY (id);
+
+--
+-- Name: call_campaign_step_runs call_campaign_step_runs_contact_step_uq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_step_runs
+    ADD CONSTRAINT call_campaign_step_runs_contact_step_uq UNIQUE (contact_id, step_key);;
+
+--
+-- Name: call_campaign_step_runs call_campaign_step_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_step_runs
+    ADD CONSTRAINT call_campaign_step_runs_pkey PRIMARY KEY (id);;
+
+--
+-- Name: call_campaign_stations call_campaign_stations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_stations
+    ADD CONSTRAINT call_campaign_stations_pkey PRIMARY KEY (campaign_id, station_id);;
 
 --
 -- Name: call_campaigns call_campaigns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -3439,6 +3541,20 @@ ALTER TABLE ONLY public.sessions
     ADD CONSTRAINT sessions_token_key UNIQUE (token);
 
 --
+-- Name: station_message_jobs station_message_jobs_message_uq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.station_message_jobs
+    ADD CONSTRAINT station_message_jobs_message_uq UNIQUE (whatsapp_message_id);;
+
+--
+-- Name: station_message_jobs station_message_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.station_message_jobs
+    ADD CONSTRAINT station_message_jobs_pkey PRIMARY KEY (id);;
+
+--
 -- Name: targeted_domains targeted_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3721,10 +3837,40 @@ CREATE INDEX "WebhookEvent_retry_idx" ON public."WebhookEvent" USING btree ("pro
 CREATE INDEX accounts_user_id_idx ON public.accounts USING btree (user_id);
 
 --
+-- Name: call_campaign_contacts_ai_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX call_campaign_contacts_ai_due_idx ON public.call_campaign_contacts USING btree (ai_status, ai_next_at) WHERE (ai_status IS NOT NULL);
+
+--
 -- Name: call_campaign_contacts_campaign_stage_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX call_campaign_contacts_campaign_stage_idx ON public.call_campaign_contacts USING btree (campaign_id, stage);
+
+--
+-- Name: call_campaign_step_runs_call_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX call_campaign_step_runs_call_idx ON public.call_campaign_step_runs USING btree (call_session_id);
+
+--
+-- Name: call_campaign_step_runs_message_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX call_campaign_step_runs_message_idx ON public.call_campaign_step_runs USING btree (whatsapp_message_id);
+
+--
+-- Name: call_campaign_step_runs_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX call_campaign_step_runs_open_idx ON public.call_campaign_step_runs USING btree (status) WHERE (status = 'started'::text);
+
+--
+-- Name: call_campaign_stations_station_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX call_campaign_stations_station_idx ON public.call_campaign_stations USING btree (station_id);
 
 --
 -- Name: call_campaigns_organization_idx; Type: INDEX; Schema: public; Owner: -
@@ -4557,6 +4703,18 @@ CREATE INDEX people_phone_lookup_idx ON public.people USING btree (phone) WHERE 
 CREATE INDEX sessions_user_id_idx ON public.sessions USING btree (user_id);
 
 --
+-- Name: station_message_jobs_organization_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX station_message_jobs_organization_idx ON public.station_message_jobs USING btree (organization_id);
+
+--
+-- Name: station_message_jobs_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX station_message_jobs_queue_idx ON public.station_message_jobs USING btree (station_id, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'claimed'::text]));
+
+--
 -- Name: targeted_domains_org_domain_uq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4597,6 +4755,12 @@ CREATE INDEX verifications_identifier_idx ON public.verifications USING btree (i
 --
 
 CREATE INDEX whatsapp_accounts_organization_idx ON public.whatsapp_accounts USING btree (organization_id);
+
+--
+-- Name: whatsapp_accounts_station_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX whatsapp_accounts_station_uq ON public.whatsapp_accounts USING btree (station_id) WHERE (station_id IS NOT NULL);
 
 --
 -- Name: whatsapp_campaign_accounts_account_idx; Type: INDEX; Schema: public; Owner: -
@@ -4933,6 +5097,13 @@ ALTER TABLE ONLY public.accounts
     ADD CONSTRAINT accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 --
+-- Name: call_campaign_contacts call_campaign_contacts_ai_station_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_contacts
+    ADD CONSTRAINT call_campaign_contacts_ai_station_fk FOREIGN KEY (ai_station_id) REFERENCES public.calling_stations(id) ON DELETE SET NULL;;
+
+--
 -- Name: call_campaign_contacts call_campaign_contacts_campaign_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4945,6 +5116,27 @@ ALTER TABLE ONLY public.call_campaign_contacts
 
 ALTER TABLE ONLY public.call_campaign_contacts
     ADD CONSTRAINT call_campaign_contacts_person_fk FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE RESTRICT;
+
+--
+-- Name: call_campaign_step_runs call_campaign_step_runs_contact_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_step_runs
+    ADD CONSTRAINT call_campaign_step_runs_contact_fk FOREIGN KEY (contact_id) REFERENCES public.call_campaign_contacts(id) ON DELETE CASCADE;;
+
+--
+-- Name: call_campaign_stations call_campaign_stations_campaign_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_stations
+    ADD CONSTRAINT call_campaign_stations_campaign_fk FOREIGN KEY (campaign_id) REFERENCES public.call_campaigns(id) ON DELETE CASCADE;;
+
+--
+-- Name: call_campaign_stations call_campaign_stations_station_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.call_campaign_stations
+    ADD CONSTRAINT call_campaign_stations_station_fk FOREIGN KEY (station_id) REFERENCES public.calling_stations(id) ON DELETE CASCADE;;
 
 --
 -- Name: call_campaigns call_campaigns_organization_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -5778,6 +5970,20 @@ ALTER TABLE ONLY public.people
 
 ALTER TABLE ONLY public.qualification_jobs
     ADD CONSTRAINT qualification_jobs_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id);
+
+--
+-- Name: station_message_jobs station_message_jobs_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.station_message_jobs
+    ADD CONSTRAINT station_message_jobs_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id);;
+
+--
+-- Name: station_message_jobs station_message_jobs_station_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.station_message_jobs
+    ADD CONSTRAINT station_message_jobs_station_fk FOREIGN KEY (station_id) REFERENCES public.calling_stations(id) ON DELETE CASCADE;;
 
 --
 -- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -

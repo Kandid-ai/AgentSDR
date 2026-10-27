@@ -1,8 +1,10 @@
 import { LEASE_RENEW_MS } from "../../../src/lib/calls/stationContract";
-import { claim, leaseStations, reportStationState } from "./api";
+import { claim, claimMessage, leaseStations, postInbound, reportMessageResult, reportStationState } from "./api";
 import { config } from "./config";
+import { stationWorker } from "./extension";
 import { activeCallForShutdown, prepareWhatsApp, requestStop, runCall, runLink, watchConsole } from "./jobs";
 import { openStationBrowser } from "./launchers";
+import { Messaging } from "./messaging";
 import { OpenStations } from "./openStations";
 import { isLoginScreen } from "./whatsapp";
 import { log } from "./log";
@@ -10,6 +12,8 @@ import { log } from "./log";
 let stopping = false;
 /** Numbers kept open between calls (KEEP_OPEN > 0). */
 let openStations: OpenStations | null = null;
+/** AgentSDR's own WhatsApp messages through the open numbers (needs KEEP_OPEN > 0). */
+let messaging: Messaging | null = null;
 
 function startOpenStations(): OpenStations {
   const cfg = config();
@@ -44,6 +48,27 @@ function startOpenStations(): OpenStations {
   setInterval(tick, LEASE_RENEW_MS).unref();
   return manager;
 }
+
+function startMessaging(stations: OpenStations): Messaging {
+  const cfg = config();
+  const m = new Messaging(
+    {
+      idleReady: () => stations.idleReady(),
+      acquireIdle: (id) => stations.acquireIdle(id),
+      claim: async (ids) => (await claimMessage({ workerId: cfg.workerId, stations: ids })).job,
+      report: (id, body) => reportMessageResult(id, body),
+      postInbound: (id, body) => postInbound(id, body),
+      connect: (ready) => stationWorker(ready.browser.context),
+      log,
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    },
+    { messagePollMs: cfg.messagePollMs, inboundPollMs: cfg.inboundPollMs },
+  );
+  m.start();
+  return m;
+}
+
 let wake: (() => void) | null = null;
 
 function interruptibleSleep(ms: number): Promise<void> {
@@ -83,7 +108,10 @@ async function main(): Promise<void> {
     `call worker ${cfg.workerId} -> ${cfg.agentsdrUrl}, launchers: ${cfg.launchers.join(", ")}, headless: ${cfg.headless}, keeps open: ${cfg.keepOpen}` +
       `${cfg.stations.length ? `, only: ${cfg.stations.join(", ")}` : ""}`,
   );
-  if (cfg.keepOpen > 0) openStations = startOpenStations();
+  if (cfg.keepOpen > 0) {
+    openStations = startOpenStations();
+    messaging = startMessaging(openStations);
+  }
   let backoff = 0;
   while (!stopping) {
     try {
@@ -100,6 +128,8 @@ async function main(): Promise<void> {
           await runCall(job, open);
         } finally {
           await openStations?.done(job.station.id);
+          // What arrived on the number during the call; read by the messaging loop, not here.
+          messaging?.afterCall(job.station.id);
         }
       } else {
         // Its profile must not be open twice.
@@ -112,7 +142,9 @@ async function main(): Promise<void> {
       await interruptibleSleep(backoff);
     }
   }
-  // Close the open numbers, saving their profiles, and give their leases back.
+  // Finish a send in flight and post what was received, then close the open
+  // numbers, saving their profiles, and give their leases back.
+  await messaging?.stop();
   await openStations?.shutdown();
   log("stopped");
   process.exit(0);

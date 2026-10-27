@@ -49,6 +49,10 @@ export type Config = {
   keepOpen: number;
   /** Only these stations (ids); every station when empty. */
   stations: string[];
+  /** Gap between message claims when there is nothing to send (open numbers only). */
+  messagePollMs: number;
+  /** How often each open number's received messages are read and posted. */
+  inboundPollMs: number;
 };
 
 export function loadConfig(): Config {
@@ -69,6 +73,8 @@ export function loadConfig(): Config {
     strictProxyUdp: process.env.STRICT_PROXY_UDP?.trim().toLowerCase() === "true",
     keepOpen: process.env.KEEP_OPEN?.trim() === "0" ? 0 : int("KEEP_OPEN", 0),
     stations: (process.env.STATIONS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    messagePollMs: int("MESSAGE_POLL_MS", 2000),
+    inboundPollMs: int("INBOUND_POLL_MS", 10_000),
   };
 }
 

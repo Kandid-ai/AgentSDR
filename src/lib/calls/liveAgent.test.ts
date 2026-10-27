@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agentInstructions, budgetKnowledge, parseAgentName, parseAgentOutcome, parseAgentVoice } from "./liveAgent";
+import { agentInstructions, budgetKnowledge, liveSetup, parseAgentName, parseAgentOutcome, parseAgentVoice, parseWhenAt } from "./liveAgent";
 import { CallApiError } from "./sessions";
 import { MAX_AGENT_NAME_CHARS } from "./contract";
 
@@ -92,5 +92,43 @@ describe("agentInstructions", () => {
   test("no knowledge section when empty, one when given", () => {
     expect(agentInstructions({ ...base, name: null, voice: null }, [])).not.toContain("<knowledge>");
     expect(agentInstructions({ ...base, name: null, voice: null }, [{ title: "T", content: "C" }])).toContain("<knowledge>");
+  });
+});
+
+describe("parseAgentOutcome whenAt", () => {
+  const now = Date.parse("2026-10-27T10:00:00Z");
+  test("keeps an ISO time inside the window", () => {
+    expect(parseWhenAt("2026-10-29T16:00:00+05:30", now)).toBe("2026-10-29T16:00:00+05:30");
+    expect(parseAgentOutcome({ outcome: "meeting_booked", whenAt: "2099-01-01T00:00:00Z" }).whenAt).toBeNull();
+  });
+  test("drops the past (over an hour), the far future, and non-ISO text", () => {
+    expect(parseWhenAt("2026-10-27T08:00:00Z", now)).toBeNull();
+    expect(parseWhenAt("2026-10-27T09:30:00Z", now)).not.toBeNull();
+    expect(parseWhenAt("2027-02-01T10:00:00Z", now)).toBeNull();
+    expect(parseWhenAt("Thursday 4pm", now)).toBeNull();
+    expect(parseWhenAt(null, now)).toBeNull();
+  });
+});
+
+describe("agentInstructions context", () => {
+  const base = { brief: "Sell it", lead: null, name: null, voice: null };
+  test("states the current date and time", () => {
+    expect(agentInstructions(base, [], { now: "Tuesday, 27 October 2026, 14:35 (GMT+05:30) in Asia/Kolkata" })).toContain("It is now Tuesday, 27 October 2026");
+  });
+  test("a campaign goal replaces the generic booking section", () => {
+    const meeting = agentInstructions(base, [], { goal: { goal: "book_meeting", bookingUrl: null } });
+    expect(meeting).not.toContain("Booking a next step");
+    expect(meeting).toContain("meeting_booked");
+    expect(agentInstructions(base, [], { goal: { goal: "human_callback", bookingUrl: null } })).toContain("human_callback with whenAt");
+    expect(agentInstructions(base, [], { goal: { goal: "either", bookingUrl: null } })).toContain("their choice");
+    expect(agentInstructions(base, [], {})).toContain("Booking a next step");
+  });
+  test("history is included", () => {
+    expect(agentInstructions(base, [], { history: "<history>x</history>" })).toContain("<history>x</history>");
+  });
+  test("liveSetup records every outcome and whenAt", () => {
+    const tool = liveSetup(base, [], {}).tools[0].functionDeclarations[0];
+    expect(tool.parameters.properties.outcome?.enum).toContain("do_not_contact");
+    expect(tool.parameters.properties.whenAt).toBeDefined();
   });
 });

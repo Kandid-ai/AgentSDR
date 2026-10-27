@@ -515,7 +515,8 @@ async function campaignContactCounts(campaignId: string): Promise<Record<Campaig
 
 export async function listCampaigns(): Promise<ListCampaignsResponse["campaigns"]> {
   const [campaignRows, counts, stats] = await Promise.all([
-    db.select().from(callCampaigns).where(and(inOrg(callCampaigns), sql`${callCampaigns.archivedAt} is null`)).orderBy(desc(callCampaigns.createdAt)),
+    // A rep's list: AI campaigns (run_by = 'ai') have their own list, src/lib/calls/aiCampaigns/.
+    db.select().from(callCampaigns).where(and(inOrg(callCampaigns), eq(callCampaigns.runBy, "rep"), sql`${callCampaigns.archivedAt} is null`)).orderBy(desc(callCampaigns.createdAt)),
     db
       .select({ campaignId: callCampaignContacts.campaignId, stage: callCampaignContacts.stage, total: count() })
       .from(callCampaignContacts)

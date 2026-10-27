@@ -1,8 +1,9 @@
 // Next.js calls register() exactly once when the server process boots.
-// Starts the background loops: the outreach send tick and WhatsApp campaign
-// sender (single-instance, see their internalScheduler.ts), and the
-// scheduled jobs (src/lib/scheduler/internalScheduler.ts: each organization's
-// daily rollover at its own new-day time, LinkedIn outreach, webhook replay,
+// Starts the background loops: the outreach send tick, the WhatsApp campaign
+// sender and the AI calling campaign engine (single-instance, see their
+// internalScheduler.ts), and the scheduled jobs
+// (src/lib/scheduler/internalScheduler.ts: each organization's daily rollover
+// at its own new-day time, LinkedIn outreach, webhook replay,
 // history pruning). Those run on fixed clock slots claimed in the database,
 // so restarts do not shift them and overlapping instances run each slot once.
 export async function register() {
@@ -25,6 +26,8 @@ export async function register() {
     startInternalOutreachScheduler();
     const { startInternalWhatsappCampaignScheduler } = await import("./lib/whatsapp/campaigns/internalScheduler");
     startInternalWhatsappCampaignScheduler();
+    const { startInternalAiCallingScheduler } = await import("./lib/calls/aiCampaigns/internalScheduler");
+    startInternalAiCallingScheduler();
   }
 
   // Scheduled jobs; INTERNAL_SCHEDULER=false leaves them to an external cron.

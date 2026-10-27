@@ -3,7 +3,7 @@ import "server-only";
 import { and, asc, desc, eq, gt, ilike, inArray, isNull, like, notLike, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crmPipelines, crmRecords } from "@/lib/crm/schema";
-import { inOrg } from "@/lib/tenancy/scope";
+import { inOrg, runInOrganization } from "@/lib/tenancy/scope";
 import type { CrmExecutor } from "@/lib/crm/repository";
 import { companies, people } from "@/lib/leads/schema";
 import { personCompanyName } from "@/lib/leads/companyName";
@@ -22,6 +22,7 @@ import type {
   WhatsappThreadResponse,
 } from "./contract";
 import {
+  ensureStationWhatsappAccount,
   findWhatsappAccountByUnipileId,
   getWhatsappAccountRow,
   hasConnectedWhatsappAccount,
@@ -41,6 +42,9 @@ import {
   type ParsedWhatsappMessageEvent,
 } from "./parse";
 import { whatsappAccounts, whatsappChats, whatsappMessages } from "./schema";
+import { callingStations, stationMessageJobs } from "@/lib/calls/schema";
+import type { StationInboundMessage, WorkerInboundResponse } from "@/lib/calls/stationContract";
+import { isUuid, pickStationEcho, stationAttachments, stationChatKey, stationMessageKey } from "./stationParse";
 
 /**
  * WhatsApp chats and messages: what Unipile's webhook delivers, what the
@@ -499,6 +503,126 @@ async function pendingSends(chatId: string) {
     ));
 }
 
+// --- calling stations (AgentSDR's own WhatsApp Web, no Unipile) ---------------------------
+
+/**
+ * What a calling station's WhatsApp Web showed arriving on its number, as the
+ * call worker reports it (POST /api/call-worker/stations/:id/inbound) — the
+ * Unipile webhook's flow without Unipile: stored once per WhatsApp message
+ * (stationMessageKey), the chat matched to the Person by number, unread
+ * counted, and forwarded to the CRM exactly like a Unipile message (accountRef
+ * "station:<station id>"), which also stops the lead's sequences.
+ *
+ * An outbound message is the echo of AgentSDR's own send when a reserved send
+ * in that chat with the same text is still waiting for its id (its job claimed
+ * or sent); otherwise the rep typed it on the phone (origin "phone").
+ *
+ * Platform-wide lookup of the station (the worker serves every organization);
+ * everything after runs in the station's organization.
+ */
+export async function ingestStationMessages(stationId: string, messages: StationInboundMessage[]): Promise<WorkerInboundResponse> {
+  if (!isUuid(stationId)) throw new WhatsappApiError(404, "Calling number not found");
+  const [station] = await db.select().from(callingStations).where(eq(callingStations.id, stationId)).limit(1);
+  if (!station) throw new WhatsappApiError(404, "Calling number not found");
+  return runInOrganization(station.organizationId, async () => {
+    const account = await ensureStationWhatsappAccount(station);
+    let stored = 0;
+    let skipped = 0;
+    for (const message of [...messages].sort((left, right) => left.sentAt - right.sentAt)) {
+      try {
+        if (await ingestStationMessage(account, stationId, message)) stored += 1;
+        else skipped += 1;
+      } catch (error) {
+        // One bad message must not lose the rest of the batch.
+        console.error(`[whatsapp/station] could not store message ${message.providerMessageId} from station ${stationId}`, error);
+        skipped += 1;
+      }
+    }
+    return { stored, skipped };
+  });
+}
+
+async function ingestStationMessage(account: WhatsappAccountRow, stationId: string, event: StationInboundMessage): Promise<boolean> {
+  const key = stationMessageKey(stationId, event.providerMessageId);
+  if (!key) return false;
+  if (await findMessageByUnipileId(key)) return false;
+
+  const { unipileChatId, phone } = stationChatKey(event);
+  const chat = await upsertWhatsappChat({ accountId: account.id, unipileChatId, providerId: unipileChatId, phone, name: event.chatName });
+  const sentAt = new Date(event.sentAt);
+  const raw: Record<string, unknown> = { source: "station", stationId, providerMessageId: event.providerMessageId, chatJid: event.chatJid, ...(event.kind ? { kind: event.kind } : {}) };
+
+  if (event.direction === "outbound") {
+    const pending = await db
+      .select({ id: whatsappMessages.id, body: whatsappMessages.body, sentAt: whatsappMessages.sentAt })
+      .from(whatsappMessages)
+      .innerJoin(stationMessageJobs, eq(stationMessageJobs.whatsappMessageId, whatsappMessages.id))
+      .where(and(
+        messageInOrg(),
+        eq(whatsappMessages.chatId, chat.id),
+        eq(whatsappMessages.origin, "agentsdr"),
+        isNull(whatsappMessages.unipileMessageId),
+        inArray(stationMessageJobs.status, ["claimed", "sent"]),
+      ));
+    const echo = pickStationEcho(pending, event.text);
+    if (echo) {
+      try {
+        const [attached] = await db
+          .update(whatsappMessages)
+          .set({ unipileMessageId: key })
+          .where(and(messageInOrg(), eq(whatsappMessages.id, echo.id), isNull(whatsappMessages.unipileMessageId)))
+          .returning({ id: whatsappMessages.id });
+        return Boolean(attached);
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+        return false;
+      }
+    }
+  }
+
+  const origin: WhatsappMessageOrigin = event.direction === "inbound" ? "lead" : "phone";
+  const message = await insertWhatsappMessage({
+    chatId: chat.id,
+    unipileMessageId: key,
+    direction: event.direction,
+    origin,
+    body: event.text,
+    attachments: stationAttachments(event.kind),
+    sentAt,
+    raw,
+  });
+  if (!message) return false;
+  await applyMessageToChat(chat.id, {
+    sentAt: message.sentAt,
+    body: message.body,
+    attachments: message.attachments,
+    direction: message.direction,
+    countUnread: origin === "lead",
+  });
+
+  if (!chat.personId) return true;
+  const crmInput = {
+    personId: chat.personId,
+    unipileAccountId: account.unipileAccountId,
+    unipileChatId: chat.unipileChatId,
+    providerContactId: chat.providerId,
+    unipileMessageId: key,
+    body: message.body,
+    sentAt: message.sentAt,
+    raw,
+  };
+  const result = origin === "lead"
+    ? await forwardWhatsappInboundToCrm(crmInput)
+    : await recordWhatsappOutboundInCrm({ ...crmInput, origin: "phone" });
+  if (result.crmConversationMessageId) {
+    await db
+      .update(whatsappMessages)
+      .set({ crmConversationMessageId: result.crmConversationMessageId })
+      .where(and(messageInOrg(), eq(whatsappMessages.id, message.id)));
+  }
+  return true;
+}
+
 // --- read side -----------------------------------------------------------------------------
 
 const CHAT_PAGE_SIZE = 50;
@@ -651,6 +775,7 @@ export type BackfillResult = BackfillWhatsappAccountResponse;
 export async function backfillWhatsappAccount(accountId: string): Promise<BackfillResult> {
   const account = await getWhatsappAccountRow(accountId);
   if (!account) throw new WhatsappApiError(404, "WhatsApp account not found");
+  if (account.provider === "station") throw new WhatsappApiError(409, "A calling number's messages arrive from its WhatsApp Web as they come; there is no history to import");
   if (account.status !== "connected") throw new WhatsappApiError(409, "This WhatsApp number is not connected");
 
   const chats: NonNullable<ReturnType<typeof mapUnipileChat>>[] = [];

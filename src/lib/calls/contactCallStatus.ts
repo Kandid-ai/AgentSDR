@@ -139,6 +139,15 @@ export async function applyCallResultToContact(call: {
       .limit(1);
     if (newer) return null;
     const now = new Date();
+    // An AI campaign's lead: its engine owns the stage, retries and follow-up
+    // date (aiCampaigns/engine.ts); only the call status shown is updated.
+    if (contact.aiStatus !== null) {
+      await tx
+        .update(callCampaignContacts)
+        .set({ callStatus: next, statusUpdatedAt: now, updatedAt: now })
+        .where(and(contactInScope(), eq(callCampaignContacts.id, contactId)));
+      return null;
+    }
     const state = nextContactCallState(stateOf(contact), next, now);
     await tx
       .update(callCampaignContacts)

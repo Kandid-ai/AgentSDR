@@ -253,6 +253,7 @@ const PLACEHOLDER_CREDENTIALS: Record<PlatformKey, Record<string, string>> = {
   },
   r2: { accountId: "demo0000000000000000000000000000", bucket: "northwind-call-recordings", accessKeyId: "demo-access-key", secretAccessKey: "demo-secret-key" },
   gologin: { apiToken: "demo-gologin-token" },
+  calcom: { webhookSecret: "demo-calcom-webhook-secret", apiKey: "" },
 };
 
 async function seedPlatformIntegrations(ctx: DemoContext) {

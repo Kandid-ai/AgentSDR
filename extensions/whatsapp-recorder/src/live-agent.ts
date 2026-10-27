@@ -26,7 +26,7 @@ type Handlers = {
   /** The model called end_call, or the line stayed silent after its goodbye. */
   hangup(reason: string): void;
   /** The model called record_outcome. */
-  outcome(report: { outcome: AgentOutcomeKind; summary: string | null; when: string | null }): void;
+  outcome(report: { outcome: AgentOutcomeKind; summary: string | null; when: string | null; whenAt: string | null }): void;
   /** A step worth seeing in the call's timing table. */
   trace(step: string): void;
   /** The token request, through the service worker (it holds the call's bearer token). */
@@ -383,7 +383,7 @@ export class LiveAgent {
         this.respond(call);
         if (!outcome) continue;
         this.handlers.trace(`AI agent: outcome ${outcome}${text("when") ? ` (${text("when")})` : ""} — ${text("summary") ?? ""}`);
-        this.handlers.outcome({ outcome, summary: text("summary"), when: text("when") });
+        this.handlers.outcome({ outcome, summary: text("summary"), when: text("when"), whenAt: text("whenAt") });
       } else if (call.name === "end_call") {
         const reason = text("reason") ?? "the agent ended the call";
         this.respond(call);

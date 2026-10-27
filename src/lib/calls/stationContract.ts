@@ -312,3 +312,90 @@ export type CloudCallPhase =
   | { kind: "queued" }
   | { kind: "starting-browser" }
   | RecorderCallPhase;
+
+// --- AgentSDR's own WhatsApp messaging through a station (no Unipile) -------
+// A message to send is a station_message_jobs row (src/lib/whatsapp/
+// stationMessaging.ts). Only the worker holding the station's lease (its
+// WhatsApp Web kept open) claims it, and only while the station has no open
+// call; a station with a claimed message is not given a call. The worker
+// sends it through the extension (agentsdrStation.sendMessage) and reports
+// the result. It also reads what arrives on the number
+// (agentsdrStation.takeInbound) and posts it to /stations/:id/inbound.
+
+/** POST /api/call-worker/messages/claim — the next message for one of `stations`. */
+export type WorkerMessageClaimRequest = {
+  workerId: string;
+  /** Stations this worker holds open (leased) with no call running on them now. */
+  stations: string[];
+};
+
+export type WorkerMessageJob = {
+  id: string;
+  stationId: string;
+  /** E.164. */
+  phone: string;
+  body: string;
+};
+
+export type WorkerMessageClaimResponse = { job: WorkerMessageJob | null };
+
+/**
+ * POST /api/call-worker/messages/:id/result. `retryable`: nothing reached
+ * WhatsApp (a call started on the page, WhatsApp Web was not ready) — the job
+ * goes back to the queue once, then fails.
+ */
+export type WorkerMessageResultRequest =
+  | { ok: true; providerMessageId: string | null; sentAt: number }
+  | { ok: false; error: string; retryable?: boolean };
+
+/**
+ * A claimed message job whose worker went quiet this long is failed as
+ * uncertain — never requeued, since it may have gone out. (Only an explicit
+ * retryable failure from the worker requeues a job, once.)
+ */
+export const MESSAGE_CLAIM_STALE_MS = 2 * 60 * 1000;
+/** A queued message no worker claimed in this long is failed: no worker has its number open. */
+export const MESSAGE_QUEUED_EXPIRES_MS = 30 * 60 * 1000;
+
+/**
+ * A message WhatsApp Web showed on a station's number: one from the lead
+ * (inbound), or one sent from the number (outbound — typed on the phone, or
+ * the echo of AgentSDR's own send).
+ */
+export type StationInboundMessage = {
+  /**
+   * WhatsApp's id for the message as the extension read it — msg.id._serialized
+   * ("false_<chat jid>_<key id>") or a DOM row's data-id (same format), or the
+   * key id alone. The server keys on the key id.
+   */
+  providerMessageId: string;
+  /** The other side's number, E.164, when known (a "@lid" chat may not tell). */
+  chatPhone: string | null;
+  /** The chat's WhatsApp id: "<digits>@c.us", "<digits>@s.whatsapp.net" or "<id>@lid". Groups are never sent. */
+  chatJid: string;
+  /** The contact's name or push name as WhatsApp shows it. */
+  chatName: string | null;
+  direction: "inbound" | "outbound";
+  /** The text (a caption for media); "" for a message with none. */
+  text: string;
+  /** Epoch milliseconds. */
+  sentAt: number;
+  /** WhatsApp's message type when not plain text ("image", "ptt", "document", …). */
+  kind?: string | null;
+};
+
+/** Where the extension read the messages from: WhatsApp's own message store, the DOM, or nothing works. */
+export type StationInboundSource = "store" | "dom" | "none";
+
+/** POST /api/call-worker/stations/:id/inbound */
+export type WorkerInboundRequest = { source: StationInboundSource; messages: StationInboundMessage[] };
+export type WorkerInboundResponse = { stored: number; skipped: number };
+export const MAX_INBOUND_BATCH = 100;
+
+/** agentsdrStation.sendMessage — the extension's answer. */
+export type StationSendResult =
+  | { ok: true; providerMessageId: string | null }
+  | { ok: false; error: string; retryable: boolean };
+
+/** agentsdrStation.takeInbound — what arrived since the last take. */
+export type StationInboundTake = { source: StationInboundSource; messages: StationInboundMessage[] };

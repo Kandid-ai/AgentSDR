@@ -13,6 +13,7 @@ import {
   RiPercentLine,
   RiPhoneLine,
   RiPlayCircleLine,
+  RiRobot2Line,
   RiSearchLine,
   RiStarLine,
   RiTeamLine,
@@ -36,6 +37,7 @@ import { EditCampaignModal, DeleteCampaignModal } from "@/components/calling/Cam
 import { CampaignStatusBadge } from "@/components/calling/callingShared";
 import { FormError, TextField } from "@/components/calls/fields";
 import { useRefreshOnReturn } from "@/components/calling/useRefreshOnReturn";
+import { AiCampaignsSection, NEW_AI_CAMPAIGN_HREF } from "@/components/calling/ai/AiCampaignsSection";
 import CampaignProgressRing from "@/components/outreach/CampaignProgressRing";
 import { createCampaign, listCampaigns, updateCampaign } from "@/lib/calls/client";
 import type { CampaignSummary } from "@/lib/calls/contract";
@@ -283,10 +285,16 @@ export default function CampaignsClient() {
         title="Call campaigns"
         description="Call a list of people over WhatsApp, then follow up on what they said."
         actions={
-          <Button.Root variant="primary" mode="filled" size="small" onClick={() => setCreateOpen(true)}>
-            <Button.Icon as={RiAddLine} />
-            Start new campaign
-          </Button.Root>
+          <>
+            <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => router.push(NEW_AI_CAMPAIGN_HREF)}>
+              <Button.Icon as={RiRobot2Line} />
+              New AI campaign
+            </Button.Root>
+            <Button.Root variant="primary" mode="filled" size="small" onClick={() => setCreateOpen(true)}>
+              <Button.Icon as={RiAddLine} />
+              Start new campaign
+            </Button.Root>
+          </>
         }
       />
 
@@ -304,10 +312,12 @@ export default function CampaignsClient() {
 
       {toggleError && <FormError className="mt-4">{toggleError}</FormError>}
 
+      <AiCampaignsSection />
+
       <Frame className="mt-5">
         <FrameHeader
-          title="Campaigns"
-          description="All time. Open a campaign to call its contacts."
+          title="Rep campaigns"
+          description="All time. Open a campaign to call its contacts yourself."
           actions={controls("hidden flex-wrap items-center gap-2 lg:flex")}
         />
         {controls("flex flex-col gap-2 px-3 pb-3 lg:hidden")}

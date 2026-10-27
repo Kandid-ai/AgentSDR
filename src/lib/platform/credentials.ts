@@ -296,6 +296,10 @@ function normalize<K extends PlatformKey>(key: K, raw: Record<string, string>): 
     const value: PlatformCredentials["gologin"] = { apiToken: text("apiToken") };
     return value as PlatformCredentials[K];
   }
+  if (key === "calcom") {
+    const value: PlatformCredentials["calcom"] = { webhookSecret: text("webhookSecret"), apiKey: text("apiKey") };
+    return value as PlatformCredentials[K];
+  }
   const value: PlatformCredentials["r2"] = {
     accountId: text("accountId"),
     accessKeyId: text("accessKeyId"),

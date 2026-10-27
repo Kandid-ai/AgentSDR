@@ -424,6 +424,58 @@ requested rate and then makes every AudioContext at the default rate
 (`fixIgnoredSampleRates`); plain Chromium is untouched.
 
 
+## AI calling campaigns
+
+A calling campaign with `run_by = 'ai'` is worked by the AI agent itself, from
+cloud calling stations (`src/lib/calls/aiCampaigns/`; pages under
+`/calling/campaigns/ai`). `contract.ts` there is the design: goal
+(book a meeting / hand over to the team / either), a **reach** sequence of
+call and WhatsApp-message steps that runs until a real conversation (a
+pick-up with silence does not count), and a **chase** sequence for leads who
+agreed to a meeting but have not booked. Leads are `call_campaign_contacts`
+with `ai_*` columns; the rep-campaign code (`contactCallStatus.ts`,
+`leadStage.ts`) leaves their stage and follow-up date to the engine.
+
+The engine (`engine.ts`, an in-process 20 s tick, production only,
+`PAUSE_AI_CALLING`) settles finished calls and messages, applies the pure
+decision in `engineRules.ts` (the agent's `record_outcome` decides: booking
+link + chase, hand-off to CRM Action required, a call-back at the agreed
+`whenAt`, stop, Do Not Contact), and gives each idle number that a worker
+holds open ONE action per tick: calling hours, a random gap, and calls a
+day with a warm-up ramp are WhatsApp Sending rules (`callsPerDay`,
+`callWarmupDays`, `callGapMinutes`, `callingHours`), overridable per number
+(`calling_stations.calls_per_day` / `calling_hours`). Every call or message
+is claimed by a `call_campaign_step_runs` row, unique per (lead, step key),
+before it happens — never repeat a step; an uncertain message is failed,
+not resent. A reply on any channel (`ingestInboundReplyInTransaction`) sets
+open AI leads to `replied`. Cal.com (platform integration `calcom`; webhook
+`/api/webhooks/calcom?org=`, public) marks a lead `booked` through the
+`metadata[agentsdrContact]` the booking link carries.
+
+Instructions come in layers: the calling rules in `liveAgent.ts` (fixed),
+the organization's CRM Knowledge marked "always include", the campaign's
+instructions and each call step's (`brief.ts`), and per call the lead's
+history, the current time and the goal (`agentContext.ts`). Rehearse a
+campaign's call by typing at `/api/calling/agent/rehearse`
+(`AgentRehearsal`).
+
+### WhatsApp messaging through a station (no Unipile)
+
+A calling station's number is also a `whatsapp_accounts` row with
+`provider = 'station'` (`unipile_account_id = 'station:<id>'`; Unipile sync
+skips it). Sending reserves the message (origin `agentsdr`) and queues a
+`station_message_jobs` row; the worker claims it only while it holds the
+station's lease and the station has no open call (a station does one thing
+at a time), and sends it in the open WhatsApp Web through the extension's
+station mode (`agentsdrStation.sendMessage`). Replies are read from WhatsApp
+Web's own message store in `wa-hook.ts` (`WAWebCollections`, as
+whatsapp-web.js does; `@lid` resolved to phone numbers), with a DOM fallback,
+and only in station mode — a rep's own WhatsApp Web is never read. They land
+through `ingestStationMessages` exactly like Unipile's (Messages tab, CRM,
+sequences stop). A claimed job with no report in 2 minutes fails as
+"delivery uncertain" and is never requeued. See `src/lib/whatsapp/stationMessaging.ts`
+and `services/call-worker/README.md`.
+
 ## WhatsApp messaging (Unipile)
 
 Reps link their WhatsApp number in the Unipile dashboard; AgentSDR reads it

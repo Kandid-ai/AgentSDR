@@ -24,6 +24,12 @@ import { performWhatsappSend } from "./send";
  * new-chat cap, spacing); a refusal throws WhatsappSendRefusedError, which
  * send.ts treats as definite (not retried). Any other error (Unipile
  * unreachable, a 5xx) is a plain Error and nothing was stored.
+ *
+ * A conversation on a calling station's number (accountRef "station:<id>")
+ * is queued for the station's worker instead (stationMessaging.ts, through
+ * performWhatsappSend): the result has no provider message id, and the send
+ * happens moments later. A send the worker then fails removes the
+ * whatsapp_messages row, but the CRM has already recorded the draft as sent.
  */
 
 export { WhatsappSendRefusedError };
