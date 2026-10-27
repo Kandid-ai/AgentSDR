@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   RiAddLine,
   RiArrowLeftLine,
@@ -49,15 +49,26 @@ export default function SequenceComposer({
   saveLabel?: string;
   savingLabel?: string;
 }) {
-  const [steps, setSteps] = useState<SequenceStep[]>(
+  const [steps, setSteps] = useState<SequenceStep[]>(() =>
     initialSequence.length > 0 ? initialSequence : [emptyStep(1)],
   );
+  // What the server last stored (or the blank first step), so edits that are
+  // not saved yet can be told apart and the page can warn before losing them.
+  const [savedSteps, setSavedSteps] = useState<SequenceStep[]>(steps);
+  const dirty = JSON.stringify(steps) !== JSON.stringify(savedSteps);
   const [selected, setSelected] = useState(0);
   const [saving, setSaving] = useState(false);
   const [previewStep, setPreviewStep] = useState<SequenceStep | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   // Guards against the selected index dangling after a removal.
   const index = Math.min(selected, steps.length - 1);
@@ -106,6 +117,7 @@ export default function SequenceComposer({
         return;
       }
       setSavedAt(Date.now());
+      setSavedSteps(steps);
       onSaved?.(steps);
     } catch {
       setError("Failed to save sequence. Check your connection and try again.");
@@ -309,7 +321,11 @@ export default function SequenceComposer({
           )}
         </div>
         <div className="flex items-center gap-3">
-          {savedAt && !saving && <span className="text-paragraph-xs text-success-base">Saved</span>}
+          {dirty && !saving ? (
+            <span className="text-paragraph-xs text-text-sub-600">Unsaved changes</span>
+          ) : (
+            savedAt && !saving && <span className="text-paragraph-xs text-success-base">Saved</span>
+          )}
           <Button.Root
             variant="primary"
             mode="filled"

@@ -101,6 +101,11 @@ export default function CampaignDetailClient({
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<TabId>("analytics");
+  // The sequence editor stays mounted once opened: unmounting it on a tab
+  // switch dropped unsaved edits, and remounting it showed the copy from page
+  // load rather than what was last saved.
+  const [sequenceOpened, setSequenceOpened] = useState(false);
+  if (tab === "sequence" && !sequenceOpened) setSequenceOpened(true);
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
 
@@ -207,7 +212,15 @@ export default function CampaignDetailClient({
         {tab === "leads" && (
           <LeadsTab campaignId={campaign.id} initialPage={leadPage} onImported={() => router.refresh()} />
         )}
-        {tab === "sequence" && <SequenceTab campaignId={campaign.id} initialSequence={campaign.sequence} />}
+        {sequenceOpened && (
+          <div hidden={tab !== "sequence"}>
+            <SequenceTab
+              campaignId={campaign.id}
+              initialSequence={campaign.sequence}
+              onSaved={() => router.refresh()}
+            />
+          </div>
+        )}
       </div>
     </PageContainer>
   );
