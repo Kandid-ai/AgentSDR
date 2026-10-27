@@ -34,9 +34,7 @@ import { AiCampaignOverview } from "./AiCampaignOverview";
 import { AiLeadsTab } from "./AiLeadsTab";
 import { AiSequenceTab } from "./AiSequenceTab";
 import { AiSettingsTab } from "./AiSettingsTab";
-
-export type AiCampaignTab = "overview" | "leads" | "sequence" | "settings";
-export const AI_CAMPAIGN_TABS: readonly AiCampaignTab[] = ["overview", "leads", "sequence", "settings"];
+import type { AiCampaignTab } from "./tabs";
 
 const REFRESH_MS = 30_000;
 const LIST = { href: "/calling/campaigns", label: "Call campaigns" };
