@@ -25,7 +25,7 @@
  * to the Action required queue like any other draft.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, isNotNull, lte, or, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, lte, or, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { channelRules } from "@/lib/channels/rules.server";
 import { pickInRange } from "@/lib/channels/rules";
@@ -54,12 +54,14 @@ import { appendCrmEvent, type CrmEventActor } from "./events";
 import { draftInOrg, lockCrmRecord } from "./records";
 import { CrmConflictError, type CrmTransaction, withCrmTransaction } from "./repository";
 import {
+  crmConversationMessages,
   crmConversations,
   crmDrafts,
   crmRecords,
   crmSendAttempts,
   crmSequenceRuns,
   crmSequenceStepRuns,
+  crmSequenceSteps,
   crmSequences,
   type CrmChannel,
 } from "./schema";
@@ -113,6 +115,69 @@ export async function handAutoFollowUpToRepInTransaction(
     actorRef: input.actorRef,
     fromData: { draftId: draft.id, autoSendAt: draft.autoSendAt.toISOString() },
     toData: { draftId: draft.id, workflowState: "action_required" },
+    meta: { reason: input.reason },
+    contextVersion: record.contextVersion,
+  });
+  return true;
+}
+
+/**
+ * The opposite of a hand-off: puts a follow-up draft that is waiting in
+ * Action required onto the automatic path, for when its sequence was
+ * switched on after it was drafted. Only a follow-up of a sequence that
+ * sends automatically, on a live run and the record's current context, and
+ * only once the lead's latest reply was answered from the CRM (follow-ups
+ * never chase an unanswered reply). Returns whether it was queued.
+ */
+export async function queueAutoFollowUpInTransaction(
+  tx: CrmTransaction,
+  input: { draftId: string; at: Date; actorType: CrmEventActor; actorRef?: string | null; reason: string },
+): Promise<boolean> {
+  const [scope] = await tx.select({ draft: crmDrafts, stepType: crmSequenceSteps.stepType, runStatus: crmSequenceRuns.status, stepStatus: crmSequenceStepRuns.status, autoSend: crmSequences.autoSendFollowUps })
+    .from(crmDrafts)
+    .innerJoin(crmSequenceStepRuns, eq(crmSequenceStepRuns.id, crmDrafts.sequenceStepRunId))
+    .innerJoin(crmSequenceSteps, eq(crmSequenceSteps.id, crmSequenceStepRuns.sequenceStepId))
+    .innerJoin(crmSequenceRuns, eq(crmSequenceRuns.id, crmSequenceStepRuns.sequenceRunId))
+    .innerJoin(crmSequences, eq(crmSequences.id, crmSequenceRuns.sequenceId))
+    .where(and(draftInOrg(), eq(crmDrafts.id, input.draftId)))
+    .limit(1)
+    .for("update", { of: crmDrafts });
+  if (!scope) return false;
+  const { draft } = scope;
+  if (
+    draft.status !== "awaiting_review" || draft.autoSendAt
+    || scope.stepType !== "follow_up" || !scope.autoSend
+    || scope.runStatus !== "active" || scope.stepStatus !== "awaiting_review"
+  ) return false;
+  const record = await lockCrmRecord(tx, draft.crmRecordId);
+  if (record.contextVersion !== draft.expectedContextVersion) return false;
+  if (record.workflowState !== "action_required" && record.workflowState !== "waiting") return false;
+  if (!record.latestInboundMessageId) return false;
+  const [latestInbound] = await tx.select({ sentAt: crmConversationMessages.sentAt }).from(crmConversationMessages)
+    .where(eq(crmConversationMessages.id, record.latestInboundMessageId)).limit(1);
+  const [answered] = latestInbound
+    ? await tx.select({ id: crmConversationMessages.id }).from(crmConversationMessages)
+      .innerJoin(crmConversations, eq(crmConversations.id, crmConversationMessages.conversationId))
+      .where(and(
+        eq(crmConversations.crmRecordId, record.id),
+        eq(crmConversationMessages.direction, "outbound"),
+        gte(crmConversationMessages.sentAt, latestInbound.sentAt),
+      )).limit(1)
+    : [];
+  if (!answered) return false;
+  const now = new Date();
+  await tx.update(crmDrafts).set({ autoSendAt: input.at, updatedAt: now }).where(eq(crmDrafts.id, draft.id));
+  await tx.update(crmRecords).set({ workflowState: "waiting", nextActionAt: null, updatedAt: now })
+    .where(eq(crmRecords.id, record.id));
+  await appendCrmEvent(tx, {
+    personId: record.personId,
+    crmRecordId: record.id,
+    pipelineId: record.pipelineId,
+    eventType: "draft.auto_send_queued",
+    actorType: input.actorType,
+    actorRef: input.actorRef,
+    fromData: { draftId: draft.id, workflowState: record.workflowState },
+    toData: { draftId: draft.id, autoSendAt: input.at.toISOString(), workflowState: "waiting" },
     meta: { reason: input.reason },
     contextVersion: record.contextVersion,
   });

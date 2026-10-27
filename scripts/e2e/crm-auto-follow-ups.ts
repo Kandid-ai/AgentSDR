@@ -34,8 +34,8 @@ const { handleClassificationJob } = await import("@/lib/crm/handlers");
 const { generateDraftForStep } = await import("@/lib/crm/drafts");
 const { sendDraft } = await import("@/lib/crm/send");
 const { applyHumanClassification, createManualDraft } = await import("@/lib/crm/operations");
-const { createSequence, publishSequence, assignSubcategorySequence, updateSequence } = await import("@/lib/crm/sequences");
-const { runCrmAutoFollowUps, takeOverAutoFollowUp, mailboxHasAutoFollowUpWaiting } = await import("@/lib/crm/autoFollowUps");
+const { createSequence, publishSequence, assignSubcategorySequence, updateSequence, skipCurrentSequenceStep } = await import("@/lib/crm/sequences");
+const { runCrmAutoFollowUps, takeOverAutoFollowUp, mailboxHasAutoFollowUpWaiting, queueAutoFollowUpInTransaction } = await import("@/lib/crm/autoFollowUps");
 const { setPersonDoNotContactInTransaction } = await import("@/lib/crm/policies");
 const { withCrmTransaction } = await import("@/lib/crm/repository");
 const {
@@ -523,6 +523,42 @@ async function main() {
     assert.equal((await draft(followUp.id)).autoSendAt, null);
     assert.equal((await record(lead.recordId)).workflowState, "action_required");
     await updateSequence(auto.id, { autoSendFollowUps: true });
+  });
+
+  console.log("Drafts written before the switch went on");
+  await check("a follow-up drafted while the switch was off can be queued later, and then sends", async () => {
+    await updateSequence(auto.id, { autoSendFollowUps: false });
+    const lead = await repliedLead("email", MAILBOX_B, "backlog", demo.key);
+    const followUp = await draftStep(lead.recordId, 2);
+    assert.equal(followUp.autoSendAt, null);
+    assert.equal((await record(lead.recordId)).workflowState, "action_required");
+    await updateSequence(auto.id, { autoSendFollowUps: true });
+    const queued = await withCrmTransaction((tx) => queueAutoFollowUpInTransaction(tx, {
+      draftId: followUp.id, at: new Date(), actorType: "system", reason: "e2e",
+    }));
+    assert.equal(queued, true);
+    assert.equal((await record(lead.recordId)).workflowState, "waiting");
+    const again = await withCrmTransaction((tx) => queueAutoFollowUpInTransaction(tx, {
+      draftId: followUp.id, at: new Date(), actorType: "system", reason: "e2e",
+    }));
+    assert.equal(again, false, "queueing twice is a no-op");
+    await runCrmAutoFollowUps({ send: fakeSend, now: minutesFromNow(400) });
+    assert.equal((await draft(followUp.id)).status, "sent");
+  });
+  await check("a follow-up whose reply was skipped, never answered from the CRM, is not queued", async () => {
+    await updateSequence(auto.id, { autoSendFollowUps: false });
+    const person = await newPerson("email", "skipped");
+    const reply = await inbound(person.id, "email", MAILBOX_B, `thread-skipped-${token}`, "Hello?");
+    await classify(reply.message.id, classifyAs("interested", demo.key, 0.95));
+    await draftStep(reply.record.id, 1);
+    await skipCurrentSequenceStep({ recordId: reply.record.id });
+    const followUp = await draftStep(reply.record.id, 2);
+    await updateSequence(auto.id, { autoSendFollowUps: true });
+    const queued = await withCrmTransaction((tx) => queueAutoFollowUpInTransaction(tx, {
+      draftId: followUp.id, at: new Date(), actorType: "system", reason: "e2e",
+    }));
+    assert.equal(queued, false);
+    assert.equal((await draft(followUp.id)).autoSendAt, null);
   });
 
   console.log(`\n${passed} checks passed. Fake provider received ${sentDrafts.length} sends; nothing left this machine.`);
