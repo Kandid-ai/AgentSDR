@@ -4,29 +4,12 @@ import { config } from "./config";
 import { activeCallForShutdown, prepareWhatsApp, requestStop, runCall, runLink, watchConsole } from "./jobs";
 import { openStationBrowser } from "./launchers";
 import { OpenStations } from "./openStations";
-import { startTunnel, type Tunnel } from "./tunnel";
-import type { WorkerStation } from "../../../src/lib/calls/stationContract";
-import { join } from "node:path";
 import { isLoginScreen } from "./whatsapp";
 import { log } from "./log";
 
 let stopping = false;
 /** Numbers kept open between calls (KEEP_OPEN > 0). */
 let openStations: OpenStations | null = null;
-
-/** The call-audio tunnel (TUNNEL=true), started for the worker's one number before its browser opens. */
-let tunnel: { proxyKey: string; running: Tunnel } | null = null;
-async function ensureTunnel(station: WorkerStation): Promise<void> {
-  const cfg = config();
-  if (!cfg.tunnel) return;
-  if (!station.proxy) throw new Error(`${station.name} has no IP in AgentSDR — the tunnel needs its SOCKS5 proxy (Settings → WhatsApp → Calling numbers → IPs)`);
-  const key = `${station.proxy.server}|${station.proxy.username ?? ""}|${station.proxy.password ?? ""}`;
-  if (tunnel?.proxyKey === key) return;
-  await tunnel?.running.stop();
-  tunnel = null;
-  const running = await startTunnel(station.proxy, join(cfg.profilesDir, "tunnel"), log);
-  tunnel = { proxyKey: key, running };
-}
 
 function startOpenStations(): OpenStations {
   const cfg = config();
@@ -35,7 +18,6 @@ function startOpenStations(): OpenStations {
       leaseStations({ workerId: cfg.workerId, launchers: cfg.launchers, capacity, held, ...(cfg.stations.length ? { stations: cfg.stations } : {}) }),
     open: async (station) => {
       const note = (text: string) => log(`open @ ${station.name}: ${text}`);
-      await ensureTunnel(station);
       const browser = await openStationBrowser(station, { note });
       watchConsole(browser, `open @ ${station.name}`);
       const prepared = await prepareWhatsApp(station, browser, note).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
@@ -99,12 +81,8 @@ async function main(): Promise<void> {
   const cfg = config();
   log(
     `call worker ${cfg.workerId} -> ${cfg.agentsdrUrl}, launchers: ${cfg.launchers.join(", ")}, headless: ${cfg.headless}, keeps open: ${cfg.keepOpen}` +
-      `${cfg.stations.length ? `, only: ${cfg.stations.join(", ")}` : ""}${cfg.tunnel ? ", call-audio tunnel: on" : ""}`,
+      `${cfg.stations.length ? `, only: ${cfg.stations.join(", ")}` : ""}`,
   );
-  if (cfg.tunnel && cfg.stations.length !== 1) {
-    log("TUNNEL=true needs STATIONS set to exactly one station id: the tunnel carries one number's IP for the whole container. Not starting.");
-    process.exit(1);
-  }
   if (cfg.keepOpen > 0) openStations = startOpenStations();
   let backoff = 0;
   while (!stopping) {
@@ -118,7 +96,6 @@ async function main(): Promise<void> {
       log(`claimed ${job.kind} job for station ${job.station.name}`);
       if (job.kind === "call") {
         const open = (await openStations?.acquire(job.station.id)) ?? null;
-        if (!open) await ensureTunnel(job.station).catch((e: unknown) => log(`tunnel: ${e instanceof Error ? e.message : String(e)}`));
         try {
           await runCall(job, open);
         } finally {
@@ -137,7 +114,6 @@ async function main(): Promise<void> {
   }
   // Close the open numbers, saving their profiles, and give their leases back.
   await openStations?.shutdown();
-  await tunnel?.running.stop();
   log("stopped");
   process.exit(0);
 }

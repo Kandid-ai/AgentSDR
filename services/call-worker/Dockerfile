@@ -15,7 +15,7 @@ RUN mkdir -p node_modules && bun add --no-save fflate@0.8.3 && bun run build:rec
 FROM mcr.microsoft.com/playwright:v1.64.0-noble
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils xvfb unzip curl ca-certificates iproute2 \
+ && apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils xvfb unzip curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
 
@@ -24,14 +24,6 @@ COPY services/call-worker/package.json services/call-worker/bun.lock* ./
 RUN bun install --frozen-lockfile || bun install
 # CloakBrowser's binary (~200 MB) baked into the image; it caches under ~/.cloakbrowser.
 RUN npx cloakbrowser install
-# sing-box, for the call-audio tunnel (TUNNEL=true, src/tunnel.ts); checksum-pinned.
-ARG SING_BOX_VERSION=1.14.2
-ARG SING_BOX_SHA256=a684484d7477d1437282ee411f4d131d0340aaad60a7868841ebd5d87dd8a0c6
-RUN curl -fsSL -o /tmp/sing-box.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-linux-amd64.tar.gz" \
- && echo "${SING_BOX_SHA256}  /tmp/sing-box.tar.gz" | sha256sum -c - \
- && tar -xzf /tmp/sing-box.tar.gz -C /tmp \
- && mv "/tmp/sing-box-${SING_BOX_VERSION}-linux-amd64/sing-box" /usr/local/bin/sing-box \
- && rm -rf /tmp/sing-box.tar.gz "/tmp/sing-box-${SING_BOX_VERSION}-linux-amd64"
 
 COPY services/call-worker/ ./
 # The worker imports types and shapes from the app's call contracts.

@@ -33,7 +33,6 @@ closes it first.
 | `HEADLESS` | `false` | `true` for new headless Chromium |
 | `CLAIM_INTERVAL_MS` | `1000` | poll gap when idle |
 | `STATIONS` | – | comma list of station ids this worker serves (all when empty) |
-| `TUNNEL` | `false` | send WebRTC's UDP (call audio) through the number's SOCKS5 proxy; needs `STATIONS` = one id, `NET_ADMIN` + `/dev/net/tun` (`docker-compose.tunnel.yml`) |
 | `KEEP_OPEN` | `0` (`3` in Docker) | numbers whose WhatsApp Web stays open between calls (~0.7–1 GB RAM each); 0 opens a browser per call |
 | `CALL_TIMEOUT_MS` | 30 min | then the worker hangs up |
 | `CHROMIUM_PATH` | – | Chromium executable override |
@@ -117,25 +116,10 @@ every call. Opens in under a second; WhatsApp Web loads headless.
   included). The Linux build is a different one (146). Every line must say `OK`; if `cloak` says
   `BAD`, use `local` on that machine.
 
-## Call-audio tunnel (`TUNNEL=true`, 27 Oct 2026)
+## Call audio goes over TCP through the proxy (27 Oct 2026)
 
-A browser sends only TCP through a proxy, so GoLogin pushed the call's UDP audio into TCP through
-the proxy: "Connecting…" took ~3.3 s and the audio lagged. `src/tunnel.ts` runs sing-box with a
-TUN interface, and policy routing (`ip rule … ipproto udp`) sends the container's UDP — only UDP —
-into it; sing-box relays it through the number's **SOCKS5 proxy with UDP**. DNS, private addresses
-and the proxy's own address stay on the normal route, and TCP is never routed there — the browser's
-web traffic keeps using the profile's proxy. (sing-box's own `auto_route` captured all traffic and
-every TCP connection in the container timed out, 27 Oct 2026.) The call audio then goes over UDP and still leaves from the proxy's IP.
-
-Because the tunnel covers the whole container, a tunnelled worker serves exactly one number:
-deploy `docker-compose.tunnel.yml` (Dokploy → Compose) once per number with `STATIONS` set to its
-id. Assign the number's SOCKS5 IP in AgentSDR (Calling numbers → IPs) and set its GoLogin profile's
-WebRTC to "Real". The worker also starts Orbita with `--disable-quic` so pages stay on TCP.
-
-**Result so far (27 Oct 2026, Proxy-Cheap ISP proxy):** the tunnel works — a STUN check through it
-sees the proxy's IP, and with the profile's WebRTC mode "real" Chromium gathers srflx/udp candidates
-— but WhatsApp's call servers never complete UDP through that proxy (ICE pairs stay in progress;
-generic STUN servers on 19302 and 3478 do answer through it), and WhatsApp waits ~4 s on UDP before
-ringing, then uses TCP anyway. So it is off for now (`TUNNEL=false`, WebRTC "alerted"); worth
-retrying with another UDP-capable proxy. Running the worker in Mumbai is what cut "Connecting…" from
-3.3 s to 1.5 s (a shorter round trip to the proxy).
+GoLogin's WebRTC mode "alerted" ("Based on IP") keeps the call's audio on TCP through the number's
+proxy, so WhatsApp's "Connecting…" costs a few round trips to it (3.3 s from Austria, 1.5 s from
+Mumbai). A tunnel sending WebRTC's UDP through Proxy-Cheap's SOCKS5-with-UDP was built and removed:
+UDP went through (STUN saw the proxy's IP), but WhatsApp's call servers never completed UDP via that
+proxy and waited ~4 s on it before ringing. Worth revisiting only with a proxy WhatsApp accepts UDP from.
