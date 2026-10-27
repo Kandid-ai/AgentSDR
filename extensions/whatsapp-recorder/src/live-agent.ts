@@ -65,7 +65,7 @@ const HELLO_MAX_WAIT_MS = 2_000;
  * last sound: a check-in after this long, then a goodbye, then a hang-up if
  * the model has not ended the call itself.
  */
-const SILENCE_CHECK_MS = 7_000;
+const SILENCE_CHECK_MS = 4_000;
 const SILENCE_GOODBYE_MS = 8_000;
 const SILENCE_HANGUP_MS = 12_000;
 /**
