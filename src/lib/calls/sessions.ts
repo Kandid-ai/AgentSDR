@@ -35,6 +35,7 @@ import { applyCallResultToContactSafely } from "./contactCallStatus";
 import { normalizePhone } from "./phone";
 import { isPlatformNotConnectedError } from "@/lib/platform/credentials";
 import { headRecording, presignRecordingUpload, recordingKeyFor } from "./storage";
+import type { CloudCallPhase } from "./stationContract";
 import { createRecorderToken, recorderTokenMatches } from "./token";
 import { transcribeCall } from "./transcription";
 import { authContextErrorResponse } from "@/lib/auth/context";
@@ -103,7 +104,26 @@ export function toCallSummary(row: CallSessionRow): CallSummary {
     transcriptStatus: row.transcriptStatus,
     createdAt: row.createdAt.toISOString(),
     mode: row.mode,
-    livePhase: row.livePhase ?? null,
+    livePhase: settledLivePhase(row),
+  };
+}
+
+/**
+ * A cloud call's phase as last reported — except that once it is over and its
+ * transcript has settled, it reads "done". The extension reports
+ * "transcribing" as it uploads, but the worker closes the cloud browser right
+ * after, so nothing ever reported "done" and the card said "Transcribing…"
+ * forever (27 Oct 2026).
+ */
+function settledLivePhase(row: CallSessionRow): CloudCallPhase | null {
+  const phase = row.livePhase ?? null;
+  if (phase?.kind !== "processing" || !isTerminalStatus(row.status)) return phase;
+  if (row.transcriptStatus === "pending") return phase;
+  return {
+    kind: "done",
+    durationMs: row.durationMs ?? phase.durationMs,
+    summary: row.transcript?.summary ?? null,
+    transcriptFailed: row.transcriptStatus === "failed",
   };
 }
 

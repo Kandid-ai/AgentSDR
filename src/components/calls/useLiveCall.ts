@@ -56,7 +56,8 @@ export function useLiveCallState(callId: string | null): LiveCallState {
         setCloud({ stationName: call.stationName ?? null });
         const next = terminalPhase(call);
         if (next) setPhase(next);
-        if (TERMINAL_CALL_STATUSES.includes(call.status)) return;
+        // Over once the call has ended and its transcript has settled (see the server's settledLivePhase).
+        if (TERMINAL_CALL_STATUSES.includes(call.status) && call.transcriptStatus !== "pending") return;
       } else if (call || !first) {
         return;
       }

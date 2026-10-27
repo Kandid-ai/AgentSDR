@@ -657,6 +657,8 @@ function onHookMessage(event: MessageEvent): void {
       break;
     case "call-status":
       trace(callId, `WhatsApp shows "${data.text}"`);
+      // They accepted; the audio link is still being set up.
+      if (/^connecting/i.test(data.text.trim())) agent?.prepareGreeting();
       break;
     case "call-ui":
       trace(callId, "WhatsApp shows the call screen");

@@ -60,6 +60,10 @@ export class LiveAgent {
   private lastVoiceAt = 0;
   private replying = false;
   private heardThisTurn = "";
+  /** The greeting was asked for during "Connecting…"; its audio is held until the pick-up. */
+  private greetPrepared = false;
+  private holding = false;
+  private held: [ArrayBuffer, number][] = [];
   /** The test option's copy of exactly what is sent to the model (null when off). */
   private heard: Int16Array[] | null = null;
   private heardSamples = 0;
@@ -95,7 +99,29 @@ export class LiveAgent {
   }
 
   /** The lead picked up: the model speaks first. */
+  /**
+   * WhatsApp shows "Connecting…": the lead has accepted, and the audio link
+   * takes a few seconds more (2.5 s on the call worker, 23 Oct 2026). The
+   * greeting is generated now and held, so it plays the moment they are
+   * connected instead of after a 1.2 s wait for their hello plus the model's
+   * ~1 s to start speaking.
+   */
+  prepareGreeting(): void {
+    if (!this.ready || this.greetPrepared || this.leadSpoke) return;
+    this.greetPrepared = true;
+    this.holding = true;
+    this.handlers.trace("AI agent: lead accepted — preparing the greeting while WhatsApp connects");
+    this.sendGreeting();
+  }
+
   greet(): void {
+    if (this.greetPrepared) {
+      this.holding = false;
+      const held = this.held.splice(0);
+      this.handlers.trace(`AI agent: picked up — greeting at once (${held.length ? "prepared during Connecting…" : "still being prepared"})`);
+      for (const [pcm, rate] of held) this.handlers.play(pcm, rate);
+      return;
+    }
     this.handlers.trace("AI agent: lead picked up — waiting for their hello");
     this.greetTimer = setTimeout(() => {
       this.greetTimer = null;
@@ -216,7 +242,8 @@ export class LiveAgent {
           this.handlers.trace(`AI agent: replied ${Date.now() - this.lastVoiceAt} ms after the lead's last sound`);
         }
         this.replying = true;
-        this.handlers.play(fromBase64(audio.data), rate);
+        if (this.holding) this.held.push([fromBase64(audio.data), rate]);
+        else this.handlers.play(fromBase64(audio.data), rate);
       }
       if (content.turnComplete) {
         this.replying = false;
