@@ -129,4 +129,27 @@ describe("OpenStations", () => {
     expect(h.events).toEqual(["open a", "open b", "close a", "close b"]);
     expect(h.leaseCalls.at(-1)).toEqual({ held: [], capacity: 0 });
   });
+
+  test("shutdown waits for a close already under way (its profile save)", async () => {
+    const h = harness();
+    h.grant("a");
+    await h.tick();
+    let finishClose = () => {};
+    const slowClose = new Promise<void>((resolve) => (finishClose = resolve));
+    const original = (h.manager as unknown as { deps: OpenStationsDeps }).deps.close;
+    (h.manager as unknown as { deps: OpenStationsDeps }).deps.close = async (r, s) => {
+      await original(r, s);
+      await slowClose;
+    };
+    h.release("a");
+    void h.manager.tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    let shutDown = false;
+    const stopping = h.manager.shutdown().then(() => (shutDown = true));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(shutDown).toBe(false);
+    finishClose();
+    await stopping;
+    expect(shutDown).toBe(true);
+  });
 });

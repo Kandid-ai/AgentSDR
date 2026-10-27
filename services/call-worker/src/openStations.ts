@@ -49,6 +49,8 @@ const MAX_RETRY_MS = 10 * 60 * 1000;
 export class OpenStations {
   private readonly slots = new Map<string, Slot>();
   private openQueue: Promise<void> = Promise.resolve();
+  /** Closes in progress (each saves a profile, ~10 s): shutdown waits for them. */
+  private readonly closing = new Set<Promise<void>>();
   private ticking = false;
   private stopped = false;
 
@@ -139,6 +141,8 @@ export class OpenStations {
   async shutdown(): Promise<void> {
     this.stopped = true;
     await Promise.all(this.held().map((id) => this.drop(id, "worker stopping")));
+    // A number let go just before the stop is still saving its profile: exiting now would cut that short.
+    await Promise.all([...this.closing]);
     await this.deps.lease([], 0).catch(() => {});
   }
 
@@ -183,7 +187,7 @@ export class OpenStations {
   private async reopen(slot: Slot, why: string): Promise<void> {
     this.deps.log(`open numbers: reopening ${slot.station.name} — ${why}`);
     slot.state = "closing";
-    if (slot.ready) await this.deps.close(slot.ready, slot.station).catch(() => {});
+    if (slot.ready) await this.track(this.deps.close(slot.ready, slot.station));
     slot.ready = null;
     this.startOpening(slot.station);
   }
@@ -194,6 +198,13 @@ export class OpenStations {
     this.slots.delete(stationId);
     this.deps.log(`open numbers: closing ${slot.station.name} — ${why}`);
     if (slot.state === "opening" && slot.opening) await slot.opening.catch(() => {});
-    if (slot.ready) await this.deps.close(slot.ready, slot.station).catch(() => {});
+    if (slot.ready) await this.track(this.deps.close(slot.ready, slot.station));
+  }
+
+  private track(close: Promise<void>): Promise<void> {
+    const settled = close.catch(() => {});
+    this.closing.add(settled);
+    void settled.then(() => this.closing.delete(settled));
+    return settled;
   }
 }
