@@ -555,6 +555,9 @@ export async function pickDueContact(stationId: string, campaignIds: string[], n
                             and kept_station.status <> 'banned'))`,
       sql`not exists (select 1 from ${callCampaignStepRuns} running
                        where running.contact_id = ${callCampaignContacts.id} and running.status = 'started')`,
+      // A trial call placed by hand from the lead's side sheet is still open.
+      sql`not exists (select 1 from ${callSessions} trial
+                       where trial.campaign_contact_id = ${callCampaignContacts.id} and trial.status in ('pending', 'in_progress'))`,
     ))
     .orderBy(
       sql`case ${callCampaignContacts.aiStatus} when 'callback' then 0 when 'chasing' then 1 when 'reaching' then 2 else 3 end`,
@@ -655,6 +658,7 @@ async function actForContact(
       purpose: plan.purpose,
       stepInstructions: plan.step?.kind === "call" ? plan.step.instructions : null,
       callbackWhen: plan.purpose === "callback" ? await callbackWhen(contact.id) : null,
+      leadInstructions: contact.aiInstructions,
     });
   }
 

@@ -8,8 +8,6 @@ import { withLeadTransaction } from "@/lib/leads/records";
 import { personCompanyName } from "@/lib/leads/companyName";
 import { organizationPhoneCountry } from "@/lib/calls/phone.server";
 import { findOrCreateContactPerson, resolveImportRow, contactInOrg } from "@/lib/calls/campaigns";
-import { messageInOrg } from "@/lib/whatsapp/messages";
-import { whatsappMessages } from "@/lib/whatsapp/schema";
 import { crmKnowledgeDocuments } from "@/lib/crm/schema";
 import {
   importMappingError,
@@ -27,7 +25,8 @@ import {
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import { parseAgentName, parseAgentVoice } from "@/lib/calls/liveAgent";
 import { AGENT_OUTCOMES, type AgentOutcomeKind, type CallCampaignStatus } from "@/lib/calls/contract";
-import { toCallSummary, CallApiError } from "@/lib/calls/sessions";
+import { CallApiError, startCall } from "@/lib/calls/sessions";
+import { composeAgentBrief } from "./brief";
 import { callCampaignContacts, callCampaignStations, callCampaignStepRuns, callCampaigns, callSessions, callingStations } from "@/lib/calls/schema";
 import {
   AI_CONTACT_STATUSES,
@@ -57,14 +56,16 @@ import {
   type AiLeadDetail,
   type AiLeadsImportResponse,
   type AiLeadsQuery,
-  type AiLeadTimelineEntry,
   type AiStepStat,
   type CreateAiCampaignRequest,
   type ListAiLeadsResponse,
   type UpdateAiCampaignRequest,
   type UpdateAiLeadRequest,
+  type CallAiLeadResponse,
   AI_CAMPAIGN_MAX_KNOWLEDGE,
+  AI_LEAD_MAX_INSTRUCTIONS,
 } from "./api";
+import { loadLeadActivity } from "./leadActivity";
 
 /**
  * AI calling campaigns: everything the pages and /api/calling/ai-campaigns
@@ -586,6 +587,7 @@ function toLead(
     lastOutcome: latest.get(contact.id) ?? null,
     calls: callCounts.get(contact.id) ?? 0,
     numberName: contact.aiStationId ? (stationNames.get(contact.aiStationId) ?? null) : null,
+    instructions: contact.aiInstructions,
   };
 }
 
@@ -711,7 +713,15 @@ async function leadView(campaign: CampaignRow, row: Awaited<ReturnType<typeof lo
 }
 
 export function parseUpdateAiLeadRequest(value: unknown): UpdateAiLeadRequest {
-  const body = asObject(value, ["action"]);
+  const body = asObject(value, ["action", "instructions"]);
+  if (body.instructions !== undefined) {
+    if (body.action !== undefined) throw new CallApiError(400, "Send either an action or instructions");
+    if (body.instructions === null) return { instructions: null };
+    if (typeof body.instructions !== "string") throw new CallApiError(400, "instructions must be text");
+    const instructions = body.instructions.trim();
+    if (instructions.length > AI_LEAD_MAX_INSTRUCTIONS) throw new CallApiError(400, `The lead's instructions are over ${AI_LEAD_MAX_INSTRUCTIONS} characters`);
+    return { instructions: instructions || null };
+  }
   if (body.action !== "stop" && body.action !== "requeue") throw new CallApiError(400, "action must be stop or requeue");
   return { action: body.action };
 }
@@ -722,7 +732,12 @@ export async function updateAiLead(campaignId: string, contactId: string, input:
   const { contact } = await loadContact(campaignId, contactId);
   const status = contact.aiStatus ?? "queued";
   const now = new Date();
-  if (input.action === "stop") {
+  if ("instructions" in input) {
+    await db
+      .update(callCampaignContacts)
+      .set({ aiInstructions: input.instructions, updatedAt: now })
+      .where(and(contactInOrg(), eq(callCampaignContacts.id, contactId), eq(callCampaignContacts.campaignId, campaignId)));
+  } else if (input.action === "stop") {
     if (!(AI_OPEN_STATUSES as readonly string[]).includes(status)) throw new CallApiError(409, "Only leads still being worked can be stopped");
     await db
       .update(callCampaignContacts)
@@ -754,77 +769,11 @@ export async function updateAiLead(campaignId: string, contactId: string, input:
 export async function getAiLeadDetail(campaignId: string, contactId: string): Promise<AiLeadDetail> {
   const campaign = await loadCampaignRow(campaignId);
   const row = await loadContact(campaignId, contactId);
-  const [runs, sessions] = await Promise.all([
-    db.select().from(callCampaignStepRuns).where(eq(callCampaignStepRuns.contactId, contactId)).orderBy(asc(callCampaignStepRuns.createdAt)),
-    db
-      .select()
-      .from(callSessions)
-      .where(and(inOrg(callSessions), eq(callSessions.campaignContactId, contactId)))
-      .orderBy(asc(callSessions.createdAt)),
+  const [lead, { activity, summary }] = await Promise.all([
+    leadView(campaign, row),
+    loadLeadActivity(campaign, { id: row.contact.id, personId: row.contact.personId }),
   ]);
-  const messageIds = runs.flatMap((run) => (run.whatsappMessageId ? [run.whatsappMessageId] : []));
-  const messages = messageIds.length
-    ? await db
-        .select({ id: whatsappMessages.id, body: whatsappMessages.body })
-        .from(whatsappMessages)
-        .where(and(messageInOrg(), inArray(whatsappMessages.id, messageIds)))
-    : [];
-  const bodies = new Map(messages.map((message) => [message.id, message.body]));
-  const sessionById = new Map(sessions.map((session) => [session.id, session]));
-  const used = new Set<string>();
-
-  const callOf = (session: (typeof sessions)[number] | undefined): AiLeadTimelineEntry["call"] => {
-    if (!session) return null;
-    const summary = toCallSummary(session);
-    return {
-      id: session.id,
-      status: session.status,
-      durationMs: session.durationMs,
-      hasRecording: summary.hasRecording,
-      recordingOffsetMs: session.recordingOffsetMs,
-      transcriptStatus: session.transcriptStatus,
-      outcome: session.agentOutcome
-        ? { outcome: session.agentOutcome.outcome, summary: session.agentOutcome.summary, when: session.agentOutcome.when }
-        : null,
-    };
-  };
-
-  const timeline: AiLeadTimelineEntry[] = runs.map((run) => {
-    const described = describeStepKey(run.stepKey);
-    const steps = described.phase === "chase" ? campaign.aiChaseSteps : campaign.aiSteps;
-    const index = described.stepId ? steps.findIndex((step) => step.id === described.stepId) : -1;
-    const position = index >= 0 ? aiStepLabel(steps, index, false) : null;
-    const session = run.callSessionId ? sessionById.get(run.callSessionId) : undefined;
-    if (session) used.add(session.id);
-    return {
-      id: run.id,
-      at: run.createdAt.toISOString(),
-      kind: run.kind,
-      stepLabel: position ? `${described.label} · ${position}` : described.label,
-      status: run.status,
-      result: run.result,
-      error: run.error,
-      body: run.whatsappMessageId ? (bodies.get(run.whatsappMessageId) ?? null) : null,
-      call: callOf(session),
-    };
-  });
-  // Calls nothing in the sequence recorded (a rep's call on the same lead, say).
-  for (const session of sessions) {
-    if (used.has(session.id)) continue;
-    timeline.push({
-      id: session.id,
-      at: session.createdAt.toISOString(),
-      kind: "call",
-      stepLabel: "Call",
-      status: session.status === "failed" ? "failed" : session.status === "pending" || session.status === "in_progress" ? "started" : "done",
-      result: null,
-      error: session.error,
-      body: null,
-      call: callOf(session),
-    });
-  }
-  timeline.sort((a, b) => a.at.localeCompare(b.at));
-  return { lead: await leadView(campaign, row), timeline };
+  return { lead, activity, summary };
 }
 
 // --- adding leads -------------------------------------------------------------
@@ -1107,4 +1056,47 @@ export async function getAiCampaignStats(campaignId: string): Promise<AiCampaign
     perStep,
     callsByDay,
   };
+}
+
+/**
+ * A trial call to one lead now, from the campaign's number (the lead's own,
+ * or the campaign's first active one), with what a campaign call carries —
+ * its instructions, the first call step's, the lead's own, its knowledge,
+ * goal and agent. Outside the sequence: no step is used up and the lead's
+ * position is unchanged (the engine waits while it is open). Works on a draft
+ * campaign too, so a campaign can be tried on yourself before launch.
+ */
+export async function callAiLeadNow(campaignId: string, contactId: string): Promise<CallAiLeadResponse> {
+  const campaign = await loadCampaignRow(campaignId);
+  const { contact } = await loadContact(campaignId, contactId);
+  const [open] = await db
+    .select({ id: callSessions.id })
+    .from(callSessions)
+    .where(and(inOrg(callSessions), eq(callSessions.campaignContactId, contactId), inArray(callSessions.status, ["pending", "in_progress"])))
+    .limit(1);
+  if (open) throw new CallApiError(409, "A call to this lead is already under way");
+  const stations = await db
+    .select({ id: callingStations.id, name: callingStations.name })
+    .from(callCampaignStations)
+    .innerJoin(callingStations, eq(callingStations.id, callCampaignStations.stationId))
+    .where(and(eq(callCampaignStations.campaignId, campaignId), inOrg(callingStations), eq(callingStations.status, "active")))
+    .orderBy(asc(callingStations.name));
+  const station = stations.find((candidate) => candidate.id === contact.aiStationId) ?? stations[0];
+  if (!station) throw new CallApiError(409, "Choose an active calling number for this campaign first");
+  const firstCall = campaign.aiSteps.find((step) => step.kind === "call");
+  const started = await startCall({
+    personId: contact.personId,
+    campaignContactId: contact.id,
+    mode: "agent_cloud",
+    stationId: station.id,
+    agentBrief: composeAgentBrief({
+      campaignInstructions: campaign.aiInstructions,
+      purpose: "reach",
+      stepInstructions: firstCall?.kind === "call" ? firstCall.instructions : null,
+      leadInstructions: contact.aiInstructions,
+    }),
+    agentName: campaign.aiAgentName,
+    agentVoice: campaign.aiAgentVoice,
+  });
+  return { callId: started.call.id, numberName: station.name };
 }

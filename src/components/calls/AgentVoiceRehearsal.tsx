@@ -36,8 +36,10 @@ registerProcessor("agentsdr-tap", AgentsdrTap);
  * check-ins, outcome, hanging up after its goodbye). Nothing is placed or
  * saved.
  */
-export function AgentVoiceRehearsal({ campaignId, stepId, brief, name, voice }: {
+export function AgentVoiceRehearsal({ campaignId, contactId, stepId, brief, name, voice }: {
   campaignId?: string;
+  /** Rehearse as this lead of the campaign: their name, company, history and own instructions. */
+  contactId?: string;
   stepId?: string;
   brief?: string;
   name?: string;
@@ -148,7 +150,7 @@ export function AgentVoiceRehearsal({ campaignId, stepId, brief, name, voice }: 
           const response = await fetch("/api/calling/agent/rehearse/voice", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ campaignId, stepId, brief, name, voice }),
+            body: JSON.stringify({ campaignId, contactId, stepId, brief, name, voice }),
           });
           const body = (await response.json().catch(() => null)) as (AgentTokenResponse & { error?: string }) | null;
           if (!response.ok || !body?.token) return { ok: false, error: body?.error ?? `HTTP ${response.status}` };

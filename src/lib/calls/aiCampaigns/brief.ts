@@ -16,6 +16,8 @@ export function composeAgentBrief(input: {
   stepInstructions: string | null;
   /** A call-back: the time they asked for, in their words if the agent kept them. */
   callbackWhen?: string | null;
+  /** The lead's own instructions (the lead's side sheet), on top of the campaign's. */
+  leadInstructions?: string | null;
 }): string {
   const parts: string[] = [];
   if (input.purpose === "callback") {
@@ -29,7 +31,8 @@ export function composeAgentBrief(input: {
   else if (input.purpose === "reach") parts.push(FALLBACK_STEP);
 
   const campaign = input.campaignInstructions.trim();
-  const thisCall = `This call: ${parts.join(" ")}`;
+  const lead = input.leadInstructions?.trim();
+  const thisCall = `This call: ${parts.join(" ")}${lead ? `\n\nFor this person in particular: ${lead}` : ""}`;
   const brief = campaign ? `${campaign}\n\n${thisCall}` : thisCall;
   if (brief.length <= MAX_AGENT_BRIEF_CHARS) return brief;
   // Over the limit only when both texts are near their own maximum: keep this call's part whole.

@@ -949,6 +949,7 @@ CREATE TABLE public.call_campaign_contacts (
     ai_failures integer DEFAULT 0 NOT NULL,
     ai_note text,
     ai_booked_at timestamp with time zone,
+    ai_instructions text,
     CONSTRAINT call_campaign_contacts_ai_status_chk CHECK (((ai_status IS NULL) OR (ai_status = ANY (ARRAY['queued'::text, 'reaching'::text, 'callback'::text, 'chasing'::text, 'booked'::text, 'handoff'::text, 'not_interested'::text, 'unreached'::text, 'replied'::text, 'stopped'::text, 'failed'::text])))),
     CONSTRAINT call_campaign_contacts_call_count_chk CHECK ((call_count >= 0)),
     CONSTRAINT call_campaign_contacts_call_status_chk CHECK ((call_status = ANY (ARRAY['new'::text, 'calling'::text, 'no_answer'::text, 'busy'::text, 'connected'::text, 'not_on_whatsapp'::text, 'wrong_number'::text, 'failed'::text]))),

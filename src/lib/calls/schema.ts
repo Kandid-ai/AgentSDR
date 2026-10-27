@@ -259,6 +259,8 @@ export const callCampaignContacts = pgTable(
     /** Why it stopped or failed, or the last error, for the person reading the list. */
     aiNote: text("ai_note"),
     aiBookedAt: timestamp("ai_booked_at", { withTimezone: true }),
+    /** Extra instructions for calls to this one lead, on top of the campaign's. scripts/add-ai-lead-instructions.ts. */
+    aiInstructions: text("ai_instructions"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

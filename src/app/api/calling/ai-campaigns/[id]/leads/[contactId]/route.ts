@@ -8,7 +8,7 @@ import { runInOrganization } from "@/lib/tenancy/scope";
 
 type Params = { params: Promise<{ id: string; contactId: string }> };
 
-/** One lead with its timeline: every call and message the campaign sent, in order. */
+/** One lead with the activity of its person: every call and WhatsApp message, newest first. */
 export async function GET(request: NextRequest, { params }: Params) {
   try {
     const { id, contactId } = await params;
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   }
 }
 
-/** `{ action: "stop" }` or `{ action: "requeue" }` (a failed, unreached or hand-stopped lead). */
+/** `{ action: "stop" }`, `{ action: "requeue" }` (a failed, unreached or hand-stopped lead), or `{ instructions }` (the lead's own). */
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const ctx = await requireCrmMutationContext(request);

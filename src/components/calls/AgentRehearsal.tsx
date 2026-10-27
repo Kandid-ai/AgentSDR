@@ -31,8 +31,10 @@ export function toolLabel(tool: Tool): string {
  * the exact prompt a campaign call gets (POST /api/calling/agent/rehearse).
  * The conversation lives here; nothing is saved and no call is placed.
  */
-export function AgentRehearsal({ campaignId, stepId, brief, name, voice }: {
+export function AgentRehearsal({ campaignId, contactId, stepId, brief, name, voice }: {
   campaignId?: string;
+  /** Rehearse as this lead of the campaign: their name, company, history and own instructions. */
+  contactId?: string;
   stepId?: string;
   brief?: string;
   name?: string;
@@ -54,7 +56,7 @@ export function AgentRehearsal({ campaignId, stepId, brief, name, voice }: {
       const response = await fetch("/api/calling/agent/rehearse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId, stepId, brief, name, voice, turns }),
+        body: JSON.stringify({ campaignId, contactId, stepId, brief, name, voice, turns }),
       });
       const body = (await response.json().catch(() => null)) as { reply?: string; tools?: Tool[]; error?: string } | null;
       if (!response.ok || !body) throw new Error(body?.error ?? `The rehearsal failed (HTTP ${response.status})`);

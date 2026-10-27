@@ -12,13 +12,11 @@ import {
   AI_CAMPAIGN_MAX_CALLBACKS,
   AI_CAMPAIGN_GOALS,
   aiCampaignStepsError,
-  type AiCallResult,
   type AiCampaignGoal,
   type AiCampaignSettings,
   type AiCampaignStep,
   type AiContactStatus,
   type AiStepRunKind,
-  type AiStepRunStatus,
 } from "./contract";
 
 export const AI_CAMPAIGN_MAX_INSTRUCTIONS = 4_000;
@@ -113,40 +111,81 @@ export type AiCampaignLead = {
   lastOutcome: { outcome: AgentOutcomeKind; summary: string | null; at: string } | null;
   calls: number;
   numberName: string | null;
+  /** Extra instructions for calls to this lead, on top of the campaign's. */
+  instructions: string | null;
 };
 
 export type ListAiLeadsResponse = { leads: AiCampaignLead[]; total: number; page: number; pageSize: number };
 
 export type AiLeadAction = "stop" | "requeue";
-export type UpdateAiLeadRequest = { action: AiLeadAction };
+/** Stop or requeue the lead, or set its own instructions (null clears them). */
+export type UpdateAiLeadRequest = { action: AiLeadAction } | { instructions: string | null };
+export const AI_LEAD_MAX_INSTRUCTIONS = 2_000;
+
+/** POST …/leads/:contactId/call — a trial call to this lead now, outside the sequence. */
+export type CallAiLeadResponse = { callId: string; numberName: string | null };
 
 export type AddAiCampaignPeopleResponse = { requested: number; added: number; skippedDuplicate: number; skippedMissingPhone: number };
 export type AiLeadsImportResponse = { added: number; alreadyInCampaign: number; skipped: string[] };
 
-/** One thing the engine did for a lead, in time order. */
-export type AiLeadTimelineEntry = {
+/** What a call amounted to, as the activity feed shows it. */
+export type AiActivityCallResult = "queued" | "in_progress" | "connected" | "no_answer" | "not_on_whatsapp" | "failed";
+
+/**
+ * One thing that happened with the lead's person — a call or a WhatsApp
+ * message, from this campaign or anywhere else (a rep's call, another
+ * campaign, a reply) — or a campaign step that failed before either existed.
+ */
+export type AiLeadActivity = {
   id: string;
   at: string;
-  kind: AiStepRunKind;
-  /** "Reach · step 1", "Follow-up · step 2", "Call back", "Booking link" ... */
-  stepLabel: string;
-  status: AiStepRunStatus;
-  result: AiCallResult | null;
-  error: string | null;
-  /** A message: what was sent. */
-  body: string | null;
+  kind: "call" | "message" | "step";
+  /** This campaign's step it was ("Reach them · Call 1 of 3"), or null. */
+  stepLabel: string | null;
+  /** Another calling campaign it belongs to, or null. */
+  campaignName: string | null;
   call: {
     id: string;
     status: CallStatus;
+    /** rep: a rep's own call; agent: the AI agent in a rep's browser; agent_cloud: the AI agent on a calling number. */
+    mode: "rep" | "agent" | "agent_cloud";
+    /** The calling number it went out from (cloud calls). */
+    numberName: string | null;
+    result: AiActivityCallResult;
     durationMs: number | null;
+    error: string | null;
     hasRecording: boolean;
     recordingOffsetMs: number | null;
     transcriptStatus: string;
     outcome: { outcome: AgentOutcomeKind; summary: string | null; when: string | null } | null;
   } | null;
+  message: {
+    direction: "inbound" | "outbound";
+    /** lead: they wrote; agentsdr: sent from AgentSDR; phone: typed on the phone or in WhatsApp Web. */
+    origin: "lead" | "agentsdr" | "phone";
+    body: string;
+    /** The WhatsApp number it went through. */
+    numberName: string | null;
+    /** Messages sent through a calling number: where delivery stands. Null: sent (or received). */
+    delivery: "queued" | "sending" | "failed" | "uncertain" | null;
+    error: string | null;
+  } | null;
+  /** A step that failed before any call or message existed: why. */
+  error: string | null;
 };
 
-export type AiLeadDetail = { lead: AiCampaignLead; timeline: AiLeadTimelineEntry[] };
+export type AiLeadActivitySummary = {
+  calls: number;
+  connected: number;
+  messagesSent: number;
+  messagesReceived: number;
+  lastActivityAt: string | null;
+  /** The person's CRM stage ("Interested"), or null. */
+  crmStage: string | null;
+};
+
+/** The lead, and everything that happened with its person, newest first. */
+export type AiLeadDetail = { lead: AiCampaignLead; activity: AiLeadActivity[]; summary: AiLeadActivitySummary };
 
 export type AiStepStat = {
   key: string;
