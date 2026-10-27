@@ -1290,6 +1290,7 @@ CREATE TABLE public.crm_drafts (
     error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    auto_send_at timestamp with time zone,
     CONSTRAINT crm_drafts_channel_chk CHECK ((channel = ANY (ARRAY['email'::text, 'linkedin'::text, 'whatsapp'::text]))),
     CONSTRAINT crm_drafts_context_chk CHECK ((expected_context_version >= 0)),
     CONSTRAINT crm_drafts_linkedin_subject_chk CHECK (((channel <> 'linkedin'::text) OR (subject IS NULL))),
@@ -1614,7 +1615,7 @@ CREATE TABLE public.crm_send_attempts (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT crm_send_attempts_account_chk CHECK ((length(btrim(account_ref)) > 0)),
-    CONSTRAINT crm_send_attempts_actor_chk CHECK ((actor_type = 'authenticated_operator'::text)),
+    CONSTRAINT crm_send_attempts_actor_chk CHECK ((actor_type = ANY (ARRAY['authenticated_operator'::text, 'system'::text]))),
     CONSTRAINT crm_send_attempts_idempotency_chk CHECK ((length(btrim(idempotency_key)) > 0)),
     CONSTRAINT crm_send_attempts_provider_chk CHECK ((length(btrim(provider)) > 0)),
     CONSTRAINT crm_send_attempts_reconciliation_chk CHECK (((status <> 'reconciled'::text) OR ((reconciled_at IS NOT NULL) AND (length(btrim(reconciliation_note)) > 0)))),
@@ -1736,6 +1737,7 @@ CREATE TABLE public.crm_sequences (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     organization_id uuid NOT NULL,
+    auto_send_follow_ups boolean DEFAULT false NOT NULL,
     CONSTRAINT crm_sequences_name_chk CHECK ((length(btrim(name)) > 0)),
     CONSTRAINT crm_sequences_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'archived'::text])))
 );
@@ -3842,6 +3844,12 @@ CREATE UNIQUE INDEX crm_conversations_provider_thread_uq ON public.crm_conversat
 CREATE INDEX crm_conversations_record_idx ON public.crm_conversations USING btree (crm_record_id);
 
 --
+-- Name: crm_drafts_auto_send_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crm_drafts_auto_send_idx ON public.crm_drafts USING btree (auto_send_at) WHERE ((auto_send_at IS NOT NULL) AND (status = 'awaiting_review'::text));
+
+--
 -- Name: crm_drafts_record_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4002,6 +4010,12 @@ CREATE INDEX crm_send_attempts_draft_created_idx ON public.crm_send_attempts USI
 --
 
 CREATE UNIQUE INDEX crm_send_attempts_one_terminal_uq ON public.crm_send_attempts USING btree (draft_id) WHERE (status = ANY (ARRAY['sent'::text, 'delivery_uncertain'::text, 'reconciled'::text]));
+
+--
+-- Name: crm_send_attempts_system_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crm_send_attempts_system_account_idx ON public.crm_send_attempts USING btree (account_ref, created_at) WHERE (actor_type = 'system'::text);
 
 --
 -- Name: crm_sequence_runs_one_active_uq; Type: INDEX; Schema: public; Owner: -
