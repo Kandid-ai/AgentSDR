@@ -28,7 +28,7 @@ import {
 } from "@/lib/crm/ai/instructions";
 import { cn } from "@/utils/cn";
 
-export type InstructionField = "draftInstructions" | "classificationInstructions";
+export type InstructionField = "draftInstructions" | "classificationInstructions" | "callingInstructions";
 type Lists = Record<InstructionField, AiInstructionBlock[]>;
 
 /** A small ghost icon button; the label is its tooltip and its accessible name. */
@@ -171,6 +171,8 @@ export function InstructionSection({
   saved,
   pipelineId,
   onSaved,
+  defaults,
+  customized: savedCustomized,
 }: {
   title: string;
   helper: string;
@@ -181,6 +183,9 @@ export function InstructionSection({
   saved: AiInstructionBlock[];
   pipelineId: string;
   onSaved: (blocks: AiInstructionBlock[]) => void;
+  /** A list with built-in defaults (calling): shown while `customized` is false, with "Reset to defaults". */
+  defaults?: AiInstructionBlock[];
+  customized?: boolean;
 }) {
   const dialogs = useDialogs();
   const [blocks, setBlocks] = useState(saved);
@@ -192,6 +197,7 @@ export function InstructionSection({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [customized, setCustomized] = useState(savedCustomized ?? true);
 
   const dirty = signature(blocks) !== signature(saved);
   const problem = validate(blocks);
@@ -262,11 +268,12 @@ export function InstructionSection({
     setError("");
     setSuccess(false);
     try {
-      const result = await crmFetch<Partial<Lists>>("/settings/ai-instructions", {
+      const result = await crmFetch<Partial<Lists> & { callingInstructionsCustomized?: boolean }>("/settings/ai-instructions", {
         method: "PUT",
         body: JSON.stringify({ pipelineId, [field]: blocks }),
       });
       const next = result[field] ?? [];
+      if (defaults) setCustomized(result.callingInstructionsCustomized ?? true);
       setBlocks(next);
       setExpanded((current) => new Set([...current].filter((id) => next.some((b) => b.id === id))));
       onSaved(next);
@@ -282,6 +289,34 @@ export function InstructionSection({
     setBlocks(saved);
     setError("");
     setSuccess(false);
+  };
+  const resetToDefaults = async () => {
+    if (!defaults) return;
+    const confirmed = await dialogs.confirm({
+      title: "Reset to the default instructions?",
+      description: "Your edits are replaced by the built-in instructions. Save is not needed.",
+      confirmLabel: "Reset",
+      variant: "error",
+    });
+    if (!confirmed) return;
+    setSaving(true);
+    setError("");
+    try {
+      const result = await crmFetch<Partial<Lists>>("/settings/ai-instructions", {
+        method: "PUT",
+        body: JSON.stringify({ pipelineId, [field]: null }),
+      });
+      const next = result[field] ?? defaults;
+      setBlocks(next);
+      setCustomized(false);
+      onSaved(next);
+      setSuccess(true);
+      window.setTimeout(() => setSuccess(false), 2500);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const total = renderAiInstructions(blocks)?.length ?? 0;
@@ -310,6 +345,11 @@ export function InstructionSection({
         }
       />
       <FramePanel className="overflow-hidden p-0 sm:p-0">
+        {defaults && !customized && !dirty && (
+          <p className="border-b border-stroke-soft-200 bg-bg-weak-50 px-3 py-2 text-paragraph-xs text-text-sub-600 sm:px-4">
+            These are the built-in instructions. Edit them and save to make them yours; Reset to defaults brings them back.
+          </p>
+        )}
         {empty ? (
           <EmptyState
             compact
@@ -358,6 +398,11 @@ export function InstructionSection({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {defaults && (
+            <Button.Root type="button" variant="neutral" mode="ghost" size="small" disabled={saving || (!customized && !dirty)} onClick={() => void resetToDefaults()}>
+              Reset to defaults
+            </Button.Root>
+          )}
           <Button.Root type="button" variant="neutral" mode="stroke" size="small" disabled={!dirty || saving} onClick={discard}>
             Discard
           </Button.Root>
@@ -384,5 +429,13 @@ export const INSTRUCTION_SECTIONS = {
     placeholder: "A referral to a colleague counts as Interested, not Other. Replies from agencies are Not interested.",
     emptyText: "No instructions yet — add one to shape every classification.",
     exportName: "reply-classification-instructions.json",
+  },
+  callingInstructions: {
+    title: "Calling",
+    helper:
+      "How the AI agent runs every WhatsApp call: the opening, the shape of the call, how it talks. Use {{agentName}} and {{firstName}}. Who it is, being honest that it is an AI, each campaign's goal and how a call ends stay fixed. Try changes with a rehearsal call on a campaign's sequence.",
+    placeholder: "Never mention competitors by name. If they say they already use an agency, ask what the agency does for their landing pages.",
+    emptyText: "No calling instructions — saving an empty list brings back the defaults.",
+    exportName: "calling-instructions.json",
   },
 } as const satisfies Record<InstructionField, { title: string; helper: string; placeholder: string; emptyText: string; exportName: string }>;

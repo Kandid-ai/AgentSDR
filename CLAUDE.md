@@ -452,7 +452,11 @@ open AI leads to `replied`. Cal.com (platform integration `calcom`; webhook
 `/api/webhooks/calcom?org=`, public) marks a lead `booked` through the
 `metadata[agentsdrContact]` the booking link carries.
 
-Instructions come in layers: the calling rules in `liveAgent.ts` (fixed),
+Instructions come in layers: the fixed rules in `liveAgent.ts` (who the
+agent is, honesty that it is an AI, the goal, outcome and hang-up, call
+notes), the organization's **calling instructions** (Settings → Instructions
+→ Calling, `crm_settings.calling_instructions`; null = the defaults in
+`src/lib/calls/callingInstructions.ts`),
 the CRM Knowledge documents the campaign picks (`ai_knowledge_ids`; null =
 the organization's "always include" ones, as for a call placed by hand), the campaign's
 instructions and each call step's (`brief.ts`), and per call the lead's

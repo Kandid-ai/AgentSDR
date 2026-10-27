@@ -1818,6 +1818,8 @@ CREATE TABLE public.crm_settings (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     draft_instructions jsonb,
     classification_instructions jsonb,
+    calling_instructions jsonb,
+    CONSTRAINT crm_settings_calling_instructions_shape_chk CHECK (((calling_instructions IS NULL) OR ((jsonb_typeof(calling_instructions) = 'array'::text) AND (length((calling_instructions)::text) <= 60000)))),
     CONSTRAINT crm_settings_confidence_chk CHECK (((auto_apply_confidence >= (0)::numeric) AND (auto_apply_confidence <= (1)::numeric))),
     CONSTRAINT crm_settings_human_send_only_chk CHECK ((human_send_only IS TRUE)),
     CONSTRAINT crm_settings_instructions_shape_chk CHECK ((((draft_instructions IS NULL) OR ((jsonb_typeof(draft_instructions) = 'array'::text) AND (length((draft_instructions)::text) <= 60000))) AND ((classification_instructions IS NULL) OR ((jsonb_typeof(classification_instructions) = 'array'::text) AND (length((classification_instructions)::text) <= 60000)))))

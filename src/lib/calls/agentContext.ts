@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { AiInstructionBlock } from "@/lib/crm/ai/instructions";
+import { loadCallingInstructions } from "@/lib/crm/aiSettings";
 import { and, desc, eq, inArray, lt, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { channelRules } from "@/lib/channels/rules.server";
@@ -22,6 +24,8 @@ export type AgentPromptContext = {
   history?: string | null;
   /** Set for a call placed by an AI campaign; replaces the generic "Booking a next step". */
   goal?: { goal: AiCampaignGoal; bookingUrl: string | null } | null;
+  /** The organization's calling instructions (Settings → Instructions → Calling); null = the defaults. */
+  callingInstructions?: AiInstructionBlock[] | null;
 };
 
 const MAX_PREVIOUS_CALLS = 6;
@@ -165,8 +169,9 @@ export async function organizationTimeZone(): Promise<string> {
 /** Runs in the call's organization (withRecorderScope). */
 export async function loadAgentContext(row: SessionRow): Promise<AgentPromptContext> {
   const timeZone = await organizationTimeZone();
-  const [goal, calls, messages] = await Promise.all([
+  const [goal, callingInstructions, calls, messages] = await Promise.all([
     loadCampaignGoal(row.campaignContactId),
+    loadCallingInstructions(),
     db
       .select({ at: callSessions.createdAt, status: callSessions.status, outcome: callSessions.agentOutcome })
       .from(callSessions)
@@ -194,10 +199,12 @@ export async function loadAgentContext(row: SessionRow): Promise<AgentPromptCont
     now: formatNow(new Date(), timeZone),
     history: formatHistory(calls, messages.reverse(), timeZone),
     goal,
+    callingInstructions,
   };
 }
 
 /** The context of a rehearsal: the date and the campaign's goal, no history (the lead is made up). */
 export async function loadRehearsalContext(goal: AgentPromptContext["goal"]): Promise<AgentPromptContext> {
-  return { now: formatNow(new Date(), await organizationTimeZone()), history: null, goal };
+  const [timeZone, callingInstructions] = await Promise.all([organizationTimeZone(), loadCallingInstructions()]);
+  return { now: formatNow(new Date(), timeZone), history: null, goal, callingInstructions };
 }

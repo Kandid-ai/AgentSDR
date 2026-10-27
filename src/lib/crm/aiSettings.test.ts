@@ -67,3 +67,15 @@ describe("parseAiInstructionsPatch", () => {
     }
   });
 });
+
+describe("parseAiInstructionsPatch callingInstructions", () => {
+  test("accepts calling instructions, and null or an empty list as back to the defaults", () => {
+    const blocks = [{ id: "a", title: "Opening", content: "Say hi." }];
+    assert.deepEqual(parseAiInstructionsPatch({ callingInstructions: blocks }).callingInstructions, blocks);
+    assert.equal(parseAiInstructionsPatch({ callingInstructions: null }).callingInstructions, null);
+    assert.equal(parseAiInstructionsPatch({ callingInstructions: [] }).callingInstructions, null);
+  });
+  test("refuses malformed blocks", () => {
+    assert.throws(() => parseAiInstructionsPatch({ callingInstructions: [{ id: "a", title: 1, content: "x" }] }), CrmConfigurationValidationError);
+  });
+});

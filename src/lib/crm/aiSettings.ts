@@ -16,17 +16,24 @@ import {
   type AiInstructionBlock,
 } from "./ai/instructions";
 import { crmSettings } from "./schema";
+import { DEFAULT_CALLING_INSTRUCTIONS } from "@/lib/calls/callingInstructions";
 
 export type CrmAiInstructions = {
   pipelineId: string;
   draftInstructions: AiInstructionBlock[];
   classificationInstructions: AiInstructionBlock[];
+  /** What the AI voice agent follows: the organization's own, or the defaults while it has none. */
+  callingInstructions: AiInstructionBlock[];
+  /** False while the calling instructions are the defaults. */
+  callingInstructionsCustomized: boolean;
 };
 
 export type CrmAiInstructionsPatch = {
   pipelineId?: string;
   draftInstructions?: AiInstructionBlock[] | null;
   classificationInstructions?: AiInstructionBlock[] | null;
+  /** null (or an empty list): back to the defaults. */
+  callingInstructions?: AiInstructionBlock[] | null;
 };
 
 const BLOCK_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -78,7 +85,7 @@ function parseInstructionBlocks(value: unknown, label: string): AiInstructionBlo
 /** Validates a PUT body; only the fields present are returned. Pure. */
 export function parseAiInstructionsPatch(body: unknown): CrmAiInstructionsPatch {
   assertObject(body);
-  assertExactKeys(body, ["pipelineId", "draftInstructions", "classificationInstructions"]);
+  assertExactKeys(body, ["pipelineId", "draftInstructions", "classificationInstructions", "callingInstructions"]);
   const patch: CrmAiInstructionsPatch = {};
   if (body.pipelineId !== undefined) patch.pipelineId = parseUuid(body.pipelineId, "pipelineId");
   if (body.draftInstructions !== undefined) {
@@ -86,6 +93,9 @@ export function parseAiInstructionsPatch(body: unknown): CrmAiInstructionsPatch 
   }
   if (body.classificationInstructions !== undefined) {
     patch.classificationInstructions = parseInstructionBlocks(body.classificationInstructions, "Classification instructions");
+  }
+  if (body.callingInstructions !== undefined) {
+    patch.callingInstructions = parseInstructionBlocks(body.callingInstructions, "Calling instructions");
   }
   return patch;
 }
@@ -96,14 +106,18 @@ export async function getCrmAiInstructions(pipelineId?: string): Promise<CrmAiIn
     .select({
       draftInstructions: crmSettings.draftInstructions,
       classificationInstructions: crmSettings.classificationInstructions,
+      callingInstructions: crmSettings.callingInstructions,
     })
     .from(crmSettings)
     .where(eq(crmSettings.pipelineId, resolved))
     .limit(1);
+  const calling = row?.callingInstructions?.length ? row.callingInstructions : null;
   return {
     pipelineId: resolved,
     draftInstructions: row?.draftInstructions ?? [],
     classificationInstructions: row?.classificationInstructions ?? [],
+    callingInstructions: calling ?? DEFAULT_CALLING_INSTRUCTIONS,
+    callingInstructionsCustomized: calling !== null,
   };
 }
 
@@ -113,7 +127,9 @@ export async function updateCrmAiInstructions(input: unknown): Promise<CrmAiInst
   const changes: {
     draftInstructions?: AiInstructionBlock[] | null;
     classificationInstructions?: AiInstructionBlock[] | null;
+    callingInstructions?: AiInstructionBlock[] | null;
   } = {};
+  if (patch.callingInstructions !== undefined) changes.callingInstructions = patch.callingInstructions;
   if (patch.draftInstructions !== undefined) changes.draftInstructions = patch.draftInstructions;
   if (patch.classificationInstructions !== undefined) {
     changes.classificationInstructions = patch.classificationInstructions;
@@ -128,4 +144,24 @@ export async function updateCrmAiInstructions(input: unknown): Promise<CrmAiInst
       });
   }
   return getCrmAiInstructions(resolved);
+}
+
+/**
+ * The calling instructions an AI agent call follows, from the organization's
+ * default pipeline; null = the defaults. A failure reads as null: a call must
+ * not fail over its instructions.
+ */
+export async function loadCallingInstructions(): Promise<AiInstructionBlock[] | null> {
+  try {
+    const resolved = await resolvePipelineId();
+    const [row] = await db
+      .select({ callingInstructions: crmSettings.callingInstructions })
+      .from(crmSettings)
+      .where(eq(crmSettings.pipelineId, resolved))
+      .limit(1);
+    return row?.callingInstructions?.length ? row.callingInstructions : null;
+  } catch (error) {
+    console.error("[calls] loading the calling instructions failed; using the defaults", error);
+    return null;
+  }
 }

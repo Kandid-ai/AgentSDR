@@ -145,6 +145,11 @@ export const crmSettings = pgTable(
     draftInstructions: jsonb("draft_instructions").$type<AiInstructionBlock[]>(),
     /** Operator guidance appended to every classification prompt, as titled blocks. */
     classificationInstructions: jsonb("classification_instructions").$type<AiInstructionBlock[]>(),
+    /**
+     * How the AI voice agent runs a call, as titled blocks; null = the defaults
+     * in src/lib/calls/callingInstructions.ts. scripts/add-crm-calling-instructions.ts.
+     */
+    callingInstructions: jsonb("calling_instructions").$type<AiInstructionBlock[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -159,6 +164,10 @@ export const crmSettings = pgTable(
       sql`${table.autoApplyConfidence} >= 0 AND ${table.autoApplyConfidence} <= 1`,
     ),
     check("crm_settings_human_send_only_chk", sql`${table.humanSendOnly} IS TRUE`),
+    check(
+      "crm_settings_calling_instructions_shape_chk",
+      sql`${table.callingInstructions} IS NULL OR (jsonb_typeof(${table.callingInstructions}) = 'array' AND length(${table.callingInstructions}::text) <= 60000)`,
+    ),
     check(
       "crm_settings_instructions_shape_chk",
       sql`(${table.draftInstructions} IS NULL OR (jsonb_typeof(${table.draftInstructions}) = 'array' AND length(${table.draftInstructions}::text) <= 60000)) AND (${table.classificationInstructions} IS NULL OR (jsonb_typeof(${table.classificationInstructions}) = 'array' AND length(${table.classificationInstructions}::text) <= 60000))`,

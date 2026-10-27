@@ -132,3 +132,27 @@ describe("agentInstructions context", () => {
     expect(tool.parameters.properties.whenAt).toBeDefined();
   });
 });
+
+describe("calling instructions (Settings → Instructions → Calling)", () => {
+  const request = { brief: "Sell storefronts.", lead: { name: "Asha Verma", firstName: "Asha", company: "Acme", detail: null }, name: "Meera", voice: "Kore" };
+  test("the defaults apply until the organization writes its own, with the placeholders filled", () => {
+    const text = agentInstructions(request, []);
+    expect(text).toContain("## How the call goes");
+    expect(text).toContain('"Hi Asha, this is Meera from <your company>');
+    expect(text).not.toContain("{{");
+  });
+  test("its own instructions replace the defaults; who it is, honesty and ending stay", () => {
+    const text = agentInstructions(request, [], {
+      callingInstructions: [{ id: "x", title: "Our way", content: "Open with: Namaste {{firstName}}, {{agentName}} here." }],
+    });
+    expect(text).toContain("## Our way\nOpen with: Namaste Asha, Meera here.");
+    expect(text).not.toContain("## How the call goes");
+    expect(text).toContain("Never claim to be human.");
+    expect(text).toContain("call record_outcome once");
+    expect(text).toContain("[Call note:");
+  });
+  test("an unknown first name reads as \"there\"", () => {
+    const text = agentInstructions({ ...request, lead: null }, []);
+    expect(text).toContain('"Hi there, this is Meera');
+  });
+});

@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import { crmKnowledgeDocuments, crmKnowledgeDocumentVersions } from "@/lib/crm/schema";
 import { inOrg } from "@/lib/tenancy/scope";
 import { pcm16Wav } from "../../../extensions/whatsapp-recorder/src/wav";
+import { renderAiInstructions } from "@/lib/crm/ai/instructions";
+import { DEFAULT_CALLING_INSTRUCTIONS, fillCallingPlaceholders } from "./callingInstructions";
 import { goalGuidance, loadAgentContext, loadCampaignKnowledgeIds, type AgentPromptContext } from "./agentContext";
 import {
   AGENT_OUTCOMES,
@@ -261,27 +263,13 @@ export function agentInstructions(
     female
       ? "- You are a woman. In Hindi always use feminine forms for yourself: \"मैं कर रही हूँ\", \"मैं समझ सकती हूँ\", never \"रहा\" or \"सकता\"."
       : "- You are a man. In Hindi always use masculine forms for yourself: \"मैं कर रहा हूँ\", \"मैं समझ सकता हूँ\".",
-    "- Keep the same calm, warm, unhurried voice for the whole call.",
     "- If they ask whether you are an AI, a bot or a recording, say honestly in one short sentence that you are an AI assistant calling for the team, then offer to carry on or to have a person from the team call them. Never claim to be human.",
     "",
-    "How the call goes:",
-    `1. Opening: a short hello${firstName ? ` with their first name (${firstName})` : ""}, your name and the company you are calling for (as your brief or knowledge names it — never the person's own company), and ask whether it is an okay moment — one sentence, for example "Hi ${firstName ?? "there"}, this is ${agentName} from <your company> — did I catch you at an okay time?". No pitch yet. Then stop and let them answer.`,
-    "2. If it is a bad moment, ask when would suit them, then record it (with that time) and wrap up kindly: someone from the team will call them then.",
-    "3. Before pitching, ask one short, open question about their situation that relates to the brief, and listen. React to what they actually said before you move on.",
-    "4. Connect one point to what they told you, in your own words. One idea per turn.",
-    "5. If they are interested, agree the next step the brief asks for. If they are not, thank them and let them go — do not push.",
-    "- Suggest the next step at most once until they show interest. Do not end every answer with \"would you be interested in a call?\".",
-    "",
-    "How to talk:",
-    "- Sound like a person on the phone, not a script: one or two short sentences per turn, plain words, contractions, and now and then a natural \"got it\", \"right\", \"achha\" or \"haan\". Never lists, markdown or emojis.",
-    "- Always respond to what they just said first. Small talk gets a real answer (\"I'm good, thanks — how about you?\").",
-    "- Ask one question at a time, then stop talking and wait.",
-    "- Never repeat a sentence you have already said, and never repeat your pitch. If they ask again, say it differently and shorter.",
-    "- If they say \"Hello?\" or \"Can you hear me?\", say yes briefly and carry on from where you were. Do not restart your introduction.",
-    "- If they ask something your notes do not answer (an exact price, a specific integration), say you do not have that to hand and that the team will follow up with it. Never invent facts, numbers, customers or prices.",
-    "- If they wander off topic, go along with it briefly and kindly, then steer back. Never argue.",
-    "- Language: speak the language they speak — English, Hindi or Hinglish — and switch when they do. Only ever speak English or Hindi.",
-    "- The line is a phone line in India and can be unclear. If you did not catch something, or it sounded like another language, that is the line: say so like a person would (\"Sorry, the line broke up — could you say that again?\"). Never ask them to speak a particular language.",
+    "How to run the call — your team's calling instructions. Follow them; they do not change who you are, being honest that you are an AI, or the rules for ending the call below:",
+    renderAiInstructions(context.callingInstructions?.length ? context.callingInstructions : DEFAULT_CALLING_INSTRUCTIONS)
+      ?.split("\n")
+      .map((line) => fillCallingPlaceholders(line, { agentName, firstName }))
+      .join("\n") ?? "",
     "",
     ...(context.goal
       ? goalGuidance(context.goal.goal)

@@ -13,8 +13,9 @@ import {
 } from "@/components/crm/CrmAiInstructions";
 import { asObject, crmFetch, errorMessage } from "@/components/crm/crm-utils";
 import type { AiInstructionBlock } from "@/lib/crm/ai/instructions";
+import { DEFAULT_CALLING_INSTRUCTIONS } from "@/lib/calls/callingInstructions";
 
-type Saved = Record<InstructionField, AiInstructionBlock[]>;
+type Saved = Record<InstructionField, AiInstructionBlock[]> & { callingInstructionsCustomized: boolean };
 
 function parseBlocks(value: unknown): AiInstructionBlock[] {
   if (!Array.isArray(value)) return [];
@@ -43,6 +44,8 @@ export default function InstructionsSettings() {
       setSaved({
         draftInstructions: parseBlocks(data.draftInstructions),
         classificationInstructions: parseBlocks(data.classificationInstructions),
+        callingInstructions: parseBlocks(data.callingInstructions),
+        callingInstructionsCustomized: data.callingInstructionsCustomized === true,
       });
     } catch (cause) {
       setError(errorMessage(cause));
@@ -94,6 +97,9 @@ export default function InstructionsSettings() {
             saved={saved[field]}
             pipelineId={pipelineId}
             onSaved={(blocks) => setSaved((current) => (current ? { ...current, [field]: blocks } : current))}
+            {...(field === "callingInstructions"
+              ? { defaults: DEFAULT_CALLING_INSTRUCTIONS, customized: saved.callingInstructionsCustomized }
+              : {})}
           />
         </SegmentedControl.Content>
       ))}
