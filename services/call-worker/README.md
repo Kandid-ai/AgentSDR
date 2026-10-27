@@ -131,3 +131,11 @@ Because the tunnel covers the whole container, a tunnelled worker serves exactly
 deploy `docker-compose.tunnel.yml` (Dokploy → Compose) once per number with `STATIONS` set to its
 id. Assign the number's SOCKS5 IP in AgentSDR (Calling numbers → IPs) and set its GoLogin profile's
 WebRTC to "Real". The worker also starts Orbita with `--disable-quic` so pages stay on TCP.
+
+**Result so far (27 Oct 2026, Proxy-Cheap ISP proxy):** the tunnel works — a STUN check through it
+sees the proxy's IP, and with the profile's WebRTC mode "real" Chromium gathers srflx/udp candidates
+— but WhatsApp's call servers never complete UDP through that proxy (ICE pairs stay in progress;
+generic STUN servers on 19302 and 3478 do answer through it), and WhatsApp waits ~4 s on UDP before
+ringing, then uses TCP anyway. So it is off for now (`TUNNEL=false`, WebRTC "alerted"); worth
+retrying with another UDP-capable proxy. Running the worker in Mumbai is what cut "Connecting…" from
+3.3 s to 1.5 s (a shorter round trip to the proxy).

@@ -36,7 +36,8 @@ services:
       WORKER_ID: ${WORKER_ID:-tunnel-worker}
       LAUNCHERS: gologin_sdk
       KEEP_OPEN: "1"
-      TUNNEL: "true"
+      # Set TUNNEL=false in the service's environment to run this pinned worker without the tunnel.
+      TUNNEL: ${TUNNEL:-true}
     volumes:
       - worker-data:/data
       - gologin:/root/.gologin
