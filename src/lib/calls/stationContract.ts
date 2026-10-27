@@ -173,6 +173,8 @@ export type WorkerClaimRequest = {
   workerId: string;
   /** The launchers this worker can open; it is only given stations that use one of them. */
   launchers: StationLauncher[];
+  /** Only these stations (a worker pinned to its numbers — e.g. one per container for TUNNEL); all when absent. */
+  stations?: string[];
 };
 
 /**
@@ -185,6 +187,7 @@ export type WorkerClaimRequest = {
 export type WorkerLeaseRequest = {
   workerId: string;
   launchers: StationLauncher[];
+  stations?: string[];
   /** The most stations this worker keeps open at once. */
   capacity: number;
   held: string[];

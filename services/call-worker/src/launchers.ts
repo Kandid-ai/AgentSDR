@@ -396,6 +396,9 @@ async function openGologinSdk(station: WorkerStation): Promise<StationBrowser> {
   // failed "ECONNREFUSED 127.0.0.1:<port>" (23 Oct 2026). /dev/shm in a
   // container is 64 MB unless raised.
   if (process.platform === "linux" && process.getuid?.() === 0) extra.push("--no-sandbox", "--disable-dev-shm-usage");
+  // With the call-audio tunnel (tunnel.ts) all UDP goes through the number's proxy: keep web pages on
+  // TCP (no QUIC), and let WebRTC use UDP — the profile's WebRTC setting must allow it too ("Real").
+  if (cfg.tunnel) extra.push("--disable-quic", "--force-webrtc-ip-handling-policy=default");
   const gl = new WhatsAppGoLogin({
     token: station.gologinToken,
     profile_id: station.gologinProfileId,

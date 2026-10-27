@@ -32,6 +32,8 @@ closes it first.
 | `PROFILES_DIR` | `~/.agentsdr-call-worker/profiles` | `local` profiles, one folder per station id |
 | `HEADLESS` | `false` | `true` for new headless Chromium |
 | `CLAIM_INTERVAL_MS` | `1000` | poll gap when idle |
+| `STATIONS` | – | comma list of station ids this worker serves (all when empty) |
+| `TUNNEL` | `false` | send WebRTC's UDP (call audio) through the number's SOCKS5 proxy; needs `STATIONS` = one id, `NET_ADMIN` + `/dev/net/tun` (`docker-compose.tunnel.yml`) |
 | `KEEP_OPEN` | `0` (`3` in Docker) | numbers whose WhatsApp Web stays open between calls (~0.7–1 GB RAM each); 0 opens a browser per call |
 | `CALL_TIMEOUT_MS` | 30 min | then the worker hangs up |
 | `CHROMIUM_PATH` | – | Chromium executable override |
@@ -114,3 +116,16 @@ every call. Opens in under a second; WhatsApp Web loads headless.
   choppy or humming and never hears the lead (23 Oct 2026; no flag fixes it, `--fingerprint=off`
   included). The Linux build is a different one (146). Every line must say `OK`; if `cloak` says
   `BAD`, use `local` on that machine.
+
+## Call-audio tunnel (`TUNNEL=true`, 27 Oct 2026)
+
+A browser sends only TCP through a proxy, so GoLogin pushed the call's UDP audio into TCP through
+the proxy: "Connecting…" took ~3.3 s and the audio lagged. `src/tunnel.ts` runs sing-box with a
+container-wide TUN interface that sends every UDP packet through the number's **SOCKS5 proxy with
+UDP** (DNS and private addresses stay local) and leaves TCP alone — the browser's web traffic keeps
+using the profile's proxy. The call audio then goes over UDP and still leaves from the proxy's IP.
+
+Because the tunnel covers the whole container, a tunnelled worker serves exactly one number:
+deploy `docker-compose.tunnel.yml` (Dokploy → Compose) once per number with `STATIONS` set to its
+id. Assign the number's SOCKS5 IP in AgentSDR (Calling numbers → IPs) and set its GoLogin profile's
+WebRTC to "Real". The worker also starts Orbita with `--disable-quic` so pages stay on TCP.

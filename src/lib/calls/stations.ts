@@ -419,7 +419,19 @@ export function parseWorkerClaimRequest(value: unknown): WorkerClaimRequest {
   const workerId = typeof body.workerId === "string" && body.workerId.trim() ? body.workerId.trim().slice(0, 100) : null;
   if (!workerId) throw new CallApiError(400, "workerId is required");
   if (!Array.isArray(body.launchers) || body.launchers.length === 0) throw new CallApiError(400, "launchers is required");
-  return { workerId, launchers: body.launchers.map(parseLauncher) };
+  let stations: string[] | undefined;
+  if (body.stations !== undefined) {
+    if (!Array.isArray(body.stations) || body.stations.length > 100 || !body.stations.every((id) => typeof id === "string" && UUID_PATTERN.test(id))) {
+      throw new CallApiError(400, "stations must be a list of station ids");
+    }
+    stations = body.stations as string[];
+  }
+  return { workerId, launchers: body.launchers.map(parseLauncher), ...(stations?.length ? { stations } : {}) };
+}
+
+/** The worker is pinned to these stations, or takes any. */
+function pinnedTo(stations: string[] | undefined) {
+  return stations?.length ? inArray(callingStations.id, stations) : sql`true`;
 }
 
 async function workerStation(row: StationRow): Promise<WorkerStation> {
@@ -469,7 +481,7 @@ const stationIsFree = sql`NOT EXISTS (
      AND busy.claimed_at IS NOT NULL
      AND busy.status IN ('pending', 'in_progress'))`;
 
-async function claimCall({ workerId, launchers }: WorkerClaimRequest): Promise<WorkerJob | null> {
+async function claimCall({ workerId, launchers, stations }: WorkerClaimRequest): Promise<WorkerJob | null> {
   const claimed = await db.transaction(async (tx) => {
     const [locked] = await tx
       .select({ call: callSessions, station: callingStations })
@@ -489,6 +501,7 @@ async function claimCall({ workerId, launchers }: WorkerClaimRequest): Promise<W
           or(isNull(callingStations.linkedPhone), eq(callingStations.linkedPhone, callingStations.phone)),
           stationIsFree,
           leasableBy(workerId),
+          pinnedTo(stations),
         ),
       )
       .orderBy(asc(callSessions.createdAt))
@@ -535,7 +548,7 @@ async function claimCall({ workerId, launchers }: WorkerClaimRequest): Promise<W
   };
 }
 
-async function claimLink({ workerId, launchers }: WorkerClaimRequest): Promise<WorkerJob | null> {
+async function claimLink({ workerId, launchers, stations }: WorkerClaimRequest): Promise<WorkerJob | null> {
   const station = await db.transaction(async (tx) => {
     const [locked] = await tx
       .select()
@@ -548,6 +561,7 @@ async function claimLink({ workerId, launchers }: WorkerClaimRequest): Promise<W
           or(isNull(callingStations.linkUpdatedAt), lt(callingStations.linkUpdatedAt, new Date(Date.now() - LINK_STALE_MS))),
           stationIsFree,
           leasableBy(workerId),
+          pinnedTo(stations),
         ),
       )
       .orderBy(asc(callingStations.linkRequestedAt))
@@ -566,13 +580,13 @@ async function claimLink({ workerId, launchers }: WorkerClaimRequest): Promise<W
 // --- keeping numbers' WhatsApp Web open (leases) ------------------------------------
 
 export function parseLeaseRequest(value: unknown): WorkerLeaseRequest {
-  const { workerId, launchers } = parseWorkerClaimRequest(value);
+  const { workerId, launchers, stations } = parseWorkerClaimRequest(value);
   const body = value as Record<string, unknown>;
   const capacity = typeof body.capacity === "number" && Number.isInteger(body.capacity) ? Math.max(0, Math.min(50, body.capacity)) : 0;
   if (!Array.isArray(body.held) || body.held.length > 100 || !body.held.every((id) => typeof id === "string" && UUID_PATTERN.test(id))) {
     throw new CallApiError(400, "held must be a list of station ids");
   }
-  return { workerId, launchers, capacity, held: body.held as string[] };
+  return { workerId, launchers, capacity, held: body.held as string[], ...(stations ? { stations } : {}) };
 }
 
 /**
@@ -584,7 +598,7 @@ export function parseLeaseRequest(value: unknown): WorkerLeaseRequest {
  * API: one worker serves every organization.
  */
 export async function leaseStations(input: WorkerLeaseRequest): Promise<WorkerLeaseResponse> {
-  const { workerId, launchers, capacity, held } = input;
+  const { workerId, launchers, capacity, held, stations } = input;
   const until = new Date(Date.now() + LEASE_TTL_MS);
   const keepOpen = and(
     eq(callingStations.status, "active"),
@@ -621,6 +635,7 @@ export async function leaseStations(input: WorkerLeaseRequest): Promise<WorkerLe
               and(
                 keepOpen,
                 stationIsFree,
+                pinnedTo(stations),
                 sql`(${callingStations.leaseHolder} IS NULL OR ${callingStations.leaseUntil} < now())`,
                 held.length ? sql`${callingStations.id} NOT IN (${sql.join(held.map((id) => sql`${id}`), sql`, `)})` : sql`true`,
               ),

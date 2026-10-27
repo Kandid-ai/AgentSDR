@@ -47,6 +47,10 @@ export type Config = {
   strictProxyUdp: boolean;
   /** How many numbers' WhatsApp Web this worker keeps open between calls (0: open a browser per call). */
   keepOpen: number;
+  /** Only these stations (ids); every station when empty. */
+  stations: string[];
+  /** Send WebRTC's UDP (call audio) through the number's SOCKS5 proxy with a container-wide tunnel (tunnel.ts). One number per worker. */
+  tunnel: boolean;
 };
 
 export function loadConfig(): Config {
@@ -66,6 +70,8 @@ export function loadConfig(): Config {
     cloakLocale: process.env.CLOAK_LOCALE?.trim() || "en-US",
     strictProxyUdp: process.env.STRICT_PROXY_UDP?.trim().toLowerCase() === "true",
     keepOpen: process.env.KEEP_OPEN?.trim() === "0" ? 0 : int("KEEP_OPEN", 0),
+    stations: (process.env.STATIONS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    tunnel: process.env.TUNNEL?.trim().toLowerCase() === "true",
   };
 }
 

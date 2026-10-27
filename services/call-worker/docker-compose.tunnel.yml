@@ -1,0 +1,41 @@
+# A call worker for ONE number, with its call audio tunnelled through the
+# number's SOCKS5 proxy (UDP included) — see src/tunnel.ts.
+#
+# Dokploy: Create Service → Compose → this repo, Compose Path
+# services/call-worker/docker-compose.tunnel.yml. Environment:
+#   AGENTSDR_URL=https://app.agentsdr.ai
+#   CALL_WORKER_SECRET=<the app's>
+#   STATIONS=<the number's station id>
+#   WORKER_ID=<a name, e.g. tunnel-pulkit-phone>
+# The number needs its SOCKS5 IP assigned in AgentSDR (Calling numbers → IPs),
+# and its GoLogin profile's WebRTC set to "Real" so the browser uses UDP.
+# One copy of this service per number; never run two for the same number.
+services:
+  call-worker:
+    build:
+      context: ../..
+      dockerfile: services/call-worker/Dockerfile
+    restart: unless-stopped
+    # The tunnel makes a TUN interface for the container.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    shm_size: 1gb
+    # Closing the open number saves its profile (~10 s).
+    stop_grace_period: 60s
+    environment:
+      AGENTSDR_URL: ${AGENTSDR_URL:?set AGENTSDR_URL}
+      CALL_WORKER_SECRET: ${CALL_WORKER_SECRET:?set CALL_WORKER_SECRET}
+      STATIONS: ${STATIONS:?set STATIONS to the number's station id}
+      WORKER_ID: ${WORKER_ID:-tunnel-worker}
+      LAUNCHERS: gologin_sdk
+      KEEP_OPEN: "1"
+      TUNNEL: "true"
+    volumes:
+      - worker-data:/data
+      - gologin:/root/.gologin
+
+volumes:
+  worker-data:
+  gologin:
