@@ -15,6 +15,7 @@
  * only names the model.
  */
 
+import type { AgentOutcomeKind } from "../../../src/lib/calls/contract";
 import type { AgentTokenResult } from "./messages";
 
 type Handlers = {
@@ -22,8 +23,10 @@ type Handlers = {
   play(pcm: ArrayBuffer, rate: number): void;
   /** The lead talked over the model: drop its voice still queued. */
   interrupt(): void;
-  /** The model called end_call. */
+  /** The model called end_call, or the line stayed silent after its goodbye. */
   hangup(reason: string): void;
+  /** The model called record_outcome. */
+  outcome(report: { outcome: AgentOutcomeKind; summary: string | null; when: string | null }): void;
   /** A step worth seeing in the call's timing table. */
   trace(step: string): void;
   /** The token request, through the service worker (it holds the call's bearer token). */
@@ -31,13 +34,48 @@ type Handlers = {
 };
 
 const OUTPUT_RATE_PATTERN = /rate=(\d+)/;
-const GREETING_PROMPT = "The call has just connected and the person is on the line. Greet them now.";
+/** "[Call note: …]" is what the instructions tell the model comes from the system, not the person. */
+const GREETING_PROMPT = "[Call note: the call has just connected and the person is on the line. Open the call now.]";
+const SILENCE_CHECK_NOTE =
+  "[Call note: the person has not said anything for a few seconds. Check briefly and naturally whether they are still there, in the language of the call.]";
+/**
+ * After a tool call this model says nothing until the person speaks again
+ * (27 Oct 2026, every simulated call): a goodbye or a "Thursday at 4 then"
+ * never came. A turn that ends in a tool call with no voice gets one of these.
+ */
+const CARRY_ON_NOTE = "[Call note: noted. Carry on talking: confirm out loud what you agreed, or say goodbye if the call is over.]";
+const SAY_GOODBYE_NOTE = "[Call note: say your goodbye out loud now.]";
+const SILENCE_GOODBYE_NOTE =
+  "[Call note: still no answer. Call record_outcome, say a short, friendly goodbye (you will try them another time), then call end_call.]";
 /**
  * People pick up and say "Hello?" first; a greeting started at the pick-up
- * gets talked over (seen 11 Oct 2026: three restarts). So the agent waits
- * this long for them, and if they speak, answers them instead.
+ * gets talked over (seen 11 Oct 2026: three restarts; on 27 Oct the greeting
+ * prepared during "Connecting…" still played over their hello). So the agent
+ * waits this long for them: with no greeting ready it answers what they say;
+ * with one ready, it plays it once they pause.
  */
 const GREETING_WAIT_MS = 1_200;
+/** Their hello is over after this much quiet. */
+const HELLO_PAUSE_MS = 400;
+/** A noisy line never goes quiet: the prepared greeting plays by this point regardless. */
+const HELLO_MAX_WAIT_MS = 2_000;
+/**
+ * Gemini Live only speaks after the person does: on a silent line the call
+ * just sat there. Measured from the end of the agent's own voice or the lead's
+ * last sound: a check-in after this long, then a goodbye, then a hang-up if
+ * the model has not ended the call itself.
+ */
+const SILENCE_CHECK_MS = 7_000;
+const SILENCE_GOODBYE_MS = 8_000;
+const SILENCE_HANGUP_MS = 12_000;
+/**
+ * The model often calls end_call first and speaks its goodbye after the tool
+ * response (seen 27 Oct 2026), so the hang-up waits for that turn to finish
+ * (wa-hook then lets the queued voice play out). Without any voice by
+ * HANGUP_NO_VOICE_MS it hangs up; never later than HANGUP_MAX_WAIT_MS.
+ */
+const HANGUP_NO_VOICE_MS = 5_000;
+const HANGUP_MAX_WAIT_MS = 12_000;
 /** The heard-audio test option keeps at most 20 minutes (38 MB) of the lead's side. */
 const MAX_HEARD_SAMPLES = 16_000 * 60 * 20;
 /** A lead-side chunk this loud (-40 dBFS) counts as them making sound, for the reply-latency log. */
@@ -66,6 +104,18 @@ export class LiveAgent {
   private pickedUp = false;
   private holding = false;
   private held: [ArrayBuffer, number][] = [];
+  /** When the agent's voice already sent for playing ends (playing runs in real time; generating is faster). */
+  private playUntil = 0;
+  private pickedUpAt = 0;
+  private helloWatch: ReturnType<typeof setInterval> | null = null;
+  private silenceWatch: ReturnType<typeof setInterval> | null = null;
+  private silenceNotes = 0;
+  private lastNoteAt = 0;
+  private ending = false;
+  /** end_call was called: hang up once the goodbye after it is spoken. */
+  /** Tools the model called since its voice last came through. */
+  private toolsSinceVoice: string[] = [];
+  private hangupPending: { reason: string; voiced: boolean; timers: ReturnType<typeof setTimeout>[] } | null = null;
   /** The test option's copy of exactly what is sent to the model (null when off). */
   private heard: Int16Array[] | null = null;
   private heardSamples = 0;
@@ -100,13 +150,11 @@ export class LiveAgent {
     };
   }
 
-  /** The lead picked up: the model speaks first. */
   /**
    * WhatsApp shows "Connecting…": the lead has accepted, and the audio link
    * takes a few seconds more (2.5 s on the call worker, 23 Oct 2026). The
-   * greeting is generated now and held, so it plays the moment they are
-   * connected instead of after a 1.2 s wait for their hello plus the model's
-   * ~1 s to start speaking.
+   * greeting is generated now and held, so it plays as soon as they have said
+   * hello instead of after the model's ~1 s to start speaking.
    */
   prepareGreeting(): void {
     if (this.greetPrepared || this.leadSpoke) return;
@@ -121,14 +169,23 @@ export class LiveAgent {
     this.sendGreeting();
   }
 
+  /** The lead picked up (the call timer appeared): the model speaks first, after their hello. */
   greet(): void {
     this.pickedUp = true;
+    this.pickedUpAt = Date.now();
     this.prepareWhenReady = false;
+    this.startSilenceWatch();
     if (this.greetPrepared) {
-      this.holding = false;
-      const held = this.held.splice(0);
-      this.handlers.trace(`AI agent: picked up — greeting at once (${held.length ? "prepared during Connecting…" : "still being prepared"})`);
-      for (const [pcm, rate] of held) this.handlers.play(pcm, rate);
+      // The lead's audio is not sent to the model while the greeting is held:
+      // their "Hello?" would make it greet a second time ("Hi Asha. Hi Asha.").
+      this.handlers.trace("AI agent: picked up — greeting ready, waiting for their hello");
+      this.helloWatch = setInterval(() => {
+        const now = Date.now();
+        const spoke = this.lastVoiceAt > this.pickedUpAt;
+        if (spoke && now - this.lastVoiceAt >= HELLO_PAUSE_MS) this.releaseGreeting("after their hello");
+        else if (!spoke && now - this.pickedUpAt >= GREETING_WAIT_MS) this.releaseGreeting("they said nothing");
+        else if (now - this.pickedUpAt >= HELLO_MAX_WAIT_MS) this.releaseGreeting("the line never went quiet");
+      }, 50);
       return;
     }
     this.handlers.trace("AI agent: lead picked up — waiting for their hello");
@@ -148,8 +205,9 @@ export class LiveAgent {
       this.warnedNotReady = true;
       return;
     }
-    this.socket.send(JSON.stringify({ realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: toBase64(pcm) } } }));
-    if (this.heard && this.heardSamples < MAX_HEARD_SAMPLES) {
+    // Held greeting: listen for their hello here, but do not hand it to the model.
+    if (!this.holding) this.socket.send(JSON.stringify({ realtimeInput: { audio: { mimeType: "audio/pcm;rate=16000", data: toBase64(pcm) } } }));
+    if (this.heard && !this.holding && this.heardSamples < MAX_HEARD_SAMPLES) {
       const copy = new Int16Array(pcm.slice(0));
       this.heard.push(copy);
       this.heardSamples += copy.length;
@@ -190,6 +248,9 @@ export class LiveAgent {
     if (this.closed) return;
     this.closed = true;
     if (this.greetTimer) clearTimeout(this.greetTimer);
+    if (this.helloWatch) clearInterval(this.helloWatch);
+    if (this.silenceWatch) clearInterval(this.silenceWatch);
+    for (const timer of this.hangupPending?.timers ?? []) clearTimeout(timer);
     this.ready = false;
     try {
       this.socket?.close(1000);
@@ -202,6 +263,47 @@ export class LiveAgent {
   private sendGreeting(): void {
     this.greetPending = false;
     this.socket?.send(JSON.stringify({ realtimeInput: { text: GREETING_PROMPT } }));
+  }
+
+  private releaseGreeting(why: string): void {
+    if (this.helloWatch) clearInterval(this.helloWatch);
+    this.helloWatch = null;
+    if (!this.holding) return;
+    this.holding = false;
+    const held = this.held.splice(0);
+    const waited = Date.now() - this.pickedUpAt;
+    this.handlers.trace(`AI agent: greeting ${waited} ms after the pick-up, ${why} (${held.length ? "prepared during Connecting…" : "still being prepared"})`);
+    for (const [pcm, rate] of held) this.play(pcm, rate);
+  }
+
+  private play(pcm: ArrayBuffer, rate: number): void {
+    const now = Date.now();
+    this.playUntil = Math.max(now, this.playUntil) + (pcm.byteLength / 2 / rate) * 1000;
+    this.handlers.play(pcm, rate);
+  }
+
+  /** Nudges the model when the line goes quiet (see SILENCE_CHECK_MS). */
+  private startSilenceWatch(): void {
+    if (this.silenceWatch) return;
+    this.silenceWatch = setInterval(() => {
+      if (this.closed || this.holding || this.replying || this.ending || !this.ready) return;
+      const now = Date.now();
+      const quiet = now - Math.max(this.playUntil, this.lastVoiceAt, this.lastNoteAt, this.pickedUpAt);
+      if (this.silenceNotes === 0 && quiet >= SILENCE_CHECK_MS) this.note(SILENCE_CHECK_NOTE, `silent ${Math.round(quiet / 1000)} s — checking they are there`);
+      else if (this.silenceNotes === 1 && quiet >= SILENCE_GOODBYE_MS) this.note(SILENCE_GOODBYE_NOTE, `still silent ${Math.round(quiet / 1000)} s — saying goodbye`);
+      else if (this.silenceNotes >= 2 && quiet >= SILENCE_HANGUP_MS) {
+        this.ending = true;
+        this.handlers.trace("AI agent: no answer after its goodbye — hanging up");
+        this.handlers.hangup("no response");
+      }
+    }, 250);
+  }
+
+  private note(text: string, why: string): void {
+    this.silenceNotes += 1;
+    this.lastNoteAt = Date.now();
+    this.handlers.trace(`AI agent: ${why}`);
+    this.socket?.send(JSON.stringify({ realtimeInput: { text } }));
   }
 
   private receive(data: unknown): void {
@@ -225,6 +327,7 @@ export class LiveAgent {
     if (content) {
       if (content.interrupted) {
         this.replying = false;
+        this.playUntil = Date.now();
         this.handlers.interrupt();
         this.flushTranscript("interrupted");
       }
@@ -232,6 +335,8 @@ export class LiveAgent {
         // They spoke first: the model answers that turn itself, greeting included.
         if (!this.leadSpoke && this.greetTimer) this.handlers.trace("AI agent: lead said hello first — answering them");
         this.leadSpoke = true;
+        // They said something: the silence check-ins start over.
+        if (!this.holding) this.silenceNotes = 0;
         this.heardThisTurn += content.inputTranscription.text;
         // Logged as it arrives: a turn the model never answers is never flushed.
         this.handlers.trace(`AI agent: heard "${content.inputTranscription.text.trim()}"`);
@@ -252,26 +357,62 @@ export class LiveAgent {
           this.handlers.trace(`AI agent: replied ${Date.now() - this.lastVoiceAt} ms after the lead's last sound`);
         }
         this.replying = true;
+        this.toolsSinceVoice = [];
+        if (this.hangupPending) this.hangupPending.voiced = true;
         if (this.holding) this.held.push([fromBase64(audio.data), rate]);
-        else this.handlers.play(fromBase64(audio.data), rate);
+        else this.play(fromBase64(audio.data), rate);
       }
       if (content.turnComplete) {
         this.replying = false;
         this.flushTranscript("turn");
+        if (this.hangupPending?.voiced) this.hangUp();
+        else if (this.toolsSinceVoice.length) {
+          const goodbye = this.toolsSinceVoice.includes("end_call");
+          this.toolsSinceVoice = [];
+          this.handlers.trace(`AI agent: silent after a tool call — asking it to ${goodbye ? "say goodbye" : "carry on"}`);
+          this.socket?.send(JSON.stringify({ realtimeInput: { text: goodbye ? SAY_GOODBYE_NOTE : CARRY_ON_NOTE } }));
+        }
       }
     }
 
     for (const call of message.toolCall?.functionCalls ?? []) {
-      if (call.name !== "end_call") continue;
-      const reason = typeof call.args?.reason === "string" ? call.args.reason : "the agent ended the call";
-      this.socket?.send(
-        JSON.stringify({ toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: { ok: true } }] } }),
-      );
-      this.handlers.trace(`AI agent: hanging up (${reason})`);
-      this.handlers.hangup(reason);
+      this.toolsSinceVoice.push(call.name);
+      const text = (key: string) => (typeof call.args?.[key] === "string" && (call.args[key] as string).trim() ? (call.args[key] as string).trim() : null);
+      if (call.name === "record_outcome") {
+        const outcome = text("outcome") as AgentOutcomeKind | null;
+        this.respond(call);
+        if (!outcome) continue;
+        this.handlers.trace(`AI agent: outcome ${outcome}${text("when") ? ` (${text("when")})` : ""} — ${text("summary") ?? ""}`);
+        this.handlers.outcome({ outcome, summary: text("summary"), when: text("when") });
+      } else if (call.name === "end_call") {
+        const reason = text("reason") ?? "the agent ended the call";
+        this.respond(call);
+        this.ending = true;
+        if (this.hangupPending) continue;
+        this.handlers.trace(`AI agent: ending the call after its goodbye (${reason})`);
+        const pending = { reason, voiced: false, timers: [] as ReturnType<typeof setTimeout>[] };
+        pending.timers.push(
+          setTimeout(() => !pending.voiced && this.hangUp(), HANGUP_NO_VOICE_MS),
+          setTimeout(() => this.hangUp(), HANGUP_MAX_WAIT_MS),
+        );
+        this.hangupPending = pending;
+      }
     }
 
     if (message.goAway) this.handlers.trace(`AI agent: Gemini will close the session in ${message.goAway.timeLeft ?? "?"}`);
+  }
+
+  private hangUp(): void {
+    const pending = this.hangupPending;
+    if (!pending || this.closed) return;
+    for (const timer of pending.timers) clearTimeout(timer);
+    this.hangupPending = null;
+    this.handlers.trace(`AI agent: hanging up (${pending.reason})`);
+    this.handlers.hangup(pending.reason);
+  }
+
+  private respond(call: { id: string; name: string }): void {
+    this.socket?.send(JSON.stringify({ toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: { ok: true } }] } }));
   }
 
   private flushHeard(): void {

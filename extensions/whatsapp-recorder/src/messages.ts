@@ -9,6 +9,7 @@
  */
 
 import type {
+  AgentOutcomeKind,
   AgentTokenResponse,
   RecorderAgent,
   RecorderBridgeRequest,
@@ -107,7 +108,12 @@ export type BackgroundMessage =
   /** A timed step of a call, for the timing table printed in the AgentSDR tab's console. */
   | { target: "background"; type: "wa:trace"; callId: string; step: string }
   /** A Gemini Live token for the AI agent on this call; answered with an AgentTokenResult. */
-  | { target: "background"; type: "wa:agent-token"; callId: string };
+  | { target: "background"; type: "wa:agent-token"; callId: string }
+  /** The AI agent called record_outcome; answered with a BridgeResult. */
+  | { target: "background"; type: "wa:agent-outcome"; callId: string; outcome: AgentOutcomeReport };
+
+/** What the AI agent reports through record_outcome (the body of POST .../outcome). */
+export type AgentOutcomeReport = { outcome: AgentOutcomeKind; summary: string | null; when: string | null };
 
 /** The heard-audio test option: wa-agent streams the WAV of what the AI agent heard to the service worker. */
 export const WA_HEARD_AUDIO_PORT = "wa-heard-audio";

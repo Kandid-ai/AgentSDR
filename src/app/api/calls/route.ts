@@ -2,13 +2,14 @@ import type { NextRequest } from "next/server";
 import { assertExactKeys, assertObject, parseOptionalText, parseUuid, readCrmJson } from "@/lib/crm/categories";
 import { requireCrmMutationContext } from "@/lib/crm/http";
 import { CallApiError, callApiErrorResponse, listCalls, startCall } from "@/lib/calls/sessions";
+import { parseAgentName, parseAgentVoice } from "@/lib/calls/liveAgent";
 import type { StartCallRequest } from "@/lib/calls/contract";
 import { runInOrganization } from "@/lib/tenancy/scope";
 import { withOrgContext } from "@/lib/auth/context";
 
 function parseStartCallRequest(value: unknown): StartCallRequest {
   assertObject(value);
-  assertExactKeys(value, ["personId", "crmRecordId", "campaignContactId", "phone", "mode", "agentBrief", "stationId"]);
+  assertExactKeys(value, ["personId", "crmRecordId", "campaignContactId", "phone", "mode", "agentBrief", "agentName", "agentVoice", "stationId"]);
   if (value.mode != null && value.mode !== "agent_cloud") throw new CallApiError(400, "mode must be agent_cloud");
   return {
     personId: parseUuid(value.personId, "personId"),
@@ -17,6 +18,8 @@ function parseStartCallRequest(value: unknown): StartCallRequest {
     phone: parseOptionalText(value.phone, "phone", 40) ?? null,
     mode: value.mode === "agent_cloud" ? "agent_cloud" : null,
     agentBrief: typeof value.agentBrief === "string" ? value.agentBrief : null,
+    agentName: parseAgentName(value.agentName),
+    agentVoice: parseAgentVoice(value.agentVoice),
     stationId: value.stationId == null ? null : parseUuid(value.stationId, "stationId"),
   };
 }

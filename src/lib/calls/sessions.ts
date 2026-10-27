@@ -105,6 +105,7 @@ export function toCallSummary(row: CallSessionRow): CallSummary {
     createdAt: row.createdAt.toISOString(),
     mode: row.mode,
     livePhase: settledLivePhase(row),
+    agentOutcome: row.agentOutcome ?? null,
   };
 }
 
@@ -236,7 +237,7 @@ export async function startCall(input: StartCallRequest): Promise<StartCallRespo
         uploadTokenHash: hash,
         tokenExpiresAt: new Date(now.getTime() + TOKEN_TTL_MS),
         ...(cloud
-          ? { mode: "agent_cloud" as const, stationId: cloud.station.id, agentBrief: cloud.brief, livePhase: QUEUED_PHASE }
+          ? { mode: "agent_cloud" as const, stationId: cloud.station.id, agentBrief: cloud.brief, agentName: input.agentName ?? null, agentVoice: input.agentVoice ?? null, livePhase: QUEUED_PHASE }
           : {}),
       })
       .returning(),

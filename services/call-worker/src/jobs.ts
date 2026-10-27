@@ -218,7 +218,7 @@ export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null): 
       recorderToken: call.recorderToken,
       apiBase: new URL(cfg.agentsdrUrl).origin,
       lead: call.lead,
-      agent: { brief: call.brief },
+      agent: { brief: call.brief, name: call.agentName, voice: call.agentVoice },
       clickedAt: Date.now(),
     });
     if (!started.ok) {

@@ -16,6 +16,7 @@ import {
 import { crmRecords } from "@/lib/crm/schema";
 import { people } from "@/lib/leads/schema";
 import type {
+  AgentOutcome,
   CallCampaignStatus,
   CallDisposition,
   CallStatus,
@@ -266,6 +267,11 @@ export const callSessions = pgTable(
     stationId: uuid("station_id"),
     /** The rep's brief for the AI agent (cloud calls; a laptop agent call keeps it in the extension). */
     agentBrief: text("agent_brief"),
+    /** The agent's name and voice for a cloud call (null: the defaults in contract.ts). scripts/add-call-session-agent-persona.ts. */
+    agentName: text("agent_name"),
+    agentVoice: text("agent_voice"),
+    /** How an agent call went, as the agent recorded it (its record_outcome tool), laptop or cloud. */
+    agentOutcome: jsonb("agent_outcome").$type<AgentOutcome>(),
     /** A cloud call's latest phase, as the extension reports it — the rep's page polls it. */
     livePhase: jsonb("live_phase").$type<CloudCallPhase>(),
     /** When a call worker took the cloud call, and which. Null while it waits in the queue. */

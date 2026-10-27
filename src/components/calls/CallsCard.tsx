@@ -17,6 +17,7 @@ import type { CallSummary } from "@/lib/calls/contract";
 import { LiveCallStrip } from "@/components/calls/LiveCallStrip";
 import { RecordingPlayer } from "./RecordingPlayer";
 import { CallSessionBadge } from "./CallSessionBadge";
+import { AgentOutcomeLine } from "./AgentOutcomeLine";
 
 export function CallsCard({ personId, refreshKey }: { personId: string; refreshKey?: number }) {
   const [calls, setCalls] = useState<CallSummary[]>([]);
@@ -67,7 +68,7 @@ export function CallsCard({ personId, refreshKey }: { personId: string; refreshK
 
   return (
     <div className="space-y-3">
-      <LiveCallStrip callId={mostRecentCallId} serverStatus={sorted[0]?.status ?? null} onCancelled={() => void load()} />
+      <LiveCallStrip callId={mostRecentCallId} serverStatus={sorted[0]?.status ?? null} agentOutcome={sorted[0]?.agentOutcome ?? null} onCancelled={() => void load()} />
       <Frame>
         <FrameHeader title="Calls" description={sorted.length ? `${sorted.length} WhatsApp call${sorted.length === 1 ? "" : "s"}, newest first` : "WhatsApp calls placed from AgentSDR"} />
         <FramePanel aria-busy={refreshing || undefined} className={cn("p-0 transition-opacity sm:p-0", refreshing && "opacity-60")}>
@@ -112,6 +113,7 @@ function CallRow({ call }: { call: CallSummary }) {
       {(call.status === "failed" || call.status === "no_recording") && call.error && (
         <p className={call.status === "failed" ? "text-paragraph-xs text-error-dark" : "text-paragraph-xs text-text-sub-600"}>{call.error}</p>
       )}
+      {call.agentOutcome && <AgentOutcomeLine outcome={call.agentOutcome} />}
       {call.hasRecording && (
         <RecordingPlayer callId={call.id} offsetMs={call.recordingOffsetMs} />
       )}

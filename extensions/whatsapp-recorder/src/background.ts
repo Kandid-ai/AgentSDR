@@ -25,6 +25,7 @@ import {
   type AgentTokenResult,
   type BackgroundMessage,
   type BridgeCommand,
+  type AgentOutcomeReport,
   type BridgeResult,
   type ProbeResult,
   type RecentCall,
@@ -242,6 +243,9 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
     case "wa:agent-token":
       void agentToken(message.callId).then(sendResponse);
       return true;
+    case "wa:agent-outcome":
+      void agentOutcome(message.callId, message.outcome).then(sendResponse);
+      return true;
     case "wa:trace":
       trace(message.callId, message.step);
       if (/^WhatsApp shows "Ringing/i.test(message.step)) {
@@ -326,7 +330,13 @@ async function startCall(
     requestedAt: Date.now(),
     lead: request.lead,
     appTabId,
-    agent: request.agent?.brief?.trim() ? { brief: request.agent.brief.trim() } : null,
+    agent: request.agent?.brief?.trim()
+      ? {
+          brief: request.agent.brief.trim(),
+          name: request.agent.name?.trim() || null,
+          voice: request.agent.voice?.trim() || null,
+        }
+      : null,
     station,
   };
   await rememberCall(call);
@@ -472,10 +482,28 @@ async function agentToken(callId: string): Promise<AgentTokenResult> {
   const call = await getActiveCall();
   if (!call || call.callId !== callId || !call.agent) return { ok: false, error: "This call has no AI agent" };
   try {
-    const request: AgentTokenRequest = { brief: call.agent.brief, lead: call.lead ?? null };
+    const request: AgentTokenRequest = {
+      brief: call.agent.brief,
+      lead: call.lead ?? null,
+      name: call.agent.name ?? null,
+      voice: call.agent.voice ?? null,
+    };
     const token = await callApi<AgentTokenResponse>(call, "agent-token", request);
     trace(callId, "AI agent: token minted");
     return { ok: true, ...token };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** The AI agent's record_outcome report: POSTed with the call's bearer token (the call may already be over). */
+async function agentOutcome(callId: string, outcome: AgentOutcomeReport): Promise<BridgeResult> {
+  const active = await getActiveCall();
+  const call = active?.callId === callId ? active : await recentCall(callId);
+  if (!call) return { ok: false, error: "This call is no longer known to the extension" };
+  try {
+    await callApi(call, "outcome", outcome);
+    return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }

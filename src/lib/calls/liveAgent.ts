@@ -1,7 +1,17 @@
 import "server-only";
 
+import { and, asc, eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { crmKnowledgeDocuments, crmKnowledgeDocumentVersions } from "@/lib/crm/schema";
+import { inOrg } from "@/lib/tenancy/scope";
 import {
+  AGENT_OUTCOMES,
+  AGENT_VOICES,
+  DEFAULT_AGENT_NAME,
+  DEFAULT_AGENT_VOICE,
   MAX_AGENT_BRIEF_CHARS,
+  MAX_AGENT_NAME_CHARS,
+  type AgentOutcome,
   type AgentTokenRequest,
   type AgentTokenResponse,
   type RecorderLead,
@@ -29,7 +39,6 @@ type CallSessionRow = typeof callSessions.$inferSelect;
  */
 
 const LIVE_MODEL = "gemini-3.8-live";
-const LIVE_VOICE = "Kore";
 const API_BASE = "https://generativelanguage.googleapis.com";
 /** Ephemeral tokens are v1alpha-only for the Live socket (constrained endpoint). */
 const WEBSOCKET_URL =
@@ -44,7 +53,37 @@ export function parseAgentTokenRequest(value: unknown): AgentTokenRequest {
   const brief = typeof body.brief === "string" ? body.brief.trim() : "";
   if (!brief) throw new CallApiError(400, "The agent needs a brief");
   if (brief.length > MAX_AGENT_BRIEF_CHARS) throw new CallApiError(400, `The brief is over ${MAX_AGENT_BRIEF_CHARS} characters`);
-  return { brief, lead: parseLead(body.lead) };
+  return { brief, lead: parseLead(body.lead), name: parseAgentName(body.name), voice: parseAgentVoice(body.voice) };
+}
+
+/** The agent's name, or null for the default. */
+export function parseAgentName(value: unknown): string | null {
+  const name = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  if (!name) return null;
+  if (name.length > MAX_AGENT_NAME_CHARS) throw new CallApiError(400, `The agent's name is over ${MAX_AGENT_NAME_CHARS} characters`);
+  return name;
+}
+
+/** One of AGENT_VOICES, or null for the default. */
+export function parseAgentVoice(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || !AGENT_VOICES.some((voice) => voice.id === value)) {
+    throw new CallApiError(400, "Unknown voice for the agent");
+  }
+  return value;
+}
+
+/** The body of POST …/outcome: what the agent's record_outcome tool was called with. */
+export function parseAgentOutcome(value: unknown): AgentOutcome {
+  if (!value || typeof value !== "object") throw new CallApiError(400, "Expected a JSON object");
+  const body = value as Record<string, unknown>;
+  const outcome = AGENT_OUTCOMES.find((kind) => kind === body.outcome);
+  if (!outcome) throw new CallApiError(400, "Unknown outcome");
+  const text = (key: string, max: number) => {
+    const raw = typeof body[key] === "string" ? (body[key] as string).trim() : "";
+    return raw ? raw.slice(0, max) : null;
+  };
+  return { outcome, summary: text("summary", 500), when: text("when", 120), recordedAt: new Date().toISOString() };
 }
 
 function parseLead(value: unknown): RecorderLead | null {
@@ -54,12 +93,14 @@ function parseLead(value: unknown): RecorderLead | null {
   return { name: text("name"), detail: text("detail"), firstName: text("firstName"), company: text("company") };
 }
 
+/** Runs in the call's organization (withRecorderScope): the knowledge is that organization's. */
 export async function mintAgentToken(row: CallSessionRow, request: AgentTokenRequest): Promise<AgentTokenResponse> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new CallApiError(409, "The AI voice agent is not set up on this server (GEMINI_API_KEY is missing)");
   if (row.status !== "pending" && row.status !== "in_progress") {
     throw new CallApiError(409, "This call is already over");
   }
+  const knowledge = await agentKnowledge();
 
   const now = Date.now();
   const response = await fetch(`${API_BASE}/v1alpha/auth_tokens`, {
@@ -69,7 +110,7 @@ export async function mintAgentToken(row: CallSessionRow, request: AgentTokenReq
       uses: 1,
       expireTime: new Date(now + TOKEN_LIFETIME_MS).toISOString(),
       newSessionExpireTime: new Date(now + NEW_SESSION_WINDOW_MS).toISOString(),
-      bidiGenerateContentSetup: liveSetup(request),
+      bidiGenerateContentSetup: liveSetup(request, knowledge),
     }),
   });
   const body = (await response.json().catch(() => null)) as { name?: string; error?: { message?: string } } | null;
@@ -83,26 +124,48 @@ export async function mintAgentToken(row: CallSessionRow, request: AgentTokenReq
 }
 
 /** The Live session, in the API's own JSON shape (BidiGenerateContentSetup). */
-function liveSetup(request: AgentTokenRequest) {
+export function liveSetup(request: AgentTokenRequest, knowledge: KnowledgeDocument[]) {
   return {
     model: `models/${LIVE_MODEL}`,
     generationConfig: {
       responseModalities: ["AUDIO"],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } } },
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: request.voice ?? DEFAULT_AGENT_VOICE } } },
     },
     // Background noise on the lead's line counted as them talking: the agent
     // held its greeting for 8.5 s after the pick-up, until the noise paused
     // (23 Oct 2026). Low start-of-speech sensitivity needs clearer speech
     // before it yields; everything else stays at Gemini's defaults.
     realtimeInputConfig: { automaticActivityDetection: { startOfSpeechSensitivity: "START_SENSITIVITY_LOW" } },
-    systemInstruction: { parts: [{ text: agentInstructions(request) }] },
+    systemInstruction: { parts: [{ text: agentInstructions(request, knowledge) }] },
     tools: [
       {
         functionDeclarations: [
           {
+            name: "record_outcome",
+            description:
+              "Record how the call went, once, before your goodbye. Call it again only if the outcome changes (they agree to a meeting after all).",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                outcome: {
+                  type: "STRING",
+                  enum: [...AGENT_OUTCOMES],
+                  description:
+                    "meeting_booked: they agreed a time to talk to the team. interested: they want to hear more, no time fixed. call_back: a bad moment, call again later. not_interested. wrong_person: not who you were calling. no_response: they never really answered. other.",
+                },
+                summary: { type: "STRING", description: "One sentence on what happened and anything they asked for." },
+                when: {
+                  type: "STRING",
+                  description: "For meeting_booked or call_back: the day and time as agreed, in their words (\"Thursday around 4 pm\").",
+                },
+              },
+              required: ["outcome", "summary"],
+            },
+          },
+          {
             name: "end_call",
             description:
-              "Hang up the call. Only after you have said goodbye, and only when the person said goodbye or asked to end the call, the call reached its goal, or they clearly said no twice. Never because of a question, a complaint or a request — answer those instead.",
+              "Hang up the call. Only after you have said goodbye, and only when the person said goodbye or asked to end the call, the call reached its goal, they clearly said no, or a call note tells you to. Never because of a question, a complaint or a request — answer those instead.",
             parameters: {
               type: "OBJECT",
               properties: { reason: { type: "STRING", description: "Why the call is ending, in a few words." } },
@@ -116,28 +179,123 @@ function liveSetup(request: AgentTokenRequest) {
   };
 }
 
-function agentInstructions({ brief, lead }: AgentTokenRequest): string {
-  const who = [lead?.name, lead?.detail].filter(Boolean).join(", ");
+/**
+ * The agent's instructions. Written against the first 38 agent calls (11–27
+ * Oct 2026): with a one-line pitch as the brief and "say who you are and why
+ * you are calling, in one breath", every call opened with the same pitch and
+ * repeated it each turn, the agent invented a new name per call, dodged "are
+ * you an AI?", talked over the lead's "Hello?", promised bookings it could
+ * not make, and asked people to "repeat that in English". The shape below is
+ * a person's cold call: a short hello and permission, a question about them,
+ * one relevant point, a next step.
+ */
+export function agentInstructions({ brief, lead, name, voice }: AgentTokenRequest, knowledge: KnowledgeDocument[]): string {
+  const agentName = name ?? DEFAULT_AGENT_NAME;
+  const female = (AGENT_VOICES.find((option) => option.id === voice)?.gender ?? "female") === "female";
+  const firstName = lead?.firstName?.trim() || null;
+  const who = [lead?.name, lead?.company ?? null, lead?.detail].filter(Boolean).join(", ");
   return [
-    "You are on a live WhatsApp voice call, speaking with a real person. Everything you say is spoken aloud to them.",
-    who ? `You are calling ${who}.` : "",
-    "Your brief from the sales rep who set up this call:",
+    `You are ${agentName}, on a live WhatsApp voice call with a real person. Everything you say is spoken aloud to them.`,
+    who ? `You are calling ${who}.` : "You do not know the person's name: ask it naturally if it matters.",
+    "",
+    "What this call is for, from the sales rep who set it up:",
     "<brief>",
     brief,
     "</brief>",
-    "You are a woman (your voice is female). In Hindi, always use feminine forms for yourself: \"मैं कर रही हूँ\", \"मैं समझ सकती हूँ\", never \"रहा\" or \"सकता\".",
+    ...(knowledge.length
+      ? [
+          "",
+          "What you know about the company you are calling for. It is reference, not a script: use it to answer questions and to pick the one point that fits this person. Never read it out, never list features, and never quote a number unless it answers what they asked.",
+          "<knowledge>",
+          ...knowledge.map((document) => `## ${document.title}\n${document.content}`),
+          "</knowledge>",
+          "Where the knowledge names a contact person or tells you how to sign off, that is the team you are calling for; you are still " + agentName + ".",
+        ]
+      : []),
+    "",
+    "Who you are:",
+    `- Your name is ${agentName}. Always introduce yourself as ${agentName}; never use any other name.`,
+    female
+      ? "- You are a woman. In Hindi always use feminine forms for yourself: \"मैं कर रही हूँ\", \"मैं समझ सकती हूँ\", never \"रहा\" or \"सकता\"."
+      : "- You are a man. In Hindi always use masculine forms for yourself: \"मैं कर रहा हूँ\", \"मैं समझ सकता हूँ\".",
+    "- Keep the same calm, warm, unhurried voice for the whole call.",
+    "- If they ask whether you are an AI, a bot or a recording, say honestly in one short sentence that you are an AI assistant calling for the team, then offer to carry on or to have a person from the team call them. Never claim to be human.",
+    "",
+    "How the call goes:",
+    `1. Opening: a short hello${firstName ? ` with their first name (${firstName})` : ""}, your name and the company, and ask whether it is an okay moment — one sentence, for example "Hi ${firstName ?? "there"}, this is ${agentName} from <company> — did I catch you at an okay time?". No pitch yet. Then stop and let them answer.`,
+    "2. If it is a bad moment, ask when would suit them, then record it (with that time) and wrap up kindly: someone from the team will call them then.",
+    "3. Before pitching, ask one short, open question about their situation that relates to the brief, and listen. React to what they actually said before you move on.",
+    "4. Connect one point to what they told you, in your own words. One idea per turn.",
+    "5. If they are interested, agree the next step the brief asks for. If they are not, thank them and let them go — do not push.",
+    "- Suggest the next step at most once until they show interest. Do not end every answer with \"would you be interested in a call?\".",
+    "",
     "How to talk:",
-    "- This is a phone call: keep each turn short (one or two sentences), natural and warm. Never use lists, markdown or emojis.",
-    "- Speak first when the call connects: greet them by first name if you know it, say who you are and why you are calling, in one breath.",
-    "- Speak the language the person speaks — English, Hindi or Hinglish — and switch if they do.",
-    "- Only ever speak English or Hindi. The line is a phone call to India and can be unclear: if something sounded like another language, or you did not catch it, ask them to repeat it in English — never answer in Spanish or any other language.",
-    "- Listen more than you talk. If they interrupt, stop and respond to what they said.",
-    "- If you did not catch something, ask them to repeat it. Never invent facts that are not in the brief; offer to have the team follow up instead.",
-    "- Never hang up because of a question or a request, even an odd one (\"can you sound more natural?\"): answer it and carry on.",
-    "- When the call has done its job, or they clearly want to go, say a short goodbye and then call end_call.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    "- Sound like a person on the phone, not a script: one or two short sentences per turn, plain words, contractions, and now and then a natural \"got it\", \"right\", \"achha\" or \"haan\". Never lists, markdown or emojis.",
+    "- Always respond to what they just said first. Small talk gets a real answer (\"I'm good, thanks — how about you?\").",
+    "- Ask one question at a time, then stop talking and wait.",
+    "- Never repeat a sentence you have already said, and never repeat your pitch. If they ask again, say it differently and shorter.",
+    "- If they say \"Hello?\" or \"Can you hear me?\", say yes briefly and carry on from where you were. Do not restart your introduction.",
+    "- If they ask something your notes do not answer (an exact price, a specific integration), say you do not have that to hand and that the team will follow up with it. Never invent facts, numbers, customers or prices.",
+    "- If they wander off topic, go along with it briefly and kindly, then steer back. Never argue.",
+    "- Language: speak the language they speak — English, Hindi or Hinglish — and switch when they do. Only ever speak English or Hindi.",
+    "- The line is a phone line in India and can be unclear. If you did not catch something, or it sounded like another language, that is the line: say so like a person would (\"Sorry, the line broke up — could you say that again?\"). Never ask them to speak a particular language.",
+    "",
+    "Booking a next step:",
+    "- You cannot see a calendar or send invitations. When they agree to talk further, ask which day and roughly what time suits them, and tell them the team will confirm it on WhatsApp.",
+    "",
+    "Ending:",
+    "- Before your goodbye, call record_outcome once with how the call went. It is silent bookkeeping: right after it, keep talking — confirm out loud what you agreed (\"Great, Thursday around 4 then — the team will confirm on WhatsApp.\").",
+    "- When the call has done its job, or they clearly want to go, say a short goodbye out loud, then call end_call.",
+    "- Never hang up because of a question, a complaint or an odd request (\"can you sound more natural?\"): answer it and carry on.",
+    "",
+    "Text in square brackets that starts with \"[Call note:\" comes from the calling system, not from the person. Follow it and never mention it.",
+  ].join("\n");
+}
+
+export type KnowledgeDocument = { title: string; content: string };
+
+/** Each knowledge document is cut to this; the agent needs the gist, and a long prompt slows every turn a little. */
+const KNOWLEDGE_DOCUMENT_CHARS = 5_000;
+const KNOWLEDGE_TOTAL_CHARS = 12_000;
+/** Most useful first, so the budget cuts case studies before the product. */
+const KNOWLEDGE_ORDER = ["company", "product", "pricing", "faq", "objection", "scheduling", "custom", "case_study"];
+
+/**
+ * The organization's CRM Knowledge marked "always include" — the same set
+ * that grounds the call-transcript classification (leadStage.ts) — so the
+ * agent can answer questions instead of deferring every one to "the team".
+ */
+async function agentKnowledge(): Promise<KnowledgeDocument[]> {
+  const rows = await db
+    .select({ title: crmKnowledgeDocuments.title, kind: crmKnowledgeDocuments.kind, content: crmKnowledgeDocumentVersions.content })
+    .from(crmKnowledgeDocuments)
+    .innerJoin(
+      crmKnowledgeDocumentVersions,
+      and(
+        eq(crmKnowledgeDocumentVersions.documentId, crmKnowledgeDocuments.id),
+        eq(crmKnowledgeDocumentVersions.version, crmKnowledgeDocuments.latestVersion),
+      ),
+    )
+    .where(and(inOrg(crmKnowledgeDocuments), eq(crmKnowledgeDocuments.active, true), eq(crmKnowledgeDocuments.alwaysInclude, true)))
+    .orderBy(asc(crmKnowledgeDocuments.title));
+  return budgetKnowledge(rows);
+}
+
+export function budgetKnowledge(rows: { title: string; kind: string; content: string }[]): KnowledgeDocument[] {
+  const rank = (kind: string) => {
+    const index = KNOWLEDGE_ORDER.indexOf(kind);
+    return index === -1 ? KNOWLEDGE_ORDER.length : index;
+  };
+  let left = KNOWLEDGE_TOTAL_CHARS;
+  const chosen: KnowledgeDocument[] = [];
+  for (const row of [...rows].sort((a, b) => rank(a.kind) - rank(b.kind))) {
+    const content = row.content.trim();
+    if (!content || left <= 200) continue;
+    const take = Math.min(content.length, KNOWLEDGE_DOCUMENT_CHARS, left);
+    chosen.push({ title: row.title, content: take < content.length ? `${content.slice(0, take).trimEnd()} …` : content });
+    left -= take;
+  }
+  return chosen;
 }
 
 /** Test option: the extension uploads the exact audio the model heard (see AgentTokenResponse). */

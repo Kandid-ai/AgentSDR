@@ -7,9 +7,10 @@ import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Modal from "@/components/alignui/modal";
 import * as Select from "@/components/alignui/select";
+import * as Input from "@/components/alignui/input";
 import * as Textarea from "@/components/alignui/textarea";
 import { DocsLink } from "@/components/page/DocsLink";
-import { MAX_AGENT_BRIEF_CHARS, MIN_AGENT_RECORDER_VERSION, MIN_RECORDER_VERSION, type RecorderAgent } from "@/lib/calls/contract";
+import { AGENT_VOICES, DEFAULT_AGENT_NAME, DEFAULT_AGENT_VOICE, MAX_AGENT_BRIEF_CHARS, MAX_AGENT_NAME_CHARS, MIN_AGENT_RECORDER_VERSION, MIN_RECORDER_VERSION, type RecorderAgent } from "@/lib/calls/contract";
 import type { DocsPage } from "@/lib/support";
 import { isOlderVersion, RECORDER_SETUP_PATH } from "@/lib/calls/recorderRelease";
 import { abandonCall, isRecorderInstalled, isRecorderOutdated, listCallingStations, recorderVersion, sendToRecorder, startCall } from "@/lib/calls/client";
@@ -26,12 +27,24 @@ const THIS_BROWSER = "browser";
 /** The AI agent's last brief, kept in this browser so the next agent call starts from it. */
 const AGENT_BRIEF_KEY = "agentsdr.agentBrief";
 
-function savedAgentBrief(): string {
+const AGENT_NAME_KEY = "agentsdr.agentName";
+const AGENT_VOICE_KEY = "agentsdr.agentVoice";
+
+function savedValue(key: string): string {
   try {
-    return window.localStorage.getItem(AGENT_BRIEF_KEY) ?? "";
+    return window.localStorage.getItem(key) ?? "";
   } catch {
     return "";
   }
+}
+
+function savedAgentBrief(): string {
+  return savedValue(AGENT_BRIEF_KEY);
+}
+
+function savedAgentVoice(): string {
+  const voice = savedValue(AGENT_VOICE_KEY);
+  return AGENT_VOICES.some((candidate) => candidate.id === voice) ? voice : DEFAULT_AGENT_VOICE;
 }
 
 export function CallButton({ personId, crmRecordId, campaignContactId, phone, onCallStarted, numberMenu = true }: {
@@ -55,6 +68,8 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
   const [phase, setPhase] = useState<Phase>("idle");
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentBrief, setAgentBrief] = useState("");
+  const [agentName, setAgentName] = useState("");
+  const [agentVoice, setAgentVoice] = useState<string>(DEFAULT_AGENT_VOICE);
   /** Active cloud calling stations, fetched when the agent modal opens; `null` until then. */
   const [stations, setStations] = useState<CallingStation[] | null>(null);
   const [callFrom, setCallFrom] = useState<string>(THIS_BROWSER);
@@ -184,6 +199,8 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
   // opens without it and the readiness checks run at Start.
   const handleAgentCall = () => {
     setAgentBrief((current) => current || savedAgentBrief());
+    setAgentName((current) => current || savedValue(AGENT_NAME_KEY));
+    setAgentVoice(savedAgentVoice());
     setStations(null);
     setCallFrom(THIS_BROWSER);
     setAgentOpen(true);
@@ -196,7 +213,7 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
       .catch(() => setStations([]));
   };
 
-  const beginCloud = async (brief: string, stationId: string) => {
+  const beginCloud = async (brief: string, name: string, voice: string, stationId: string) => {
     setModalError("");
     setPhase("starting");
     try {
@@ -206,6 +223,8 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
         campaignContactId: campaignContactId ?? null,
         mode: "agent_cloud",
         agentBrief: brief,
+        agentName: name || null,
+        agentVoice: voice,
         stationId,
       });
       setAgentOpen(false);
@@ -219,17 +238,20 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
 
   const startAgentCall = () => {
     const brief = agentBrief.trim();
+    const name = agentName.trim();
     try {
       window.localStorage.setItem(AGENT_BRIEF_KEY, brief);
+      window.localStorage.setItem(AGENT_NAME_KEY, name);
+      window.localStorage.setItem(AGENT_VOICE_KEY, agentVoice);
     } catch {
       // Only a convenience for the next call.
     }
     if (callFrom !== THIS_BROWSER) {
-      void beginCloud(brief, callFrom);
+      void beginCloud(brief, name, agentVoice, callFrom);
       return;
     }
     if (!agentRecorderReady()) return;
-    void begin(undefined, { brief });
+    void begin(undefined, { brief, name: name || null, voice: agentVoice });
   };
 
   const label = phase === "starting" ? "Calling…" : phase === "opening" ? "Opening WhatsApp…" : "Call";
@@ -323,8 +345,36 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
                 <p className="text-paragraph-xs text-text-sub-600">A call worker opens WhatsApp in the cloud and places the call; nothing runs in your browser.</p>
               )}
             </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label htmlFor="agent-name" className="block text-label-sm text-text-strong-950">Agent name</label>
+                <Input.Root size="small">
+                  <Input.Wrapper>
+                    <Input.Input
+                      id="agent-name"
+                      value={agentName}
+                      maxLength={MAX_AGENT_NAME_CHARS}
+                      onChange={(event) => setAgentName(event.target.value)}
+                      disabled={busy}
+                      placeholder={DEFAULT_AGENT_NAME}
+                    />
+                  </Input.Wrapper>
+                </Input.Root>
+              </div>
+              <div className="space-y-1.5">
+                <label className="block text-label-sm text-text-strong-950">Voice</label>
+                <Select.Root size="small" value={agentVoice} onValueChange={setAgentVoice} disabled={busy}>
+                  <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
+                  <Select.Content>
+                    {AGENT_VOICES.map((voice) => (
+                      <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              </div>
+            </div>
             <div className="space-y-1.5">
-            <label htmlFor="agent-brief" className="block text-label-sm text-text-strong-950">Brief for the agent</label>
+            <label htmlFor="agent-brief" className="block text-label-sm text-text-strong-950">Goal of this call</label>
             <Textarea.Root
               id="agent-brief"
               simple
@@ -334,9 +384,9 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
               value={agentBrief}
               onChange={(event) => setAgentBrief(event.target.value)}
               disabled={busy}
-              placeholder={"You are Riya from Acme. We help D2C brands cut shipping costs by 20%.\nGoal: find out who handles logistics and book a 15-minute demo this week.\nIf they're busy, ask for a better time to call back."}
+              placeholder={"Find out who handles logistics at their company and book a 15-minute demo this week.\nIf they're busy, get a better time to call back."}
             />
-            <p className="text-paragraph-xs text-text-sub-600">Who the agent is, what it&apos;s calling about, and what it should get out of the call.</p>
+            <p className="text-paragraph-xs text-text-sub-600">What to find out and which next step to get. Company and product facts come from CRM Knowledge marked &quot;always include&quot;.</p>
             </div>
           </Modal.Body>
           <Modal.Footer>

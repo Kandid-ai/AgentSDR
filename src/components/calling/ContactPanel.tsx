@@ -338,6 +338,7 @@ export function ContactPanel({
               <LiveCallStrip
                 callId={liveCallId}
                 serverStatus={sortedCalls.find((call) => call.id === liveCallId)?.status ?? null}
+                agentOutcome={sortedCalls.find((call) => call.id === liveCallId)?.agentOutcome ?? null}
                 onCancelled={() => {
                   void load();
                   onChanged?.();

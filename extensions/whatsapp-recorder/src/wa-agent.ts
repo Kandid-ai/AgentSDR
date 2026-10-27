@@ -839,6 +839,12 @@ function startAgent(callId: string): void {
       trace(callId, step);
     },
     token: () => send<AgentTokenResult>({ target: "background", type: "wa:agent-token", callId }),
+    outcome: (report) =>
+      void send<BridgeResult>({ target: "background", type: "wa:agent-outcome", callId, outcome: report })
+        .then((result) =>
+          trace(callId, result.ok ? "AI agent: outcome saved" : `AI agent: could not save the outcome — ${result.error}`),
+        )
+        .catch((error: unknown) => trace(callId, `AI agent: could not save the outcome — ${String(error)}`)),
   });
   agent = session;
   agentCallId = callId;

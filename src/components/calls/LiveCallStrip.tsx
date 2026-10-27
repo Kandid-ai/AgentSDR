@@ -6,8 +6,9 @@ import * as Button from "@/components/alignui/button";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
 import { FormError } from "./fields";
 import { cancelCall, endCallViaRecorder } from "@/lib/calls/client";
-import type { CallStatus } from "@/lib/calls/contract";
+import type { AgentOutcome, CallStatus } from "@/lib/calls/contract";
 import type { CloudCallPhase } from "@/lib/calls/stationContract";
+import { AgentOutcomeLine } from "./AgentOutcomeLine";
 import { formatElapsed } from "./formatElapsed";
 import { useLiveCallState } from "./useLiveCall";
 
@@ -33,10 +34,13 @@ const CANCEL_PHASES: ReadonlySet<CloudCallPhase["kind"]> = new Set([
 export function LiveCallStrip({
   callId,
   serverStatus,
+  agentOutcome,
   onCancelled,
 }: {
   callId: string | null;
   serverStatus?: CallStatus | null;
+  /** What the AI agent reported for this call, once it has. */
+  agentOutcome?: AgentOutcome | null;
   /** After a cancel, so the parent can reload the call. */
   onCancelled?: () => void;
 }) {
@@ -137,6 +141,7 @@ export function LiveCallStrip({
           )}
         </div>
         <PhaseDetail phase={phase} />
+        {agentOutcome && <AgentOutcomeLine outcome={agentOutcome} />}
         {endError && <FormError>{endError}</FormError>}
       </FramePanel>
     </Frame>

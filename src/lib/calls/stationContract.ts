@@ -250,6 +250,9 @@ export type WorkerJob =
         recorderToken: string;
         lead: RecorderLead | null;
         brief: string;
+        /** The agent's name and voice (null: the defaults in contract.ts). */
+        agentName: string | null;
+        agentVoice: string | null;
       };
     }
   | {

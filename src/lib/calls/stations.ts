@@ -544,7 +544,7 @@ async function claimCall({ workerId, launchers, stations }: WorkerClaimRequest):
   return {
     kind: "call",
     station: await workerStation(station),
-    call: { id: call.id, phone: call.phone, recorderToken: token, lead, brief: call.agentBrief ?? "" },
+    call: { id: call.id, phone: call.phone, recorderToken: token, lead, brief: call.agentBrief ?? "", agentName: call.agentName ?? null, agentVoice: call.agentVoice ?? null },
   };
 }
 

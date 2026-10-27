@@ -239,6 +239,9 @@ export type StartCallRequest = {
    */
   mode?: "agent_cloud" | null;
   agentBrief?: string | null;
+  /** The agent's name and voice for a cloud call; null = the defaults. */
+  agentName?: string | null;
+  agentVoice?: string | null;
   /** The station to call from; null or absent = any free active station. */
   stationId?: string | null;
 };
@@ -288,6 +291,8 @@ export type CallSummary = {
   livePhase?: CloudCallPhase | null;
   /** The cloud calling station's name, for a cloud call. */
   stationName?: string | null;
+  /** What the AI agent reported with record_outcome, once it has. */
+  agentOutcome?: AgentOutcome | null;
 };
 
 /** GET /api/calls/:id — a call with its transcript. */
@@ -586,15 +591,70 @@ export type RecorderCallRequest = {
  * model's voice is what WhatsApp sends as the "microphone".
  */
 export type RecorderAgent = {
-  /** The rep's instructions: who the agent is, what it is calling about, what it should get. */
+  /** The rep's instructions: what the agent is calling about and what it should get. */
   brief: string;
+  /** The name the agent introduces itself by (DEFAULT_AGENT_NAME when unset). */
+  name?: string | null;
+  /** One of AGENT_VOICES (DEFAULT_AGENT_VOICE when unset). */
+  voice?: string | null;
 };
 
 /** The longest brief the agent-token route accepts. */
 export const MAX_AGENT_BRIEF_CHARS = 4_000;
+export const MAX_AGENT_NAME_CHARS = 40;
+
+/**
+ * Gemini Live's preset voices offered for the agent. The voice is fixed per
+ * call; `gender` sets the grammar the agent uses for itself in Hindi.
+ */
+export const AGENT_VOICES = [
+  { id: "Kore", label: "Kore — firm, female", gender: "female" },
+  { id: "Aoede", label: "Aoede — breezy, female", gender: "female" },
+  { id: "Leda", label: "Leda — youthful, female", gender: "female" },
+  { id: "Sulafat", label: "Sulafat — warm, female", gender: "female" },
+  { id: "Despina", label: "Despina — smooth, female", gender: "female" },
+  { id: "Puck", label: "Puck — upbeat, male", gender: "male" },
+  { id: "Charon", label: "Charon — informative, male", gender: "male" },
+  { id: "Achird", label: "Achird — friendly, male", gender: "male" },
+] as const;
+export type AgentVoiceId = (typeof AGENT_VOICES)[number]["id"];
+export const DEFAULT_AGENT_VOICE: AgentVoiceId = "Kore";
+/** Without a name the model invented a new one every call (27 Oct 2026). */
+export const DEFAULT_AGENT_NAME = "Riya";
 
 /** POST /api/call-recorder/calls/:id/agent-token — from the extension's service worker. */
-export type AgentTokenRequest = { brief: string; lead: RecorderLead | null };
+export type AgentTokenRequest = { brief: string; lead: RecorderLead | null; name?: string | null; voice?: string | null };
+
+/** How an agent call went, as the agent recorded it (its record_outcome tool). */
+export const AGENT_OUTCOMES = [
+  "meeting_booked",
+  "interested",
+  "call_back",
+  "not_interested",
+  "wrong_person",
+  "no_response",
+  "other",
+] as const;
+export type AgentOutcomeKind = (typeof AGENT_OUTCOMES)[number];
+export const AGENT_OUTCOME_LABELS: Record<AgentOutcomeKind, string> = {
+  meeting_booked: "Meeting booked",
+  interested: "Interested",
+  call_back: "Call back",
+  not_interested: "Not interested",
+  wrong_person: "Wrong person",
+  no_response: "No response",
+  other: "Other",
+};
+
+/** POST /api/call-recorder/calls/:id/outcome — and stored as call_sessions.agent_outcome. */
+export type AgentOutcome = {
+  outcome: AgentOutcomeKind;
+  /** One sentence on how the call went. */
+  summary: string | null;
+  /** The meeting or call-back time as agreed, in the person's words ("Thursday around 4"). */
+  when: string | null;
+  recordedAt: string;
+};
 
 /**
  * A single-use Gemini Live token with the session (model, voice, instructions,
