@@ -8,13 +8,13 @@ import { errorMessage } from "@/components/crm/crm-utils";
 import { AGENT_OUTCOME_LABELS } from "@/lib/calls/contract";
 
 type Turn = { role: "lead" | "agent"; text: string };
-type Tool = { name: string; args: Record<string, unknown> };
+export type Tool = { name: string; args: Record<string, unknown> };
 type Line = Turn & { tools?: Tool[] };
 
 const MAX_TURNS = 40;
 
 /** A tool call as a short chip: "record_outcome: meeting_booked — Thursday around 4 pm". */
-function toolLabel(tool: Tool): string {
+export function toolLabel(tool: Tool): string {
   const text = (key: string) => (typeof tool.args[key] === "string" ? (tool.args[key] as string) : "");
   if (tool.name === "record_outcome") {
     const outcome = text("outcome");

@@ -27,6 +27,10 @@ type Handlers = {
   hangup(reason: string): void;
   /** The model called record_outcome. */
   outcome(report: { outcome: AgentOutcomeKind; summary: string | null; when: string | null; whenAt: string | null }): void;
+  /** The session is set up (optional; the voice rehearsal in AgentSDR uses it to "pick up"). */
+  ready?(): void;
+  /** A finished line of the conversation, as Gemini transcribed it (optional). */
+  transcript?(who: "lead" | "agent", text: string, why: "turn" | "interrupted"): void;
   /** A step worth seeing in the call's timing table. */
   trace(step: string): void;
   /** The token request, through the service worker (it holds the call's bearer token). */
@@ -320,6 +324,7 @@ export class LiveAgent {
       this.handlers.trace("AI agent: session ready");
       if (this.greetPending) this.sendGreeting();
       else if (this.prepareWhenReady && !this.pickedUp) this.prepareGreeting();
+      this.handlers.ready?.();
       return;
     }
 
@@ -418,6 +423,7 @@ export class LiveAgent {
   private flushHeard(): void {
     console.info("[agentsdr agent] lead:", this.heardThisTurn.trim());
     this.handlers.trace(`lead: ${this.heardThisTurn.trim()}`);
+    this.handlers.transcript?.("lead", this.heardThisTurn.trim(), "turn");
     this.heardThisTurn = "";
   }
 
@@ -426,6 +432,7 @@ export class LiveAgent {
     if (this.saidThisTurn) {
       console.info(`[agentsdr agent] agent (${why}):`, this.saidThisTurn.trim());
       this.handlers.trace(`agent (${why}): ${this.saidThisTurn.trim()}`);
+      this.handlers.transcript?.("agent", this.saidThisTurn.trim(), why === "interrupted" ? "interrupted" : "turn");
     }
     this.saidThisTurn = "";
   }

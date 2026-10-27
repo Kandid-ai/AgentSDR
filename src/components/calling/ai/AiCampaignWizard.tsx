@@ -16,6 +16,7 @@ import {
   RiUserAddLine,
 } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
+import { VoicePreviewButton } from "@/components/calls/VoicePreviewButton";
 import * as Input from "@/components/alignui/input";
 import * as Select from "@/components/alignui/select";
 import * as Textarea from "@/components/alignui/textarea";
@@ -341,13 +342,18 @@ export function AiCampaignWizard() {
                     <TextField label="Agent name" value={agentName} onChange={setAgentName} placeholder={DEFAULT_AGENT_NAME} maxLength={MAX_AGENT_NAME_CHARS + 10} />
                     <div>
                       <label className="mb-1.5 block text-label-sm text-text-strong-950">Voice</label>
-                      <Select.Root size="small" value={agentVoice} onValueChange={setAgentVoice}>
-                        <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
-                        <Select.Content>
-                          <Select.Item value={DEFAULT_VOICE}>Default ({DEFAULT_AGENT_VOICE})</Select.Item>
-                          {AGENT_VOICES.map((voice) => <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>)}
-                        </Select.Content>
-                      </Select.Root>
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          <Select.Root size="small" value={agentVoice} onValueChange={setAgentVoice}>
+                            <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
+                            <Select.Content>
+                              <Select.Item value={DEFAULT_VOICE}>Default ({DEFAULT_AGENT_VOICE})</Select.Item>
+                              {AGENT_VOICES.map((voice) => <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>)}
+                            </Select.Content>
+                          </Select.Root>
+                        </div>
+                        <VoicePreviewButton voice={agentVoice} name={agentName} />
+                      </div>
                     </div>
                   </div>
                   {!handover && (

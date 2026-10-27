@@ -16,6 +16,7 @@ import * as Input from "@/components/alignui/input";
 import * as Select from "@/components/alignui/select";
 import * as Textarea from "@/components/alignui/textarea";
 import { AgentRehearsal } from "@/components/calls/AgentRehearsal";
+import { AgentVoiceRehearsal } from "@/components/calls/AgentVoiceRehearsal";
 import {
   AI_CAMPAIGN_MAX_DELAY_HOURS,
   AI_CAMPAIGN_MAX_INSTRUCTIONS_CHARS,
@@ -64,7 +65,9 @@ export function AiStepsEditor({
   emptyText: string;
 }) {
   const [units, setUnits] = useState<Record<string, Unit>>({});
-  const [rehearsing, setRehearsing] = useState<string | null>(null);
+  const [rehearsing, setRehearsing] = useState<{ stepId: string; mode: "voice" | "text" } | null>(null);
+  const toggleRehearsal = (stepId: string, mode: "voice" | "text") =>
+    setRehearsing(rehearsing?.stepId === stepId && rehearsing.mode === mode ? null : { stepId, mode });
   /** Step ids that existed when the page loaded (so are on the server) — a rehearsal reads the saved step. */
   const [savedIds] = useState(() => new Set(steps.map((step) => step.id)));
 
@@ -199,25 +202,45 @@ export function AiStepsEditor({
                       placeholder="On top of the campaign instructions: e.g. “Second try: mention you called yesterday.”"
                     />
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <Button.Root
-                        variant="neutral"
-                        mode="stroke"
-                        size="xsmall"
-                        onClick={() => setRehearsing(rehearsing === step.id ? null : step.id)}
-                        aria-expanded={rehearsing === step.id}
-                      >
-                        <Button.Icon as={RiVoiceprintLine} />
-                        {rehearsing === step.id ? "Close rehearsal" : "Rehearse this call"}
-                      </Button.Root>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button.Root
+                          variant="neutral"
+                          mode="stroke"
+                          size="xsmall"
+                          onClick={() => toggleRehearsal(step.id, "voice")}
+                          aria-expanded={rehearsing?.stepId === step.id && rehearsing.mode === "voice"}
+                        >
+                          <Button.Icon as={RiPhoneLine} />
+                          {rehearsing?.stepId === step.id && rehearsing.mode === "voice" ? "Close rehearsal call" : "Rehearsal call"}
+                        </Button.Root>
+                        <Button.Root
+                          variant="neutral"
+                          mode="ghost"
+                          size="xsmall"
+                          onClick={() => toggleRehearsal(step.id, "text")}
+                          aria-expanded={rehearsing?.stepId === step.id && rehearsing.mode === "text"}
+                        >
+                          <Button.Icon as={RiVoiceprintLine} />
+                          {rehearsing?.stepId === step.id && rehearsing.mode === "text" ? "Close" : "Rehearse by typing"}
+                        </Button.Root>
+                      </div>
                       <span className="text-paragraph-xs tabular-nums text-text-soft-400">{step.instructions.length}/{AI_CAMPAIGN_MAX_INSTRUCTIONS_CHARS}</span>
                     </div>
-                    {rehearsing === step.id && (
+                    {rehearsing?.stepId === step.id && (
                       <div className="mt-3 rounded-xl bg-bg-weak-50 p-3 ring-1 ring-inset ring-stroke-soft-200">
                         {!savedIds.has(step.id) && (
                           <p className="mb-2 text-paragraph-xs text-warning-dark">This step is new: save the sequence first so the rehearsal uses it.</p>
                         )}
-                        <p className="mb-2 text-paragraph-xs text-text-sub-600">Plays the agent against you in text, with the campaign&apos;s last saved instructions and this step. Nothing is placed or saved.</p>
-                        <AgentRehearsal campaignId={campaignId} stepId={step.id} name={agentName ?? undefined} voice={agentVoice ?? undefined} />
+                        <p className="mb-2 text-paragraph-xs text-text-sub-600">
+                          {rehearsing.mode === "voice"
+                            ? "A call with the agent in your browser, with the campaign's last saved instructions, this step, its voice and goal. Nothing is placed or saved."
+                            : "Plays the agent against you in text, with the campaign's last saved instructions and this step. Nothing is placed or saved."}
+                        </p>
+                        {rehearsing.mode === "voice" ? (
+                          <AgentVoiceRehearsal key={step.id} campaignId={campaignId} stepId={step.id} name={agentName ?? undefined} voice={agentVoice ?? undefined} />
+                        ) : (
+                          <AgentRehearsal campaignId={campaignId} stepId={step.id} name={agentName ?? undefined} voice={agentVoice ?? undefined} />
+                        )}
                       </div>
                     )}
                   </div>

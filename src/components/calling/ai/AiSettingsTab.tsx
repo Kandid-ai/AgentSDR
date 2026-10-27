@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { RiArchiveLine, RiErrorWarningLine, RiLoader4Line, RiPauseCircleLine, RiPlayCircleLine, RiSaveLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
+import { VoicePreviewButton } from "@/components/calls/VoicePreviewButton";
 import * as Select from "@/components/alignui/select";
 import * as Textarea from "@/components/alignui/textarea";
 import { Frame, FrameFooter, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
@@ -201,13 +202,18 @@ export function AiSettingsTab({
             />
             <div>
               <label className="mb-1.5 block text-label-sm text-text-strong-950">Voice</label>
-              <Select.Root size="small" value={draft.agentVoice} onValueChange={(value) => set("agentVoice", value)}>
-                <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
-                <Select.Content>
-                  <Select.Item value={DEFAULT_VOICE}>Default ({DEFAULT_AGENT_VOICE})</Select.Item>
-                  {AGENT_VOICES.map((voice) => <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>)}
-                </Select.Content>
-              </Select.Root>
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <Select.Root size="small" value={draft.agentVoice} onValueChange={(value) => set("agentVoice", value)}>
+                    <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
+                    <Select.Content>
+                      <Select.Item value={DEFAULT_VOICE}>Default ({DEFAULT_AGENT_VOICE})</Select.Item>
+                      {AGENT_VOICES.map((voice) => <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>)}
+                    </Select.Content>
+                  </Select.Root>
+                </div>
+                <VoicePreviewButton voice={draft.agentVoice} name={draft.agentName} />
+              </div>
             </div>
           </div>
         </FramePanel>

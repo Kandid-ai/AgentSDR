@@ -4,6 +4,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crmKnowledgeDocuments, crmKnowledgeDocumentVersions } from "@/lib/crm/schema";
 import { inOrg } from "@/lib/tenancy/scope";
+import { pcm16Wav } from "../../../extensions/whatsapp-recorder/src/wav";
 import { goalGuidance, loadAgentContext, type AgentPromptContext } from "./agentContext";
 import {
   AGENT_OUTCOMES,
@@ -115,7 +116,21 @@ export async function mintAgentToken(row: CallSessionRow, request: AgentTokenReq
     throw new CallApiError(409, "This call is already over");
   }
   const [knowledge, context] = await Promise.all([agentKnowledge(), loadAgentContext(row)]);
+  return { ...(await mintLiveToken(liveSetup(request, knowledge, context))), saveHeardAudio: saveHeardAudio() };
+}
 
+/**
+ * A token for a voice rehearsal in the rep's own browser (AgentVoiceRehearsal):
+ * the same setup a campaign call would get, with no call and nothing saved.
+ */
+export async function mintRehearsalToken(request: AgentTokenRequest, knowledge: KnowledgeDocument[], context: AgentPromptContext): Promise<AgentTokenResponse> {
+  return mintLiveToken(liveSetup(request, knowledge, context));
+}
+
+/** A single-use ephemeral token with `setup` locked in; the API key stays here. */
+async function mintLiveToken(setup: ReturnType<typeof liveSetup>): Promise<AgentTokenResponse> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) throw new CallApiError(409, "The AI voice agent is not set up on this server (GEMINI_API_KEY is missing)");
   const now = Date.now();
   const response = await fetch(`${API_BASE}/v1alpha/auth_tokens`, {
     method: "POST",
@@ -124,7 +139,7 @@ export async function mintAgentToken(row: CallSessionRow, request: AgentTokenReq
       uses: 1,
       expireTime: new Date(now + TOKEN_LIFETIME_MS).toISOString(),
       newSessionExpireTime: new Date(now + NEW_SESSION_WINDOW_MS).toISOString(),
-      bidiGenerateContentSetup: liveSetup(request, knowledge, context),
+      bidiGenerateContentSetup: setup,
     }),
   });
   const body = (await response.json().catch(() => null)) as { name?: string; error?: { message?: string } } | null;
@@ -134,7 +149,7 @@ export async function mintAgentToken(row: CallSessionRow, request: AgentTokenReq
     // and never Gemini's reason (23 Oct 2026).
     throw new CallApiError(424, `Gemini refused the agent session: ${body?.error?.message ?? `HTTP ${response.status}`}`);
   }
-  return { token: body.name, model: `models/${LIVE_MODEL}`, websocketUrl: WEBSOCKET_URL, saveHeardAudio: saveHeardAudio() };
+  return { token: body.name, model: `models/${LIVE_MODEL}`, websocketUrl: WEBSOCKET_URL };
 }
 
 /** The Live session, in the API's own JSON shape (BidiGenerateContentSetup). */
@@ -418,4 +433,127 @@ export async function rehearseAgent(
       }
     });
   });
+}
+
+// --- voice sample -------------------------------------------------------------------
+
+/** Samples kept in memory, by voice and name: one Live session per voice is enough. */
+const voiceSamples = new Map<string, Promise<Uint8Array<ArrayBuffer>>>();
+const MAX_VOICE_SAMPLES = 64;
+
+/**
+ * A few seconds of `voice` saying a typical opening, as a WAV — spoken by the
+ * same native-audio Live model the calls use, not a separate TTS voice, so
+ * it sounds like a call will. For the ▶ next to the voice picker.
+ */
+export function voiceSample(voice: string | null, name: string | null): Promise<Uint8Array<ArrayBuffer>> {
+  const voiceId = parseAgentVoice(voice) ?? DEFAULT_AGENT_VOICE;
+  const agentName = parseAgentName(name) ?? DEFAULT_AGENT_NAME;
+  const key = `${voiceId}|${agentName}`;
+  let sample = voiceSamples.get(key);
+  if (!sample) {
+    if (voiceSamples.size >= MAX_VOICE_SAMPLES) voiceSamples.delete(voiceSamples.keys().next().value!);
+    sample = speakSample(voiceId, agentName);
+    voiceSamples.set(key, sample);
+    sample.catch(() => voiceSamples.delete(key));
+  }
+  return sample;
+}
+
+async function speakSample(voice: string, name: string): Promise<Uint8Array<ArrayBuffer>> {
+  const female = (AGENT_VOICES.find((option) => option.id === voice)?.gender ?? "female") === "female";
+  // One line per session: given two, the live model often spoke only one (27 Oct 2026).
+  const lines = [
+    `Hi, this is ${name} — did I catch you at an okay time?`,
+    `Namaste, main ${name} bol ${female ? "rahi" : "raha"} hoon — kya abhi do minute baat ho sakti hai?`,
+  ];
+  const spoken = await Promise.all(lines.map((line) => speakLine(voice, line)));
+  const rate = spoken[0]!.rate;
+  const pause = new Int16Array(Math.round(rate * 0.5));
+  const parts = spoken.flatMap((part, index) => (index ? [pause, part.pcm] : [part.pcm]));
+  const pcm = new Int16Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    pcm.set(part, at);
+    at += part.length;
+  }
+  return pcm16Wav(pcm, rate);
+}
+
+/** One line in `voice`; about one session in four ends without a word, so it tries three times. */
+async function speakLine(voice: string, line: string): Promise<{ pcm: Int16Array; rate: number }> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const spoken = await speakOnce(voice, line);
+      if (spoken.pcm.length > spoken.rate / 2) return spoken;
+      lastError = new CallApiError(424, "Gemini returned no speech for the sample");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+async function speakOnce(voice: string, line: string): Promise<{ pcm: Int16Array; rate: number }> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) throw new CallApiError(409, "The AI voice agent is not set up on this server (GEMINI_API_KEY is missing)");
+  const chunks: Int16Array[] = [];
+  let rate = 24_000;
+  await new Promise<void>((resolve, reject) => {
+    const socket = new WebSocket(`${REHEARSAL_URL}?key=${encodeURIComponent(apiKey)}`);
+    socket.binaryType = "arraybuffer";
+    let settled = false;
+    const finish = (error: CallApiError | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        socket.close();
+      } catch {}
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(() => finish(new CallApiError(504, "Gemini did not speak the sample in time")), REHEARSAL_TIMEOUT_MS);
+    socket.addEventListener("open", () =>
+      socket.send(JSON.stringify({
+        setup: {
+          model: `models/${LIVE_MODEL}`,
+          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
+          systemInstruction: {
+            parts: [{ text: "You are a voice actor recording a phone-call demo. Speak the line you are given exactly, warmly and naturally, as the caller would, and say nothing else." }],
+          },
+        },
+      })),
+    );
+    socket.addEventListener("error", () => finish(new CallApiError(424, "Could not reach Gemini Live")));
+    socket.addEventListener("close", (event) => finish(chunks.length ? null : new CallApiError(424, `Gemini closed the session${event.reason ? `: ${event.reason}` : ""}`)));
+    socket.addEventListener("message", (event) => {
+      let message: { setupComplete?: unknown; serverContent?: { modelTurn?: { parts?: { inlineData?: { mimeType?: string; data?: string } }[] }; turnComplete?: boolean } };
+      try {
+        message = JSON.parse(typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data as ArrayBuffer));
+      } catch {
+        return;
+      }
+      if (message.setupComplete) {
+        socket.send(JSON.stringify({ clientContent: { turns: [{ role: "user", parts: [{ text: line }] }], turnComplete: true } }));
+        return;
+      }
+      for (const part of message.serverContent?.modelTurn?.parts ?? []) {
+        const audio = part.inlineData;
+        if (!audio?.data || !audio.mimeType?.startsWith("audio/pcm")) continue;
+        rate = Number(/rate=(\d+)/.exec(audio.mimeType)?.[1] ?? rate);
+        const bytes = Buffer.from(audio.data, "base64");
+        chunks.push(new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)));
+      }
+      if (message.serverContent?.turnComplete) finish(null);
+    });
+  });
+  const pcm = new Int16Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+  let at = 0;
+  for (const chunk of chunks) {
+    pcm.set(chunk, at);
+    at += chunk.length;
+  }
+  return { pcm, rate };
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { RiArrowDownSLine, RiLoader4Line, RiPhoneLine, RiRobot2Line } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
+import { VoicePreviewButton } from "@/components/calls/VoicePreviewButton";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Modal from "@/components/alignui/modal";
 import * as Select from "@/components/alignui/select";
@@ -363,14 +364,19 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
               </div>
               <div className="space-y-1.5">
                 <label className="block text-label-sm text-text-strong-950">Voice</label>
-                <Select.Root size="small" value={agentVoice} onValueChange={setAgentVoice} disabled={busy}>
-                  <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
-                  <Select.Content>
-                    {AGENT_VOICES.map((voice) => (
-                      <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Root>
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <Select.Root size="small" value={agentVoice} onValueChange={setAgentVoice} disabled={busy}>
+                      <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
+                      <Select.Content>
+                        {AGENT_VOICES.map((voice) => (
+                          <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Root>
+                  </div>
+                  <VoicePreviewButton voice={agentVoice} name={agentName} />
+                </div>
               </div>
             </div>
             <div className="space-y-1.5">
