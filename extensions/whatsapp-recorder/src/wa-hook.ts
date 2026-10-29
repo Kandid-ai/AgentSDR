@@ -43,8 +43,9 @@
  */
 
 import { createDownsampler } from "./downsample";
-import type { StationInboundMessage } from "../../../src/lib/calls/stationContract";
-import { isNonPersonalJid, parseMessageId, serializedMessageId, storeMessage } from "./inbound";
+import { INCOMING_CALL_MAX_AGE_MS, type StationInboundMessage } from "../../../src/lib/calls/stationContract";
+import { isAcceptLabel, maskDigits } from "./incoming";
+import { isNonPersonalJid, jidToPhone, parseMessageId, serializedMessageId, storeMessage } from "./inbound";
 import {
   AGENT_MESSAGING_SOURCE,
   AGENT_SOURCE,
@@ -394,6 +395,8 @@ function install(): void {
       else if (data.type === "agent-hangup") agentHangup(rig);
     }
     else if (data.type === "resume-audio") resumeAudio();
+    // Station mode answering an incoming call: wa-agent armed this tab first.
+    else if (data.type === "accept-call" && data.callId) void acceptIncoming(data.callId);
     else if (data.type === "probe") post({ source: HOOK_SOURCE, type: "probe-result", callId: session?.callId ?? finishingCallId });
     else if (data.type === "end-call" && data.callId) {
       // Hang up with WhatsApp's own button; if the call is already over
@@ -1180,6 +1183,7 @@ function enableMessaging(): void {
   messaging.enabledAt = Date.now();
   postMessagingSource();
   tryAttachMessaging();
+  startIncomingCalls();
 }
 
 function postMessagingSource(): void {
@@ -1491,4 +1495,323 @@ function postMessaging(message: HookToAgentMessaging): void {
   } catch {
     // nothing to tell
   }
+}
+
+// =============================================================================
+// --- incoming calls (calling stations only) ----------------------------------
+// =============================================================================
+//
+// On a calling station a lead who calls the number back is answered by the AI
+// agent. This notices the call ringing and tells wa-agent (which keeps it for
+// the call worker); it never answers by itself — Accept is pressed only when
+// wa-agent asks (accept-call), after AgentSDR chose to answer and the tab was
+// armed. Started with messaging, so only in station mode: a rep's own
+// WhatsApp Web is never watched.
+//
+// Two sources: WhatsApp's call store (WAWebCallCollection, as whatsapp-web.js
+// reads it: an "add" per call, with peerJid, isVideo, isGroup, offerTime in
+// seconds, and outgoing / isIncoming), and, should that module be missing or
+// renamed, the page's incoming-call screen — offered with no number when the
+// store said nothing about it within INCOMING_DOM_FALLBACK_MS.
+
+type WaCallModel = {
+  id?: unknown;
+  peerJid?: WaWid | string;
+  isVideo?: boolean;
+  isGroup?: boolean;
+  offerTime?: number;
+  isIncoming?: boolean;
+  outgoing?: boolean;
+  attributes?: Record<string, unknown>;
+  get?: (name: string) => unknown;
+};
+type WaCallCollection = {
+  on?: (event: string, listener: (model: WaCallModel) => void) => void;
+  getModelsArray?: () => WaCallModel[];
+  models?: WaCallModel[];
+};
+
+/** The incoming-call screen is looked for this often. */
+const INCOMING_DOM_POLL_MS = 1_000;
+/** A screen the store said nothing about for this long is offered from the page. */
+const INCOMING_DOM_FALLBACK_MS = 2_000;
+/** Accept is looked for this long (and pressed at most ACCEPT_MAX_PRESSES times, this far apart). */
+const ACCEPT_WAIT_MS = 10_000;
+const ACCEPT_MAX_PRESSES = 3;
+const ACCEPT_REPRESS_MS = 1_500;
+const INCOMING_SEEN_MAX = 500;
+
+const incoming = {
+  started: false,
+  attached: false,
+  timer: 0,
+  /** Call ids passed on (or skipped), oldest first. */
+  seen: new Set<string>(),
+  /** When the store last reported a ringing call. */
+  lastStoreAt: 0,
+  /** The incoming-call screen showing now: since when, and the id it was offered under (null: not offered). */
+  screen: null as { appearedAt: number; offeredId: string | null; settled: boolean } | null,
+  loggedButtons: false,
+  loggedMissingStore: false,
+  loggedShape: false,
+};
+
+function startIncomingCalls(): void {
+  if (incoming.started) return;
+  incoming.started = true;
+  tryAttachCalls();
+  window.setInterval(watchIncomingScreen, INCOMING_DOM_POLL_MS);
+}
+
+/** WhatsApp's call collection, under whichever of its known names this version has. */
+function callCollection(): { collection: WaCallCollection; via: string } | null {
+  const callModule = waModule<WaCallCollection & { CallCollection?: WaCallCollection; default?: WaCallCollection }>("WAWebCallCollection");
+  const candidates: [string, unknown][] = [
+    ["WAWebCallCollection", callModule],
+    ["WAWebCallCollection.CallCollection", callModule?.CallCollection],
+    ["WAWebCallCollection.default", callModule?.default],
+    ["WAWebCollections.Call", (waCollections() as { Call?: unknown } | null)?.Call],
+  ];
+  for (const [via, candidate] of candidates) {
+    if (candidate && typeof (candidate as WaCallCollection).on === "function") return { collection: candidate as WaCallCollection, via };
+  }
+  return null;
+}
+
+function tryAttachCalls(): void {
+  window.clearTimeout(incoming.timer);
+  if (incoming.attached) return;
+  try {
+    const found = callCollection();
+    if (found) {
+      found.collection.on?.("add", onCallAdded);
+      found.collection.on?.("remove", onCallRemoved);
+      incoming.attached = true;
+      messagingLog(`incoming calls: listening to WhatsApp's call store (${found.via})`);
+      // A call already ringing when this attached.
+      for (const model of modelsOf(found.collection)) onCallAdded(model);
+      return;
+    }
+  } catch (error) {
+    messagingLog(`incoming calls: could not attach yet: ${describe(error)}`);
+  }
+  const fast = Date.now() - messaging.enabledAt < MESSAGING_ATTACH_FAST_FOR_MS;
+  if (!fast && !incoming.loggedMissingStore) {
+    incoming.loggedMissingStore = true;
+    messagingLog("incoming calls: WhatsApp's call store not found — watching the page's incoming-call screen only");
+  }
+  incoming.timer = window.setTimeout(tryAttachCalls, fast ? MESSAGING_ATTACH_POLL_MS : MESSAGING_ATTACH_SLOW_POLL_MS);
+}
+
+/** A call model's field: a property, else its attributes (Backbone-style models keep them there). */
+function callField(model: WaCallModel, name: keyof WaCallModel): unknown {
+  const direct = (model as Record<string, unknown>)[name];
+  if (direct !== undefined) return direct;
+  try {
+    return model.attributes?.[name] ?? model.get?.(name);
+  } catch {
+    return undefined;
+  }
+}
+
+function callIdOf(model: WaCallModel): string | null {
+  const id = callField(model, "id");
+  if (typeof id === "string" && id) return id;
+  if (typeof id === "number") return String(id);
+  const serialized = (id as { _serialized?: unknown } | null)?._serialized;
+  return typeof serialized === "string" && serialized ? serialized : null;
+}
+
+function onCallAdded(model: WaCallModel): void {
+  try {
+    if (!model) return;
+    const id = callIdOf(model);
+    if (!id || incoming.seen.has(id)) return;
+    const isIncoming = callField(model, "isIncoming");
+    const outgoing = callField(model, "outgoing");
+    const direction = isIncoming === true || outgoing === false ? "in" : isIncoming === false || outgoing === true ? "out" : null;
+    if (!direction) {
+      if (!incoming.loggedShape) {
+        incoming.loggedShape = true;
+        const keys = [...Object.keys(model), ...Object.keys(model.attributes ?? {})].slice(0, 40).join(", ");
+        messagingLog(`incoming calls: a call in the store says neither isIncoming nor outgoing (fields: ${keys}) — left to the page watch`);
+      }
+      return;
+    }
+    remember(id);
+    if (direction === "out") return;
+    const offerTime = callField(model, "offerTime");
+    const at = typeof offerTime === "number" && offerTime > 0 ? offerTime * 1000 : Date.now();
+    if (Date.now() - at > INCOMING_CALL_MAX_AGE_MS) return; // an old call the store still holds
+    const isVideo = callField(model, "isVideo") === true;
+    if (callField(model, "isGroup") === true) {
+      messagingLog("incoming calls: a group call is ringing — not offered");
+      return;
+    }
+    const peer = callField(model, "peerJid") as WaWid | string | undefined;
+    const jid = widString(peer);
+    const lidDigits = jid?.endsWith("@lid") ? lidToPhoneDigits(peer) : null;
+    const phone = jidToPhone(jid) ?? (lidDigits ? `+${lidDigits}` : null);
+    incoming.lastStoreAt = Date.now();
+    messagingLog(`incoming calls: a ${isVideo ? "video" : "voice"} call is ringing (caller ${jidKind(jid)}${phone ? "" : ", number unknown"})`);
+    postMessaging({
+      source: HOOK_MESSAGING_SOURCE,
+      type: "incoming-call",
+      call: { waCallId: id, phone, callerName: contactName(peer), isVideo, isGroup: false, at },
+    });
+  } catch (error) {
+    messagingLog(`incoming calls: a call could not be read: ${describe(error)}`);
+  }
+}
+
+function onCallRemoved(model: WaCallModel): void {
+  try {
+    const id = model ? callIdOf(model) : null;
+    if (id) postMessaging({ source: HOOK_MESSAGING_SOURCE, type: "incoming-call-ended", waCallId: id });
+  } catch {
+    // never into WhatsApp's code
+  }
+}
+
+function remember(id: string): void {
+  incoming.seen.add(id);
+  if (incoming.seen.size > INCOMING_SEEN_MAX) {
+    const oldest = incoming.seen.values().next().value;
+    if (oldest !== undefined) incoming.seen.delete(oldest);
+  }
+}
+
+/** The page's incoming-call screen: logs its buttons once, and offers the call itself if the store did not. */
+function watchIncomingScreen(): void {
+  try {
+    const found = findAcceptButton();
+    if (!found) {
+      const gone = incoming.screen;
+      incoming.screen = null;
+      if (gone?.offeredId) postMessaging({ source: HOOK_MESSAGING_SOURCE, type: "incoming-call-ended", waCallId: gone.offeredId });
+      return;
+    }
+    if (!incoming.screen) {
+      incoming.screen = { appearedAt: Date.now(), offeredId: null, settled: false };
+      if (!incoming.loggedButtons) {
+        incoming.loggedButtons = true;
+        messagingLog(`incoming calls: the incoming-call screen shows ${found.where}; its buttons: ${found.labels}`);
+      }
+      return;
+    }
+    const screen = incoming.screen;
+    if (screen.settled || Date.now() - screen.appearedAt < INCOMING_DOM_FALLBACK_MS) return;
+    screen.settled = true;
+    // The store reported it (around when the screen appeared): nothing to add.
+    if (incoming.lastStoreAt >= screen.appearedAt - 5_000) return;
+    screen.offeredId = `dom-${screen.appearedAt}`;
+    messagingLog("incoming calls: the page shows an incoming call the store did not report — offering it with no number");
+    postMessaging({
+      source: HOOK_MESSAGING_SOURCE,
+      type: "incoming-call",
+      call: { waCallId: screen.offeredId, phone: null, callerName: null, isVideo: /video/i.test(found.labels), isGroup: false, at: screen.appearedAt },
+    });
+  } catch (error) {
+    messagingLog(`incoming calls: the page watch failed: ${describe(error)}`);
+  }
+}
+
+/** WhatsApp's Accept on an incoming call, in the page or its picture-in-picture window — never Decline. */
+function findAcceptButton(): { button: HTMLElement; labels: string; where: string } | null {
+  const documents = callDocuments();
+  for (let i = 0; i < documents.length; i++) {
+    const matches = Array.from(documents[i].querySelectorAll<HTMLElement>("button, [role='button']")).filter((element) => {
+      const icon = element.querySelector("[data-icon]")?.getAttribute("data-icon") ?? "";
+      return (
+        isAcceptLabel(element.getAttribute("aria-label")) ||
+        isAcceptLabel(element.textContent) ||
+        (/accept|answer/i.test(icon) && !/decline|reject/i.test(icon))
+      );
+    });
+    // The innermost: a press on a wrapper would miss the button's own handler.
+    const button = matches.find((element) => !matches.some((other) => other !== element && element.contains(other)));
+    if (button) return { button, labels: callButtonLabels(button), where: i === 0 ? "on the page" : "in picture-in-picture" };
+  }
+  return null;
+}
+
+/** The labels of the buttons around `button` (its call screen), digits masked — for the log. */
+function callButtonLabels(button: HTMLElement): string {
+  let container: HTMLElement = button;
+  for (let level = 0; level < 8 && container.parentElement; level++) {
+    container = container.parentElement;
+    if (container.querySelectorAll("button, [role='button']").length >= 2) break;
+  }
+  return describeButtons(container);
+}
+
+function describeButtons(root: ParentNode): string {
+  const labels = Array.from(root.querySelectorAll<HTMLElement>("button, [role='button']"))
+    .map((element) => {
+      const icon = element.querySelector("[data-icon]")?.getAttribute("data-icon");
+      return maskDigits((element.getAttribute("aria-label") || element.textContent?.trim() || (icon ? `icon:${icon}` : "")).slice(0, 40));
+    })
+    .filter(Boolean);
+  return [...new Set(labels)].slice(0, 12).join(" | ");
+}
+
+/**
+ * Presses Accept on the call ringing now, for the armed call `callId`, and
+ * reports whether it took (the button went away). Up to ACCEPT_WAIT_MS for
+ * the button to show; pressed again if a press did not take.
+ */
+async function acceptIncoming(callId: string): Promise<void> {
+  const deadline = Date.now() + ACCEPT_WAIT_MS;
+  let presses = 0;
+  let lastPress = 0;
+  let labels = "";
+  let showing = false;
+  while (Date.now() < deadline) {
+    const found = findAcceptButton();
+    showing = Boolean(found);
+    if (!found) {
+      if (presses) break; // gone after a press: accepted
+    } else {
+      labels = found.labels;
+      if (presses < ACCEPT_MAX_PRESSES && (presses === 0 || Date.now() - lastPress >= ACCEPT_REPRESS_MS)) {
+        pressLikeUser(found.button);
+        presses += 1;
+        lastPress = Date.now();
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (!labels) {
+    // What call controls there are, to see why Accept was not found.
+    labels = callDocuments()
+      .map((doc) => describeButtons(doc.querySelector("[role='dialog']") ?? doc.body ?? doc))
+      .filter(Boolean)
+      .join(" || ")
+      .slice(0, 400);
+  }
+  post({ source: HOOK_SOURCE, type: "accept-result", callId, clicked: presses > 0 && !showing, labels });
+}
+
+/** The events of a real mouse click, made in the element's own window (the page, or picture-in-picture). */
+function pressLikeUser(element: HTMLElement): void {
+  const view = (element.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+  const rect = element.getBoundingClientRect();
+  const at = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    view,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+    button: 0,
+  };
+  const pointer = { ...at, pointerId: 1, pointerType: "mouse", isPrimary: true };
+  element.dispatchEvent(new view.PointerEvent("pointerover", pointer));
+  element.dispatchEvent(new view.MouseEvent("mouseover", at));
+  element.dispatchEvent(new view.PointerEvent("pointerdown", { ...pointer, buttons: 1 }));
+  element.dispatchEvent(new view.MouseEvent("mousedown", { ...at, buttons: 1 }));
+  element.focus();
+  element.dispatchEvent(new view.PointerEvent("pointerup", pointer));
+  element.dispatchEvent(new view.MouseEvent("mouseup", at));
+  element.dispatchEvent(new view.MouseEvent("click", { ...at, detail: 1 }));
 }

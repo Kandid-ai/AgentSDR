@@ -33,6 +33,8 @@ import type { CallTimelineEntry, CloudCallPhase, ProxyProtocol, StationLauncher,
 
 /** Who talks on a call: the rep, the AI agent in the rep's browser, or the AI agent on a cloud station. */
 export type CallMode = "rep" | "agent" | "agent_cloud";
+/** Who placed the call: AgentSDR, or the lead calling a station back (the AI agent answered). */
+export type CallDirection = "outbound" | "inbound";
 
 /**
  * An outbound IP (static ISP / residential proxy) a calling number's browser
@@ -428,6 +430,8 @@ export const callSessions = pgTable(
     claimedBy: text("claimed_by"),
     /** A cloud call's timed steps, worker's and extension's, posted by the worker. scripts/add-call-session-timeline.ts. */
     timeline: jsonb("timeline").$type<CallTimelineEntry[]>(),
+    /** Who placed it: AgentSDR ('outbound') or the lead, calling a station back ('inbound'). scripts/add-call-session-direction.ts. */
+    direction: text("direction").notNull().default("outbound").$type<CallDirection>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -439,6 +443,7 @@ export const callSessions = pgTable(
       name: "call_sessions_station_fk",
     }).onDelete("set null"),
     check("call_sessions_mode_chk", sql`${table.mode} IN ('rep', 'agent', 'agent_cloud')`),
+    check("call_sessions_direction_chk", sql`${table.direction} IN ('outbound', 'inbound')`),
     index("call_sessions_cloud_open_idx")
       .on(table.createdAt)
       .where(sql`${table.mode} = 'agent_cloud' AND ${table.status} IN ('pending', 'in_progress')`),

@@ -17,6 +17,7 @@ import type {
   RecorderLead,
 } from "../../../src/lib/calls/contract";
 import type {
+  StationIncomingCall,
   StationInboundMessage,
   StationInboundSource,
   StationSendResult,
@@ -47,6 +48,11 @@ export type ActiveCall = {
    * phases go to the server instead.
    */
   station?: boolean;
+  /**
+   * An incoming call the station answers (station mode only). Never dialed:
+   * `dialedAt` is set when it is answered, so a reloaded tab never calls out.
+   */
+  inbound?: boolean;
 };
 
 /** What the service worker keeps after a call ends, for the call card's status checks. */
@@ -86,7 +92,13 @@ export type AgentCommand =
    */
   | { target: "wa-agent"; type: "send-message"; phone: string; text: string; afterReload: boolean }
   /** Read unread chats from the chat list (the DOM fallback). Answered with a WaScanResult. */
-  | { target: "wa-agent"; type: "scan-inbound" };
+  | { target: "wa-agent"; type: "scan-inbound" }
+  /**
+   * Answer the call ringing in this tab as `call` (station mode): arm, start
+   * the agent, press Accept. Answered with a BridgeResult once armed; the
+   * call's outcome is reported like a placed call's.
+   */
+  | { target: "wa-agent"; type: "answer"; call: WaCall };
 
 /**
  * wa-agent's answer to send-message: the station's result, or `reload` — the
@@ -144,7 +156,11 @@ export type BackgroundMessage =
   /** Messages read from the store, for the call worker's next take. */
   | { target: "background"; type: "wa:inbound"; messages: StationInboundMessage[] }
   /** A messaging step for the station's log (drainLog). */
-  | { target: "background"; type: "wa:msg-log"; step: string };
+  | { target: "background"; type: "wa:msg-log"; step: string }
+  /** A WhatsApp call is ringing on this number (station mode), for the call worker's next takeIncomingCalls. */
+  | { target: "background"; type: "wa:incoming-call"; call: StationIncomingCall }
+  /** That ring stopped (WhatsApp removed the call). */
+  | { target: "background"; type: "wa:incoming-ended"; waCallId: string };
 
 /** What the AI agent reports through record_outcome (the body of POST .../outcome). */
 export type AgentOutcomeReport = { outcome: AgentOutcomeKind; summary: string | null; when: string | null; whenAt?: string | null };

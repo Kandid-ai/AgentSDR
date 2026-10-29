@@ -9,7 +9,7 @@ import { inOrg } from "@/lib/tenancy/scope";
 import { whatsappAccounts, whatsappChats, whatsappMessages } from "@/lib/whatsapp/schema";
 import { AGENT_OUTCOME_LABELS, type AgentOutcome } from "./contract";
 import type { AiCampaignGoal } from "./aiCampaigns/contract";
-import { callCampaignContacts, callCampaigns, callSessions } from "./schema";
+import { callCampaignContacts, callCampaigns, callSessions, type CallDirection } from "./schema";
 
 /**
  * What the AI agent knows about this moment beyond its brief: the date and
@@ -26,6 +26,8 @@ export type AgentPromptContext = {
   goal?: { goal: AiCampaignGoal; bookingUrl: string | null } | null;
   /** The organization's calling instructions (Settings → Instructions → Calling); null = the defaults. */
   callingInstructions?: AiInstructionBlock[] | null;
+  /** They called the station and the agent answered (src/lib/calls/incoming.ts). */
+  inbound?: boolean;
 };
 
 const MAX_PREVIOUS_CALLS = 6;
@@ -64,7 +66,7 @@ export type PreviousCall = { at: Date; status: string; outcome: AgentOutcome | n
 export type PreviousMessage = { at: Date; direction: "inbound" | "outbound"; body: string };
 
 /** The <history> section, newest call first; null when there is nothing to say. */
-export function formatHistory(calls: PreviousCall[], messages: PreviousMessage[], timeZone: string): string | null {
+export function formatHistory(calls: PreviousCall[], messages: PreviousMessage[], timeZone: string, inbound = false): string | null {
   if (!calls.length && !messages.length) return null;
   const zone = safeZone(timeZone);
   const day = (at: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: zone, day: "numeric", month: "short", year: "numeric" }).format(at);
@@ -96,9 +98,13 @@ export function formatHistory(calls: PreviousCall[], messages: PreviousMessage[]
     "<history>",
     ...lines,
     "</history>",
-    spoke
-      ? "You have spoken with them before: do not introduce yourself from scratch. Say you are calling back or following up and refer to what was said."
-      : "Earlier calls went unanswered: you may mention once that you tried before, briefly, and carry on as a first conversation.",
+    inbound
+      ? spoke
+        ? "They are calling you back after talking with you before: refer to what was said, and do not introduce yourself from scratch."
+        : "They are calling you back, most likely after a missed call or a message from you: thank them, and carry on as a first conversation."
+      : spoke
+        ? "You have spoken with them before: do not introduce yourself from scratch. Say you are calling back or following up and refer to what was said."
+        : "Earlier calls went unanswered: you may mention once that you tried before, briefly, and carry on as a first conversation.",
     "Use this to be natural, never to recite it.",
   ].join("\n");
 }
@@ -132,7 +138,7 @@ export function goalGuidance(goal: AiCampaignGoal): string[] {
   ];
 }
 
-type SessionRow = { id: string; personId: string; campaignContactId: string | null; createdAt: Date };
+type SessionRow = { id: string; personId: string; campaignContactId: string | null; createdAt: Date; direction?: CallDirection };
 
 /** The call's campaign goal, when its campaign contact belongs to an AI campaign. Runs in the organization's scope. */
 export async function loadCampaignGoal(campaignContactId: string | null): Promise<AgentPromptContext["goal"]> {
@@ -197,9 +203,10 @@ export async function loadAgentContext(row: SessionRow): Promise<AgentPromptCont
   ]);
   return {
     now: formatNow(new Date(), timeZone),
-    history: formatHistory(calls, messages.reverse(), timeZone),
+    history: formatHistory(calls, messages.reverse(), timeZone, row.direction === "inbound"),
     goal,
     callingInstructions,
+    inbound: row.direction === "inbound",
   };
 }
 

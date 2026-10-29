@@ -149,6 +149,8 @@ export type AiLeadActivity = {
     status: CallStatus;
     /** rep: a rep's own call; agent: the AI agent in a rep's browser; agent_cloud: the AI agent on a calling number. */
     mode: "rep" | "agent" | "agent_cloud";
+    /** inbound: they called the number back and the AI agent answered. */
+    direction: "outbound" | "inbound";
     /** The calling number it went out from (cloud calls). */
     numberName: string | null;
     result: AiActivityCallResult;
@@ -299,6 +301,7 @@ export function describeStepKey(stepKey: string): { phase: "reach" | "chase" | "
   if (key.startsWith("chase:")) return { phase: "chase", stepId: key.slice(6), label: "Chasing the booking" };
   if (key.startsWith("callback:")) return { phase: "system", stepId: null, label: `Call back ${key.slice(9)}` };
   if (key === "booking-link") return { phase: "system", stepId: null, label: "Booking link" };
+  if (key.startsWith("inbound:")) return { phase: "system", stepId: null, label: "They called back" };
   return { phase: "system", stepId: null, label: key };
 }
 

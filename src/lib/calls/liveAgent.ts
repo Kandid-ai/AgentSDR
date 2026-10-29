@@ -239,7 +239,13 @@ export function agentInstructions(
   const who = [lead?.name, lead?.company ?? null, lead?.detail].filter(Boolean).join(", ");
   return [
     `You are ${agentName}, on a live WhatsApp voice call with a real person. Everything you say is spoken aloud to them.`,
-    who ? `You are calling ${who}.` : "You do not know the person's name: ask it naturally if it matters.",
+    context.inbound
+      ? who
+        ? `${who} called you: they rang this number back, and you answered.`
+        : "Someone called this number and you answered. You do not know their name: ask it naturally."
+      : who
+        ? `You are calling ${who}.`
+        : "You do not know the person's name: ask it naturally if it matters.",
     ...(context.now ? [`It is now ${context.now}.`] : []),
     "",
     "What this call is for, from the sales rep who set it up:",
@@ -270,6 +276,16 @@ export function agentInstructions(
       ?.split("\n")
       .map((line) => fillCallingPlaceholders(line, { agentName, firstName }))
       .join("\n") ?? "",
+    ...(context.inbound
+      ? [
+          "",
+          "This call is incoming: they called you. Where the instructions above describe opening a call you placed (asking whether it is a good moment), answer the way a person picks up instead: a warm hello, your name and company, and thanks for calling back — for example \"Hi " +
+            (firstName ?? "there") +
+            ", this is " +
+            agentName +
+            " from <your company>, thanks for calling back!\" — then let them say why they called, or pick up from why you reached out.",
+        ]
+      : []),
     "",
     ...(context.goal
       ? goalGuidance(context.goal.goal)

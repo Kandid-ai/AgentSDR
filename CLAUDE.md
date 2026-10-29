@@ -494,6 +494,29 @@ sequences stop). A claimed job with no report in 2 minutes fails as
 and `services/call-worker/README.md`. So the Calling pages (`src/app/calling/layout.tsx`)
 are not gated on Unipile; only syncing Unipile numbers and `/whatsapp/campaigns` need it.
 
+### Incoming calls: the AI answers a lead who calls back
+
+A station's extension (0.22.0+, station mode only — a rep's WhatsApp Web
+never auto-answers) notices a call ringing on the number; the worker polls
+`agentsdrStation.takeIncomingCalls()` about once a second on each open, idle
+number and asks `POST /api/call-worker/stations/:id/incoming`
+(`src/lib/calls/incoming.ts`). It answers only a known lead (a Person with
+that number), not Do Not Contact, not video or group, on an active number
+this worker holds and that has no open call — at any hour (calling hours
+limit when we call, not when they do); anyone else rings out. Answering
+creates the `call_sessions` row already claimed, with `direction =
+'inbound'` (`scripts/add-call-session-direction.ts`), so the number is busy
+for the claim, the engine and messaging. A lead in an AI campaign gets that
+campaign's agent, knowledge and instructions (`composeAgentBrief` purpose
+`inbound`) and a step run `inbound:<call id>` that the engine settles like a
+placed call — but only a conversation moves the lead; a ring that never
+connected is not a sequence attempt (nor, for a rep campaign, an unanswered
+one). A lead who rang while the number was busy is called back first
+(`ai_next_at = now`). The prompt (`agentInstructions`, `formatHistory`, the
+transcription prompt) says they called us; `agentsdrStation.answerCall()`
+arms the hook before pressing Accept, so the agent's microphone and the
+recording work as on a placed call.
+
 ## WhatsApp messaging (Unipile)
 
 Reps link their WhatsApp number in the Unipile dashboard; AgentSDR reads it

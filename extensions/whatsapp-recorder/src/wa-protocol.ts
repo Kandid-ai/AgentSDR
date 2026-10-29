@@ -11,7 +11,7 @@
  * rep's own call.
  */
 
-import type { StationInboundMessage } from "../../../src/lib/calls/stationContract";
+import type { StationIncomingCall, StationInboundMessage } from "../../../src/lib/calls/stationContract";
 
 export const HOOK_SOURCE = "agentsdr-wa-hook";
 export const AGENT_SOURCE = "agentsdr-wa-agent";
@@ -32,7 +32,9 @@ export type AgentToHook =
   /** The lead talked over the agent: drop the agent's voice still queued. */
   | { source: typeof AGENT_SOURCE; type: "agent-interrupt"; callId: string }
   /** The agent ended the call: hang up once its goodbye has finished playing. */
-  | { source: typeof AGENT_SOURCE; type: "agent-hangup"; callId: string };
+  | { source: typeof AGENT_SOURCE; type: "agent-hangup"; callId: string }
+  /** Press WhatsApp's Accept on the incoming call (station mode; armed first) — answered with accept-result. */
+  | { source: typeof AGENT_SOURCE; type: "accept-call"; callId: string };
 
 export type HookToAgent =
   /** WhatsApp opened the microphone for the call: it is dialing or ringing. */
@@ -65,7 +67,9 @@ export type HookToAgent =
   /** WhatsApp's call screen appeared for this call — the rep can go back to AgentSDR. */
   | { source: typeof HOOK_SOURCE; type: "call-ui"; callId: string }
   /** The lead's side of an agent call, from the pick-up on: mono 16-bit PCM at 16 kHz. */
-  | { source: typeof HOOK_SOURCE; type: "agent-audio"; callId: string; pcm: ArrayBuffer };
+  | { source: typeof HOOK_SOURCE; type: "agent-audio"; callId: string; pcm: ArrayBuffer }
+  /** Whether Accept was pressed on the incoming call; `labels`: the call's buttons seen (digits masked), for diagnosis. */
+  | { source: typeof HOOK_SOURCE; type: "accept-result"; callId: string; clicked: boolean; labels: string };
 
 // --- station messaging --------------------------------------------------------
 // A calling station's WhatsApp messaging (station mode only): wa-hook reads
@@ -101,4 +105,8 @@ export type HookToAgentMessaging =
   | { source: typeof HOOK_MESSAGING_SOURCE; type: "messages"; messages: StationInboundMessage[] }
   | { source: typeof HOOK_MESSAGING_SOURCE; type: "found-sent"; requestId: string; providerMessageId: string | null }
   /** A step worth the station's log. */
-  | { source: typeof HOOK_MESSAGING_SOURCE; type: "messaging-log"; text: string };
+  | { source: typeof HOOK_MESSAGING_SOURCE; type: "messaging-log"; text: string }
+  /** A WhatsApp call started ringing on this number (from the call store, or the page's incoming-call screen). */
+  | { source: typeof HOOK_MESSAGING_SOURCE; type: "incoming-call"; call: StationIncomingCall }
+  /** WhatsApp removed that call: it was answered, declined or missed. */
+  | { source: typeof HOOK_MESSAGING_SOURCE; type: "incoming-call-ended"; waCallId: string };

@@ -165,6 +165,10 @@ chrome.runtime.onMessage.addListener((message: AgentCommand, _sender, sendRespon
     );
     return true;
   }
+  if (message.type === "answer") {
+    sendResponse(answerCall(message.call));
+    return;
+  }
   if (message.type !== "open") return; // station messaging: its own listener, below
   if (message.call) trace(message.call.callId, "WhatsApp tab: asked to open the chat in place");
   const savedName = whatsappContactName(message.call?.lead ?? null)?.display ?? null;
@@ -211,6 +215,23 @@ async function placeCall(next: WaCall): Promise<void> {
     void send({ target: "background", type: "wa:dialed", callId: next.callId, pressed: false });
     phase({ kind: "manual-dial" });
   }
+}
+
+/**
+ * Answers the incoming call ringing in this tab as `next` (station mode only;
+ * the service worker sends this only for a call AgentSDR chose to answer).
+ * Armed first — wa-hook gives WhatsApp the agent's voice, and records, only
+ * on an armed call — and the agent's session opens while it still rings; then
+ * wa-hook presses Accept. From the pick-up on it is a placed call's path.
+ */
+function answerCall(next: WaCall): BridgeResult {
+  call = next;
+  trace(next.callId, `WhatsApp tab: answering an incoming call (agent ${next.agent})`);
+  toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent, monitor: false });
+  if (next.agent) startAgent(next.callId);
+  phase({ kind: "ringing" });
+  toHook({ source: AGENT_SOURCE, type: "accept-call", callId: next.callId });
+  return { ok: true };
 }
 
 /** `noCallButton`: the chat opened, but WhatsApp offers no way to call it. */
@@ -692,6 +713,18 @@ function onHookMessage(event: MessageEvent): void {
     case "diag":
       trace(callId, `hook: ${data.text}`);
       break;
+    case "accept-result":
+      if (data.clicked) {
+        trace(callId, `WhatsApp tab: pressed Accept (the call's buttons: ${data.labels || "none seen"})`);
+        break;
+      }
+      // Nothing to press: the caller hung up, or WhatsApp's markup changed.
+      trace(callId, `WhatsApp tab: no Accept button to press — not answered (buttons seen: ${data.labels || "none"})`);
+      stopAgent();
+      toHook({ source: AGENT_SOURCE, type: "disarm" });
+      void send({ target: "background", type: "wa:not-answered", callId, dialedAt: Date.now(), endedAt: Date.now() });
+      phase({ kind: "not-answered" });
+      break;
     case "answered":
       agent?.greet();
       void send({ target: "background", type: "wa:answered", callId, answeredAt: data.answeredAt });
@@ -975,6 +1008,10 @@ function onHookMessagingMessage(event: MessageEvent): void {
     void send({ target: "background", type: "wa:inbound", messages: data.messages }).catch(() => {});
   } else if (data.type === "messaging-log") {
     msgLog(`hook: ${data.text}`);
+  } else if (data.type === "incoming-call" && data.call) {
+    void send({ target: "background", type: "wa:incoming-call", call: data.call }).catch(() => {});
+  } else if (data.type === "incoming-call-ended" && data.waCallId) {
+    void send({ target: "background", type: "wa:incoming-ended", waCallId: data.waCallId }).catch(() => {});
   }
 }
 

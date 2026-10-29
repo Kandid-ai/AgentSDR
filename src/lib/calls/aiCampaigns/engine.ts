@@ -38,7 +38,7 @@ import { syncCallFollowUpSafely } from "../crmFollowUp";
 import { callCampaignContacts, callCampaigns, callCampaignStations, callCampaignStepRuns, callSessions, callingStations, stationMessageJobs } from "../schema";
 import { CallApiError, expireStaleCalls, startCall } from "../sessions";
 import { composeAgentBrief } from "./brief";
-import { AI_OPEN_STATUSES, DEFAULT_BOOKING_MESSAGE, type AiCallResult } from "./contract";
+import { AI_OPEN_STATUSES, DEFAULT_BOOKING_MESSAGE, isInboundStepKey, type AiCallResult } from "./contract";
 import {
   afterCall,
   afterMessage,
@@ -282,7 +282,8 @@ async function settleOpenRuns(result: AiCallingTickResult, now: Date): Promise<v
 async function finishRun(
   row: OpenRun,
   finish: { status: "done" | "failed"; result: AiCallResult | null; error: string | null },
-  decide: (contact: AiEngineContact) => AiDecision,
+  /** Null: the run finishes and the lead stays as it is. */
+  decide: (contact: AiEngineContact) => AiDecision | null,
   now: Date,
 ): Promise<{ decision: AiDecision | null } | null> {
   const linkSent = await bookingLinkSent(row.contact.id);
@@ -300,6 +301,7 @@ async function finishRun(
     if (!finished) return null;
     if (!contact || !isOpenAiStatus(contact.aiStatus)) return { decision: null };
     const decision = decide(engineContact(contact, linkSent));
+    if (!decision) return { decision: null };
     const applied = await writeDecision(tx, contact.id, decision, now);
     return { decision: applied ? decision : null };
   });
@@ -338,10 +340,13 @@ async function settleCall(row: OpenRun, now: Date): Promise<boolean> {
   }
 
   const outcome = call.agentOutcome ?? null;
+  // They called us back (src/lib/calls/incoming.ts): only a conversation moves the lead —
+  // a ring that never connected is not one of the sequence's attempts.
+  const inbound = isInboundStepKey(run.stepKey);
   const settled = await finishRun(
     row,
     { status: result === "error" ? "failed" : "done", result, error: call.error },
-    (state) => afterCall(state, result, outcome, engineCampaign(campaign), now, call.error),
+    (state) => (inbound && result !== "conversation" ? null : afterCall(state, result, outcome, engineCampaign(campaign), now, call.error)),
     now,
   );
   if (!settled) return false;

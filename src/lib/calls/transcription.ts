@@ -102,12 +102,17 @@ export function buildTranscriptionPrompt(input: {
   companyName: string | null;
   /** Ringing before the pick-up at the start of the recording, ms. */
   recordingOffsetMs?: number | null;
+  /** The lead called the rep's number (the AI agent answered for the rep). */
+  inbound?: boolean;
 }): string {
   const who = [input.leadName, input.companyName].filter(Boolean).join(", ");
   const ringing = input.recordingOffsetMs && input.recordingOffsetMs >= 1000
     ? `\n\nThe recording starts about ${Math.round(input.recordingOffsetMs / 1000)} seconds before the lead picks up: ignore the ringing before that, and any speech in it is the rep's.`
     : "";
-  return `This recording is a WhatsApp voice call — both sides of it — placed by a sales rep to a lead${who ? ` (${who})` : ""}. The rep is the caller and should be labeled "rep"; the person who was called is the lead and should be labeled "lead".
+  const shape = input.inbound
+    ? `placed by a lead${who ? ` (${who})` : ""} to a sales rep's number, and answered on the rep's side. The person who called is the lead and should be labeled "lead"; the one who answered is the rep and should be labeled "rep".`
+    : `placed by a sales rep to a lead${who ? ` (${who})` : ""}. The rep is the caller and should be labeled "rep"; the person who was called is the lead and should be labeled "lead".`;
+  return `This recording is a WhatsApp voice call — both sides of it — ${shape}
 
 Transcribe the call in whatever language was actually spoken — Hindi, English, or a mix of both (Hinglish). Keep Hinglish as spoken; write Hindi words in Latin script if that's how they were said, don't translate them. Do not translate anything to English in the transcript itself.
 
@@ -163,6 +168,7 @@ async function requestTranscript(row: CallSessionRow): Promise<CallTranscript> {
     recordingOffsetMs: row.recordingOffsetMs,
     leadName: lead?.fullName ?? lead?.firstName ?? null,
     companyName: lead?.companyName ?? null,
+    inbound: row.direction === "inbound",
   });
 }
 
@@ -177,6 +183,7 @@ export async function transcribeAudio(input: {
   recordingOffsetMs?: number | null;
   leadName: string | null;
   companyName: string | null;
+  inbound?: boolean;
 }): Promise<CallTranscript> {
   const selected = (await getByokSettings()).transcriptionModel;
   if (!selected) {
@@ -198,6 +205,7 @@ export async function transcribeAudio(input: {
                 leadName: input.leadName,
                 companyName: input.companyName,
                 recordingOffsetMs: input.recordingOffsetMs,
+                inbound: input.inbound,
               }) },
             { type: "input_audio", input_audio: { data: base64, format } },
           ],

@@ -6,6 +6,8 @@ import type {
   WorkerCallStatus,
   WorkerClaimRequest,
   WorkerClaimResponse,
+  WorkerIncomingCallRequest,
+  WorkerIncomingCallResponse,
   WorkerInboundRequest,
   WorkerInboundResponse,
   WorkerMessageClaimRequest,
@@ -94,4 +96,8 @@ export async function reportMessageResult(messageId: string, body: WorkerMessage
 
 export function postInbound(stationId: string, body: WorkerInboundRequest): Promise<WorkerInboundResponse> {
   return request("POST", `/api/call-worker/stations/${encodeURIComponent(stationId)}/inbound`, body);
+}
+
+export function postIncomingCall(stationId: string, body: WorkerIncomingCallRequest): Promise<WorkerIncomingCallResponse> {
+  return request("POST", `/api/call-worker/stations/${encodeURIComponent(stationId)}/incoming`, body);
 }

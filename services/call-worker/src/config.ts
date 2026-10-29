@@ -53,6 +53,8 @@ export type Config = {
   messagePollMs: number;
   /** How often each open number's received messages are read and posted. */
   inboundPollMs: number;
+  /** How often each open, idle number is checked for a call ringing on it (to be answered by the AI). */
+  incomingPollMs: number;
 };
 
 export function loadConfig(): Config {
@@ -75,6 +77,7 @@ export function loadConfig(): Config {
     stations: (process.env.STATIONS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     messagePollMs: int("MESSAGE_POLL_MS", 2000),
     inboundPollMs: int("INBOUND_POLL_MS", 10_000),
+    incomingPollMs: int("INCOMING_POLL_MS", 1000),
   };
 }
 

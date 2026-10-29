@@ -238,22 +238,25 @@ export type WorkerProfileUploadResponse = { url: string; headers: Record<string,
 export type WorkerProfileCommitRequest = { key: string; bytes: number; baseVersion: number };
 export type WorkerProfileCommitResponse = { version: number };
 
+/** One AI call a worker runs on a station: an outbound call it claimed, or an incoming one it answers. */
+export type WorkerCall = {
+  id: string;
+  /** E.164. */
+  phone: string;
+  /** The call's bearer token for /api/call-recorder/*, minted at claim (or answer) time. */
+  recorderToken: string;
+  lead: RecorderLead | null;
+  brief: string;
+  /** The agent's name and voice (null: the defaults in contract.ts). */
+  agentName: string | null;
+  agentVoice: string | null;
+};
+
 export type WorkerJob =
   | {
       kind: "call";
       station: WorkerStation;
-      call: {
-        id: string;
-        /** E.164. */
-        phone: string;
-        /** The call's bearer token for /api/call-recorder/*, minted at claim time. */
-        recorderToken: string;
-        lead: RecorderLead | null;
-        brief: string;
-        /** The agent's name and voice (null: the defaults in contract.ts). */
-        agentName: string | null;
-        agentVoice: string | null;
-      };
+      call: WorkerCall;
     }
   | {
       kind: "link";
@@ -400,3 +403,38 @@ export type StationSendResult =
 
 /** agentsdrStation.takeInbound — what arrived since the last take. */
 export type StationInboundTake = { source: StationInboundSource; messages: StationInboundMessage[] };
+
+// --- incoming calls: the AI answers a lead who calls a station back ---------
+//
+// The extension (0.22.0+, station mode only) notices a WhatsApp call ringing
+// on the number and keeps it for the worker, which polls
+// agentsdrStation.takeIncomingCalls() about once a second on each open, idle
+// number and asks AgentSDR whether to answer. AgentSDR answers only a known
+// lead (Person) who is not Do Not Contact, on a number that is free, at any
+// hour; anything else rings out. When it answers it creates the call's
+// call_sessions row (direction 'inbound', already claimed by this worker) and
+// the worker hands it to agentsdrStation.answerCall(), after which it is the
+// outbound call's path: recording, the agent, the upload, the transcript.
+
+/** A WhatsApp call ringing on a station's number, as the extension saw it. */
+export type StationIncomingCall = {
+  /** WhatsApp's id for the call, so one ring is handled once. */
+  waCallId: string;
+  /** The caller's number, E.164, or null when WhatsApp did not reveal it (an unresolved "@lid"). */
+  phone: string | null;
+  /** The caller's WhatsApp name, when shown. */
+  callerName: string | null;
+  isVideo: boolean;
+  isGroup: boolean;
+  /** When it started ringing (ms). */
+  at: number;
+};
+
+/** POST /api/call-worker/stations/:id/incoming */
+export type WorkerIncomingCallRequest = { workerId: string; call: StationIncomingCall };
+export type WorkerIncomingCallResponse =
+  | { answer: true; call: WorkerCall }
+  | { answer: false; reason: string };
+
+/** A ring older than this is not answered: WhatsApp gives up on a call after about 45 s. */
+export const INCOMING_CALL_MAX_AGE_MS = 30_000;

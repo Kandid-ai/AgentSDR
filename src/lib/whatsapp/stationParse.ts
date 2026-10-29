@@ -18,6 +18,7 @@ import {
   MAX_INBOUND_BATCH,
   type StationInboundMessage,
   type StationInboundSource,
+  type WorkerIncomingCallRequest,
   type WorkerInboundRequest,
   type WorkerMessageClaimRequest,
   type WorkerMessageResultRequest,
@@ -156,6 +157,23 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 export function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
+}
+
+/** POST /api/call-worker/stations/:id/incoming — a call ringing on the number. */
+export function parseIncomingCallRequest(value: unknown): WorkerIncomingCallRequest {
+  const body = asObject(value);
+  const workerId = typeof body.workerId === "string" ? body.workerId.trim().slice(0, 100) : "";
+  if (!workerId) throw new StationReportError("workerId is required");
+  const call = asObject(body.call);
+  const waCallId = typeof call.waCallId === "string" ? call.waCallId.trim().slice(0, 200) : "";
+  if (!waCallId) throw new StationReportError("call.waCallId is required");
+  if (typeof call.at !== "number" || !Number.isFinite(call.at)) throw new StationReportError("call.at must be a time in ms");
+  const phone = typeof call.phone === "string" && call.phone.trim() ? call.phone.trim().slice(0, 32) : null;
+  const callerName = typeof call.callerName === "string" && call.callerName.trim() ? call.callerName.trim().slice(0, 200) : null;
+  return {
+    workerId,
+    call: { waCallId, phone, callerName, isVideo: call.isVideo === true, isGroup: call.isGroup === true, at: call.at },
+  };
 }
 
 export function parseMessageClaim(value: unknown): WorkerMessageClaimRequest {

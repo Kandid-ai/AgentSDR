@@ -11,7 +11,8 @@ const FALLBACK_STEP = "Introduce yourself and find out whether this is relevant 
 
 export function composeAgentBrief(input: {
   campaignInstructions: string;
-  purpose: AiStepPurpose;
+  /** "inbound": they called the number back and the agent answered (src/lib/calls/incoming.ts). */
+  purpose: AiStepPurpose | "inbound";
   /** The call step's own instructions (none for a call-back). */
   stepInstructions: string | null;
   /** A call-back: the time they asked for, in their words if the agent kept them. */
@@ -25,9 +26,15 @@ export function composeAgentBrief(input: {
     parts.push(`They asked you to call back at this time (${when}); remind them gently why you are calling.`);
   } else if (input.purpose === "chase") {
     parts.push("They agreed to a meeting on an earlier call and were sent a booking link on WhatsApp, but have not booked yet.");
+  } else if (input.purpose === "inbound") {
+    parts.push(
+      "They called this number back — most likely after a call or message from you (see the history). " +
+        "Thank them for calling back, find out what made them call, and carry on from why you were reaching out.",
+    );
   }
   const step = input.stepInstructions?.trim();
-  if (step) parts.push(step);
+  if (step && input.purpose === "inbound") parts.push(`What you were reaching out about: ${step}`);
+  else if (step) parts.push(step);
   else if (input.purpose === "reach") parts.push(FALLBACK_STEP);
 
   const campaign = input.campaignInstructions.trim();

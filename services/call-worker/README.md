@@ -46,6 +46,29 @@ open (`src/messaging.ts`); with `KEEP_OPEN=0` the worker does no messaging.
 - Extensions before 0.21.0 have no `sendMessage`/`takeInbound`: the worker says so once per
   number and leaves its messages alone (calls still work from 0.17.0).
 
+## Incoming calls (KEEP_OPEN > 0, extension 0.22.0+)
+
+A lead who calls a station's number back is answered by the AI agent (`src/incoming.ts`); with
+`KEEP_OPEN=0` incoming calls ring out.
+
+- **Notice.** In station mode only (never a rep's own WhatsApp Web), the extension's wa-hook
+  watches WhatsApp's call store (`WAWebCallCollection`, as whatsapp-web.js does) and, as a
+  fallback, the page's incoming-call screen. Each ring is kept in the extension until taken.
+- **Ask.** Every `INCOMING_POLL_MS` the worker takes the rings of each open number that is ready
+  and unused (`agentsdrStation.takeIncomingCalls` — a read of the extension's storage, so the
+  number is not held for it) and posts each new one younger than 30 s to
+  `POST /api/call-worker/stations/:id/incoming`. AgentSDR answers only a known lead who is not
+  Do Not Contact, on a free number; anything else, or a failed post, rings out. Each ring is
+  asked about once.
+- **Answer.** On `{ answer: true, call }` the call row already exists, claimed by this worker. The
+  call runs at once, beside the claim loop (not in it): the number is held as for a placed call,
+  and `agentsdrStation.answerCall` arms the tab, starts the agent and presses Accept. From the
+  pick-up on it is a placed call — recording, the agent, the upload, the transcript. No Accept
+  to press (the caller hung up) finishes the call as not answered.
+- Logs: `incoming: ringing on <number>`, then `incoming: answering (call <id>)` or
+  `incoming: not answering (<reason>)`. Extensions before 0.22.0 are said once per number and
+  their calls ring out.
+
 ## Environment
 
 | Variable | Default | |
@@ -63,6 +86,7 @@ open (`src/messaging.ts`); with `KEEP_OPEN=0` the worker does no messaging.
 | `CALL_TIMEOUT_MS` | 30 min | then the worker hangs up |
 | `MESSAGE_POLL_MS` | `2000` | gap between message claims when there is nothing to send (open numbers only) |
 | `INBOUND_POLL_MS` | `10000` | how often each open number's received messages are read and posted |
+| `INCOMING_POLL_MS` | `1000` | how often each open, idle number is checked for a call ringing on it (open numbers only) |
 | `CHROMIUM_PATH` | – | Chromium executable override |
 
 ## Run locally

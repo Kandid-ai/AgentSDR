@@ -80,6 +80,17 @@ export const AI_CONTACT_STATUSES = [
   "failed", //          not on WhatsApp, or errors a person should look at
 ] as const;
 export type AiContactStatus = (typeof AI_CONTACT_STATUSES)[number];
+/**
+ * The step run an incoming call from an AI lead gets (src/lib/calls/incoming.ts):
+ * one per call, so the engine settles its outcome like a placed call's.
+ */
+export function inboundStepKey(callId: string): string {
+  return `inbound:${callId}`;
+}
+export function isInboundStepKey(stepKey: string): boolean {
+  return stepKey.startsWith("inbound:");
+}
+
 export const AI_OPEN_STATUSES = ["queued", "reaching", "callback", "chasing"] as const satisfies readonly AiContactStatus[];
 export const AI_CONTACT_STATUS_LABELS: Record<AiContactStatus, string> = {
   queued: "Queued",

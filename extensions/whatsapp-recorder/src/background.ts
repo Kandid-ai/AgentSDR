@@ -35,7 +35,8 @@ import {
   type WaScanResult,
   type WaSendOutcome,
 } from "./messages";
-import type { StationInboundSource, StationInboundTake, StationSendResult } from "../../../src/lib/calls/stationContract";
+import type { StationIncomingCall, StationInboundSource, StationInboundTake, StationSendResult } from "../../../src/lib/calls/stationContract";
+import { addIncoming, asIncomingCall, endIncoming, takeIncoming, type IncomingEntry } from "./incoming";
 import { mergeInbound, type InboundBuffer } from "./inbound";
 import { allowedOrigins, customOrigins, isCustomOriginsChange, originPattern } from "./origins";
 import { callApi, getCallStatus, uploadRecording } from "./upload";
@@ -270,6 +271,13 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
     case "wa:msg-log":
       msgLog(message.step);
       break;
+    // Incoming calls (see "incoming calls" below):
+    case "wa:incoming-call":
+      void noteIncomingCall(message.call, sender.tab?.id ?? null);
+      break;
+    case "wa:incoming-ended":
+      void noteIncomingEnded(message.waCallId);
+      break;
   }
 });
 
@@ -321,6 +329,52 @@ async function startCall(
   appTabId: number | undefined,
   station = false,
 ): Promise<BridgeResult> {
+  const refused = await settlePreviousCall();
+  if (refused) return refused;
+
+  const call: ActiveCall = {
+    callId: request.callId,
+    recorderToken: request.recorderToken,
+    apiBase: request.apiBase,
+    phone: request.phone,
+    requestedAt: Date.now(),
+    lead: request.lead,
+    appTabId,
+    agent: requestAgent(request),
+    station,
+  };
+  await rememberCall(call);
+  startTiming(call.callId, request.clickedAt);
+  // Stored before the chat opens, so wa-agent's reports (and, after a
+  // reload, its hello) find it. The tab id is merged in afterwards rather
+  // than written over, since wa-agent may already have reported dialing.
+  await setActiveCall(call);
+  // The page is answered now, not after the chat opens: an in-place open can
+  // take several seconds to confirm, and the page gives up on a silent
+  // extension after 5 s and marks the call failed — after which the app
+  // refuses its recording. From here on the card, not the page, reports.
+  void openChat(digits, { call: waCall(call), focus: true })
+    .then((tabId) => updateActiveCall(call.callId, { tabId }))
+    .catch((error) => console.warn("[recorder] could not open the chat", error));
+  return { ok: true };
+}
+
+/** The AI agent a call request asks for, trimmed; null when it has no brief. */
+function requestAgent(request: Pick<RecorderCallRequest, "agent">): ActiveCall["agent"] {
+  return request.agent?.brief?.trim()
+    ? {
+        brief: request.agent.brief.trim(),
+        name: request.agent.name?.trim() || null,
+        voice: request.agent.voice?.trim() || null,
+      }
+    : null;
+}
+
+/**
+ * Before a new call: the call before it is closed out, or — still being
+ * recorded — the reason the new one is refused.
+ */
+async function settlePreviousCall(): Promise<BridgeResult | null> {
   const previous = await getActiveCall();
   if (previous?.answeredAt) {
     if (await stillBusy(previous)) {
@@ -338,38 +392,7 @@ async function startCall(
   // A call that was opened but never recorded is over; say so rather than
   // leaving it pending in the app.
   if (previous) await callApi(previous, "finish", { outcome: "no_recording" }).catch(() => {});
-
-  const call: ActiveCall = {
-    callId: request.callId,
-    recorderToken: request.recorderToken,
-    apiBase: request.apiBase,
-    phone: request.phone,
-    requestedAt: Date.now(),
-    lead: request.lead,
-    appTabId,
-    agent: request.agent?.brief?.trim()
-      ? {
-          brief: request.agent.brief.trim(),
-          name: request.agent.name?.trim() || null,
-          voice: request.agent.voice?.trim() || null,
-        }
-      : null,
-    station,
-  };
-  await rememberCall(call);
-  startTiming(call.callId, request.clickedAt);
-  // Stored before the chat opens, so wa-agent's reports (and, after a
-  // reload, its hello) find it. The tab id is merged in afterwards rather
-  // than written over, since wa-agent may already have reported dialing.
-  await setActiveCall(call);
-  // The page is answered now, not after the chat opens: an in-place open can
-  // take several seconds to confirm, and the page gives up on a silent
-  // extension after 5 s and marks the call failed — after which the app
-  // refuses its recording. From here on the card, not the page, reports.
-  void openChat(digits, { call: waCall(call), focus: true })
-    .then((tabId) => updateActiveCall(call.callId, { tabId }))
-    .catch((error) => console.warn("[recorder] could not open the chat", error));
-  return { ok: true };
+  return null;
 }
 
 /**
@@ -528,7 +551,8 @@ async function agentOutcome(callId: string, outcome: AgentOutcomeReport): Promis
 
 async function callForTab(tabId: number | undefined): Promise<WaCall | null> {
   const call = await getActiveCall();
-  if (!call || tabId === undefined || call.dialedAt) return null;
+  // An answered incoming call is never handed to a (re)loaded tab: wa-agent would dial out.
+  if (!call || tabId === undefined || call.dialedAt || call.inbound) return null;
   // The tab id is recorded right after navigation starts; a hello that races
   // it (or comes from the only WhatsApp tab) is still this call's.
   if (call.tabId !== undefined && call.tabId !== tabId) return null;
@@ -794,6 +818,10 @@ const station = {
   sendMessage: (request: { phone: string; text: string }): Promise<StationSendResult> => sendStationMessage(request),
   /** The messages this number saw since the last take (inbound, and outbound from the phone or sendMessage); clears them. */
   takeInbound: (): Promise<StationInboundTake> => takeStationInbound(),
+  /** The WhatsApp calls ringing on this number since the last take, young enough to answer (0.22.0+); see "incoming calls" below. */
+  takeIncomingCalls: (): Promise<StationIncomingCall[]> => takeIncomingCalls(),
+  /** Answers the ringing call `waCallId` as AgentSDR's call `callId`: the agent talks, the call is recorded (0.22.0+). */
+  answerCall: (request: StationCallRequest & { waCallId: string }): Promise<BridgeResult> => answerIncomingCall(request),
 };
 
 (globalThis as unknown as { agentsdrStation?: typeof station }).agentsdrStation = station;
@@ -1038,4 +1066,120 @@ async function scanUnreadFromPage(): Promise<boolean> {
   await chrome.storage.session.set({ [LAST_DOM_SCAN_KEY]: { at: Date.now(), ok: true } });
   await bufferInbound(answer.result.messages);
   return true;
+}
+
+// =============================================================================
+// --- incoming calls (calling stations only) ----------------------------------
+// =============================================================================
+//
+// A lead calling a station back is answered by the AI agent. wa-hook notices
+// the call ringing (WhatsApp's call store, or its incoming-call screen) — only
+// once station mode enabled messaging, so a rep's own WhatsApp Web never
+// answers by itself — and wa-agent passes it here. The call worker takes the
+// rings about once a second (takeIncomingCalls), asks AgentSDR whether to
+// answer, and if so calls answerCall with the call AgentSDR created for it.
+// From then on it is a placed call's path, except that wa-agent presses
+// Accept instead of Voice call.
+
+const INCOMING_CALLS_KEY = "incomingCalls";
+/** How long wa-agent gets to arm the tab for an answered call. */
+const ANSWER_TIMEOUT_MS = 10_000;
+
+// The ring list's writes run one at a time (read, change, write back), like the active call's.
+let incomingWrites: Promise<unknown> = Promise.resolve();
+
+function serializedIncoming<T>(write: () => Promise<T>): Promise<T> {
+  const next = incomingWrites.then(write, write);
+  incomingWrites = next.catch(() => {});
+  return next;
+}
+
+async function readIncoming(): Promise<IncomingEntry[]> {
+  const stored = (await chrome.storage.session.get(INCOMING_CALLS_KEY))[INCOMING_CALLS_KEY] as IncomingEntry[] | undefined;
+  return Array.isArray(stored) ? stored : [];
+}
+
+function noteIncomingCall(value: unknown, tabId: number | null): Promise<void> {
+  return serializedIncoming(async () => {
+    const call = asIncomingCall(value);
+    if (!call) return;
+    if (!(await messagingEnabled())) {
+      msgLog("incoming: a call rang, but this browser is not a calling station — ignored");
+      return;
+    }
+    const { list, added } = addIncoming(await readIncoming(), call, tabId, Date.now());
+    await chrome.storage.session.set({ [INCOMING_CALLS_KEY]: list });
+    if (added) {
+      msgLog(
+        `incoming: a ${call.isVideo ? "video" : "voice"} call is ringing (${call.waCallId.startsWith("dom-") ? "seen on the page" : "WhatsApp's call store"}` +
+          `${call.phone ? "" : ", number unknown"}${call.isGroup ? ", group call" : ""})`,
+      );
+    }
+  });
+}
+
+function noteIncomingEnded(waCallId: unknown): Promise<void> {
+  return serializedIncoming(async () => {
+    if (typeof waCallId !== "string") return;
+    const list = await readIncoming();
+    const next = endIncoming(list, waCallId);
+    if (next.length === list.length) return;
+    await chrome.storage.session.set({ [INCOMING_CALLS_KEY]: next });
+    msgLog("incoming: a ring stopped");
+  });
+}
+
+async function takeIncomingCalls(): Promise<StationIncomingCall[]> {
+  // Station mode: wa-hook watches for calls only once this is on.
+  if (!(await messagingEnabled())) await enableMessaging();
+  return serializedIncoming(async () => {
+    const { taken, list } = takeIncoming(await readIncoming(), Date.now());
+    await chrome.storage.session.set({ [INCOMING_CALLS_KEY]: list });
+    return taken;
+  });
+}
+
+async function answerIncomingCall(request: StationCallRequest & { waCallId: string }): Promise<BridgeResult> {
+  const waCallId = typeof request?.waCallId === "string" ? request.waCallId : "";
+  if (!waCallId) return { ok: false, error: "No incoming call to answer" };
+  const busy = await stationCallBusy();
+  if (busy) return { ok: false, error: `Not answering: ${busy}` };
+  const refused = await settlePreviousCall();
+  if (refused) return refused;
+  const ring = (await readIncoming()).find((entry) => entry.call.waCallId === waCallId) ?? null;
+  const tabId = ring?.tabId ?? (await chrome.tabs.query({ url: WHATSAPP_TABS }))[0]?.id;
+  if (tabId === undefined) return { ok: false, error: "No WhatsApp Web tab is open" };
+
+  const now = Date.now();
+  const call: ActiveCall = {
+    callId: request.callId,
+    recorderToken: request.recorderToken,
+    apiBase: request.apiBase,
+    phone: request.phone,
+    requestedAt: now,
+    tabId,
+    // Set now: no reload of the tab may ever dial this call out (callForTab).
+    dialedAt: now,
+    lead: request.lead,
+    agent: requestAgent(request),
+    station: true,
+    inbound: true,
+  };
+  await rememberCall(call);
+  startTiming(call.callId, request.clickedAt);
+  trace(call.callId, "Extension: answering an incoming call");
+  await setActiveCall(call);
+  const answer = await askAgent<BridgeResult>(tabId, { target: "wa-agent", type: "answer", call: waCall(call) }, ANSWER_TIMEOUT_MS);
+  if (answer.kind === "answer" && answer.result?.ok) return { ok: true };
+  const error =
+    answer.kind === "answer"
+      ? answer.result && !answer.result.ok
+        ? answer.result.error
+        : "WhatsApp Web gave an unexpected answer"
+      : answer.kind === "timeout"
+        ? "WhatsApp Web did not take the call in time"
+        : "WhatsApp Web's tab did not answer (still loading, or opened before this extension build)";
+  trace(call.callId, `Extension: could not answer — ${error}`);
+  await clearActiveCall(call.callId);
+  return { ok: false, error };
 }

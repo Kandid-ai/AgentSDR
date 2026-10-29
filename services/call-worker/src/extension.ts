@@ -1,8 +1,11 @@
 import type { BrowserContext, Worker } from "playwright-core";
 import type { RecorderCallRequest } from "../../../src/lib/calls/contract";
-import type { StationInboundTake, StationSendResult } from "../../../src/lib/calls/stationContract";
+import type { StationIncomingCall, StationInboundTake, StationSendResult } from "../../../src/lib/calls/stationContract";
 
-/** Station mode for calls. Messaging needs 0.21.0+, detected by its functions (supportsMessaging). */
+/**
+ * Station mode for calls. Messaging needs 0.21.0+ and answering incoming
+ * calls 0.22.0+, each detected by its functions (supportsMessaging, supportsIncoming).
+ */
 export const MIN_EXTENSION_VERSION = "0.17.0";
 
 export type StationCallRequest = Omit<RecorderCallRequest, "source" | "type" | "requestId">;
@@ -22,6 +25,12 @@ export type StationWorker = {
   sendMessage(req: { phone: string; text: string }): Promise<StationSendResult>;
   /** Takes (and clears) the messages the extension saw since the last take (0.21.0+). */
   takeInbound(): Promise<StationInboundTake>;
+  /** The extension has takeIncomingCalls and answerCall (0.22.0+); without them both throw. */
+  supportsIncoming: boolean;
+  /** Takes the calls ringing on the number since the last take, young enough to answer (0.22.0+). */
+  takeIncomingCalls(): Promise<StationIncomingCall[]>;
+  /** Answers the ringing call `waCallId` as AgentSDR's call `callId` (0.22.0+). */
+  answerCall(req: StationCallRequest & { waCallId: string }): Promise<StationResult>;
 };
 
 function versionAtLeast(version: string, min: string): boolean {
@@ -36,26 +45,28 @@ function versionAtLeast(version: string, min: string): boolean {
 
 const isRecorderWorker = (w: Worker) => w.url().startsWith("chrome-extension://") && w.url().endsWith("/background.js");
 
-type Probe = { version: string | null; api: boolean; messaging: boolean };
+type Probe = { version: string | null; api: boolean; messaging: boolean; incoming: boolean };
 
 /** The extension's station version in this worker, and whether its chrome.* calls work. */
 async function probe(worker: Worker): Promise<Probe> {
   return worker
     .evaluate(async () => {
       const scope = globalThis as unknown as {
-        agentsdrStation?: { version: string; sendMessage?: unknown; takeInbound?: unknown };
+        agentsdrStation?: { version: string; sendMessage?: unknown; takeInbound?: unknown; takeIncomingCalls?: unknown; answerCall?: unknown };
         chrome: { storage: { session: { get(keys: null): Promise<unknown> } } };
       };
-      const version = scope.agentsdrStation?.version ?? null;
-      const messaging = typeof scope.agentsdrStation?.sendMessage === "function" && typeof scope.agentsdrStation?.takeInbound === "function";
+      const station = scope.agentsdrStation;
+      const version = station?.version ?? null;
+      const messaging = typeof station?.sendMessage === "function" && typeof station?.takeInbound === "function";
+      const incoming = typeof station?.takeIncomingCalls === "function" && typeof station?.answerCall === "function";
       try {
         await scope.chrome.storage.session.get(null);
-        return { version, api: true, messaging };
+        return { version, api: true, messaging, incoming };
       } catch {
-        return { version, api: false, messaging };
+        return { version, api: false, messaging, incoming };
       }
     })
-    .catch(() => ({ version: null, api: false, messaging: false }));
+    .catch(() => ({ version: null, api: false, messaging: false, incoming: false }));
 }
 
 /**
@@ -66,12 +77,15 @@ async function probe(worker: Worker): Promise<Probe> {
  * first found failed every call on a relinked number, so each candidate is
  * tested with a real API call, newest first.
  */
-async function liveWorker(context: BrowserContext, timeoutMs: number): Promise<{ worker: Worker; version: string; messaging: boolean } | null> {
+async function liveWorker(
+  context: BrowserContext,
+  timeoutMs: number,
+): Promise<{ worker: Worker; version: string; messaging: boolean; incoming: boolean } | null> {
   const deadline = Date.now() + timeoutMs;
   do {
     for (const worker of context.serviceWorkers().filter(isRecorderWorker).reverse()) {
-      const { version, api, messaging } = await probe(worker);
-      if (version && api) return { worker, version, messaging };
+      const { version, api, messaging, incoming } = await probe(worker);
+      if (version && api) return { worker, version, messaging, incoming };
     }
     await new Promise((r) => setTimeout(r, 500));
   } while (Date.now() < deadline);
@@ -107,6 +121,8 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
     drainLog?(): string[] | Promise<string[]>;
     sendMessage(r: { phone: string; text: string }): Promise<unknown>;
     takeInbound(): Promise<unknown>;
+    takeIncomingCalls(): Promise<unknown>;
+    answerCall(r: unknown): Promise<unknown>;
   };
   return {
     version,
@@ -130,6 +146,17 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
     takeInbound: async () => {
       if (!found.messaging) throw new Error(`The recorder extension ${version} cannot read messages (needs 0.21.0+)`);
       return (await live()).evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.takeInbound()) as Promise<StationInboundTake>;
+    },
+    supportsIncoming: found.incoming,
+    takeIncomingCalls: async () => {
+      if (!found.incoming) throw new Error(`The recorder extension ${version} cannot answer calls (needs 0.22.0+)`);
+      return (await live()).evaluate(() => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.takeIncomingCalls()) as Promise<
+        StationIncomingCall[]
+      >;
+    },
+    answerCall: async (req) => {
+      if (!found.incoming) throw new Error(`The recorder extension ${version} cannot answer calls (needs 0.22.0+)`);
+      return (await live()).evaluate((r) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.answerCall(r), req) as Promise<StationResult>;
     },
   };
 }

@@ -1,8 +1,9 @@
 import { LEASE_RENEW_MS } from "../../../src/lib/calls/stationContract";
-import { claim, claimMessage, leaseStations, postInbound, reportMessageResult, reportStationState } from "./api";
+import { claim, claimMessage, leaseStations, postIncomingCall, postInbound, releaseCall, reportMessageResult, reportStationState } from "./api";
 import { config } from "./config";
 import { stationWorker } from "./extension";
-import { activeCallForShutdown, prepareWhatsApp, requestStop, runCall, runLink, watchConsole } from "./jobs";
+import { activeCallsForShutdown, prepareWhatsApp, requestStop, runCall, runLink, watchConsole } from "./jobs";
+import { Incoming } from "./incoming";
 import { openStationBrowser } from "./launchers";
 import { Messaging } from "./messaging";
 import { OpenStations } from "./openStations";
@@ -14,6 +15,8 @@ let stopping = false;
 let openStations: OpenStations | null = null;
 /** AgentSDR's own WhatsApp messages through the open numbers (needs KEEP_OPEN > 0). */
 let messaging: Messaging | null = null;
+/** The AI answering calls that ring on the open numbers (needs KEEP_OPEN > 0). */
+let incoming: Incoming | null = null;
 
 function startOpenStations(): OpenStations {
   const cfg = config();
@@ -69,6 +72,40 @@ function startMessaging(stations: OpenStations): Messaging {
   return m;
 }
 
+function startIncoming(stations: OpenStations): Incoming {
+  const cfg = config();
+  const i = new Incoming(
+    {
+      idleReady: () => stations.idleReady(),
+      connect: (ready) => stationWorker(ready.browser.context),
+      ask: (id, body) => postIncomingCall(id, body),
+      answer: async (station, call, ring) => {
+        const open = await stations.acquire(station.id);
+        try {
+          // The call rings in this number's open WhatsApp Web; another browser could not answer it.
+          if (!open) {
+            log(`incoming: ${station.name}'s WhatsApp Web is no longer open — call ${call.id} not answered`);
+            await releaseCall(call.id, `WhatsApp Web on ${station.name} was not open to answer the call`).catch((e: unknown) =>
+              log(`call ${call.id}: release failed: ${e instanceof Error ? e.message : String(e)}`),
+            );
+            return;
+          }
+          await runCall({ kind: "call", station, call }, open, { waCallId: ring.waCallId });
+        } finally {
+          await stations.done(station.id);
+          messaging?.afterCall(station.id);
+        }
+      },
+      workerId: cfg.workerId,
+      log,
+      now: () => Date.now(),
+    },
+    { pollMs: cfg.incomingPollMs },
+  );
+  i.start();
+  return i;
+}
+
 let wake: (() => void) | null = null;
 
 function interruptibleSleep(ms: number): Promise<void> {
@@ -87,10 +124,14 @@ async function shutdown(signal: string): Promise<void> {
   requestStop();
   log(`${signal}: stopping; no new jobs`);
   wake?.();
-  const active = activeCallForShutdown();
-  if (active?.worker) {
-    log(`hanging up call ${active.callId}`);
-    await active.worker.endCall(active.callId).catch(() => {});
+  // No new calls answered; main() waits for the ones already answered.
+  void incoming?.stop();
+  const active = activeCallsForShutdown().filter((call) => call.worker);
+  for (const call of active) {
+    log(`hanging up call ${call.callId}`);
+    await call.worker!.endCall(call.callId).catch(() => {});
+  }
+  if (active.length) {
     // runCall's own loop notices the call is done; give it up to 60 s.
     setTimeout(() => {
       log("shutdown grace period over; exiting");
@@ -111,6 +152,7 @@ async function main(): Promise<void> {
   if (cfg.keepOpen > 0) {
     openStations = startOpenStations();
     messaging = startMessaging(openStations);
+    incoming = startIncoming(openStations);
   }
   let backoff = 0;
   while (!stopping) {
@@ -142,8 +184,10 @@ async function main(): Promise<void> {
       await interruptibleSleep(backoff);
     }
   }
-  // Finish a send in flight and post what was received, then close the open
-  // numbers, saving their profiles, and give their leases back.
+  // Let answered calls end, finish a send in flight and post what was
+  // received, then close the open numbers, saving their profiles, and give
+  // their leases back.
+  await incoming?.stop();
   await messaging?.stop();
   await openStations?.shutdown();
   log("stopped");

@@ -123,6 +123,12 @@ describe("buildTranscriptionPrompt — ringing before the pick-up", () => {
   });
   test("says nothing about ringing without an offset", () => {
     expect(buildTranscriptionPrompt({ leadName: null, companyName: null })).not.toContain("picks up");
+  });
+
+  test("an incoming call: the lead is the caller", () => {
+    const prompt = buildTranscriptionPrompt({ leadName: "Priya Sharma", companyName: null, inbound: true });
+    expect(prompt).toContain("placed by a lead (Priya Sharma) to a sales rep's number");
+    expect(prompt).not.toContain("The rep is the caller");
     expect(buildTranscriptionPrompt({ leadName: null, companyName: null, recordingOffsetMs: 300 })).not.toContain("picks up");
   });
 });

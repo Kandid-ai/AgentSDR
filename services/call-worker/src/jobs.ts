@@ -3,7 +3,7 @@ import type { WorkerJob, WorkerStation } from "../../../src/lib/calls/stationCon
 import { MAX_TIMELINE_ENTRIES, type CallTimelineEntry } from "../../../src/lib/calls/stationContract";
 import { getCallStatus, releaseCall, reportStationState, saveTimeline } from "./api";
 import { config } from "./config";
-import { stationWorker, type StationWorker } from "./extension";
+import { stationWorker, type StationResult, type StationWorker } from "./extension";
 import { firstLine, openStationBrowser, type StationBrowser } from "./launchers";
 import { log } from "./log";
 import {
@@ -32,12 +32,12 @@ const digitsOf = (phone: string) => phone.replace(/\D/g, "");
 /** One readable line for the app; the full error goes to the log. */
 const message = (e: unknown) => firstLine(e);
 
-/** Set while a call runs, so a shutdown can hang it up. */
-let current: { callId: string; worker: StationWorker | null } | null = null;
+/** The calls running, so a shutdown can hang them up: a claimed call, and incoming ones answered beside it. */
+const running = new Map<string, StationWorker | null>();
 let stopping = false;
 
-export function activeCallForShutdown(): { callId: string; worker: StationWorker | null } | null {
-  return current;
+export function activeCallsForShutdown(): { callId: string; worker: StationWorker | null }[] {
+  return [...running].map(([callId, worker]) => ({ callId, worker }));
 }
 
 export function requestStop(): void {
@@ -126,9 +126,11 @@ export async function prepareWhatsApp(
 /**
  * Places a cloud call. `open` is the number's WhatsApp Web already open
  * (openStations.ts) — used as is and left open; without it, a browser is
- * opened for this call and closed after.
+ * opened for this call and closed after. With `answer`, the call is an
+ * incoming one ringing on the open number (src/incoming.ts): the extension
+ * answers ring `answer.waCallId` instead of dialing; the rest is the same.
  */
-export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null): Promise<void> {
+export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null, answer: { waCallId: string } | null = null): Promise<void> {
   const { station, call } = job;
   const cfg = config();
   const tag = `call ${call.id} @ ${station.name}`;
@@ -145,7 +147,7 @@ export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null): 
   };
   const flushTimeline = () =>
     saveTimeline(call.id, timeline.slice(-MAX_TIMELINE_ENTRIES)).catch((e) => log(`${tag}: timeline not saved: ${message(e)}`));
-  step(`claimed by ${cfg.workerId}`);
+  step(answer ? `incoming call, answered by ${cfg.workerId}` : `claimed by ${cfg.workerId}`);
   const release = async (error: string) => {
     released = true;
     await safeRelease(call.id, error);
@@ -164,7 +166,8 @@ export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null): 
         await release(error);
         return;
       }
-      const dialogs = await dismissDialogs(page);
+      // Not for an incoming call: its ringing screen may be a dialog, and Escape could decline it.
+      const dialogs = answer ? 0 : await dismissDialogs(page);
       if (dialogs) step(`closed ${dialogs} WhatsApp dialog(s) over the chats`);
     } else {
       step(`opening browser (${station.launcher})`);
@@ -210,9 +213,8 @@ export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null): 
       await release(message(e));
       return;
     }
-    current = { callId: call.id, worker };
-    step(`starting call (extension ${worker.version})`);
-    const started = await worker.startCall({
+    running.set(call.id, worker);
+    const request = {
       callId: call.id,
       phone: call.phone,
       recorderToken: call.recorderToken,
@@ -220,9 +222,19 @@ export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null): 
       lead: call.lead,
       agent: { brief: call.brief, name: call.agentName, voice: call.agentVoice },
       clickedAt: Date.now(),
-    });
+    };
+    let started: StationResult;
+    if (answer) {
+      step(`answering the incoming call (extension ${worker.version})`);
+      started = worker.supportsIncoming
+        ? await worker.answerCall({ ...request, waCallId: answer.waCallId })
+        : { ok: false, error: `The recorder extension ${worker.version} cannot answer calls (needs 0.22.0+)` };
+    } else {
+      step(`starting call (extension ${worker.version})`);
+      started = await worker.startCall(request);
+    }
     if (!started.ok) {
-      step(`start refused: ${started.error}`);
+      step(`${answer ? "answer" : "start"} refused: ${started.error}`);
       await release(started.error);
       return;
     }
@@ -293,7 +305,7 @@ export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null): 
   } finally {
     await stopExtensionLog();
     stopWatching();
-    current = null;
+    running.delete(call.id);
     if (browser && !open) {
       step("closing the browser");
       await browser.close().catch((e) => step(`close failed: ${message(e)}`));

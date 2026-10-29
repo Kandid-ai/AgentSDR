@@ -9,7 +9,7 @@ import {
   type ContactCallStatus,
 } from "./contract";
 import { inOrg } from "@/lib/tenancy/scope";
-import { callCampaignContacts, callCampaigns, callSessions } from "./schema";
+import { callCampaignContacts, callCampaigns, callSessions, type CallDirection } from "./schema";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -120,8 +120,11 @@ export async function applyCallResultToContact(call: {
   createdAt: Date;
   status: CallStatus;
   error: string | null;
+  direction?: CallDirection;
 }): Promise<void> {
   if (!call.campaignContactId) return;
+  // A call they made to us that never connected is not an unanswered attempt of ours.
+  if (call.direction === "inbound" && call.status !== "recorded") return;
   const contactId = call.campaignContactId;
   const next = contactCallStatusForCall(call);
   const personId = await db.transaction(async (tx) => {

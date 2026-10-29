@@ -309,7 +309,9 @@ function ActivityEntry({ entry }: { entry: AiLeadActivity }) {
   const Icon = entry.kind === "message" ? RiChat1Line : entry.kind === "call" ? RiPhoneLine : RiErrorWarningLine;
   const call = entry.call;
   const message = entry.message;
-  const title = call ? CALL_MODE[call.mode] : message ? MESSAGE_ORIGIN[message.origin] : "Step did not start";
+  const title = call
+    ? call.direction === "inbound" ? "They called · AI agent answered" : CALL_MODE[call.mode]
+    : message ? MESSAGE_ORIGIN[message.origin] : "Step did not start";
   const length = call?.result === "connected" ? formatCallLength(call.durationMs) : null;
   const where = call?.numberName ?? message?.numberName ?? null;
   return (
@@ -330,7 +332,7 @@ function ActivityEntry({ entry }: { entry: AiLeadActivity }) {
         </div>
         {(entry.stepLabel || entry.campaignName || where) && (
           <p className="text-paragraph-xs text-text-sub-600">
-            {[entry.stepLabel, entry.campaignName ? `Campaign: ${entry.campaignName}` : null, where ? `via ${where}` : null].filter(Boolean).join(" · ")}
+            {[entry.stepLabel, entry.campaignName ? `Campaign: ${entry.campaignName}` : null, where ? `${call?.direction === "inbound" ? "to" : "via"} ${where}` : null].filter(Boolean).join(" · ")}
           </p>
         )}
         {entry.error && <p className="text-paragraph-xs text-error-dark">{entry.error}</p>}

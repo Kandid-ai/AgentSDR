@@ -4,6 +4,7 @@ import {
   jidPhone,
   jobOutcomeForResult,
   jobOutcomeWhenStale,
+  parseIncomingCallRequest,
   parseInboundRequest,
   parseMessageClaim,
   parseMessageResult,
@@ -124,6 +125,23 @@ describe("message job transitions", () => {
     const uncertain = { status: "failed" as const, error: UNCERTAIN_DELIVERY_ERROR };
     expect(jobOutcomeForResult(uncertain, { ok: true, providerMessageId: null, sentAt: 1 })).toEqual({ action: "sent" });
     expect(jobOutcomeForResult(uncertain, { ok: false, error: "x", retryable: true })).toEqual({ action: "ignore" });
+  });
+});
+
+describe("incoming call report", () => {
+  test("keeps what it needs, trims, and defaults the flags", () => {
+    expect(parseIncomingCallRequest({ workerId: " w1 ", call: { waCallId: " ABC ", phone: "+919800000001", at: 5, isVideo: true } })).toEqual({
+      workerId: "w1",
+      call: { waCallId: "ABC", phone: "+919800000001", callerName: null, isVideo: true, isGroup: false, at: 5 },
+    });
+  });
+  test("a hidden number is null, not refused", () => {
+    expect(parseIncomingCallRequest({ workerId: "w1", call: { waCallId: "A", phone: "", at: 1 } }).call.phone).toBeNull();
+  });
+  test("refuses a report without the worker, the call id or the time", () => {
+    expect(() => parseIncomingCallRequest({ call: { waCallId: "A", at: 1 } })).toThrow(StationReportError);
+    expect(() => parseIncomingCallRequest({ workerId: "w1", call: { at: 1 } })).toThrow(StationReportError);
+    expect(() => parseIncomingCallRequest({ workerId: "w1", call: { waCallId: "A" } })).toThrow(StationReportError);
   });
 });
 
