@@ -28,7 +28,7 @@ const workerCall = (id: string): WorkerCall => ({
   brief: "brief",
   agentName: null,
   agentVoice: null,
-  remoteRep: null,
+  remoteRep: false,
 });
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 

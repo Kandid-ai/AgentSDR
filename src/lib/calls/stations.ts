@@ -5,8 +5,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizz
 import { db } from "@/lib/db";
 import { companies, people } from "@/lib/leads/schema";
 import { personCompanyName } from "@/lib/leads/companyName";
-import { getPlatformCredentials, isPlatformConnected, isPlatformNotConnectedError } from "@/lib/platform/credentials";
-import { TurnCredentialsError } from "@/lib/platform/cloudflareTurn";
+import { getPlatformCredentials } from "@/lib/platform/credentials";
 import { currentOrganizationId, inOrg, runInOrganization } from "@/lib/tenancy/scope";
 import { callSessions, callingProxies, callingStations } from "./schema";
 import { requireProxy, workerProxy } from "./proxies";
@@ -37,8 +36,7 @@ import {
   type WorkerStation,
   type WorkerStationStateRequest,
 } from "./stationContract";
-import { MAX_AGENT_BRIEF_CHARS, TERMINAL_CALL_STATUSES, type RecorderCallPhase, type RecorderRemoteRep } from "./contract";
-import { repLinkIceServers } from "./repLinkIce.server";
+import { MAX_AGENT_BRIEF_CHARS, TERMINAL_CALL_STATUSES, type RecorderCallPhase } from "./contract";
 import { disconnectStationWhatsappAccount, ensureStationWhatsappAccount } from "@/lib/whatsapp/accounts";
 
 /**
@@ -360,10 +358,6 @@ export async function stationForCloudCall(
   if (usesGoLogin(station.launcher) && !(await getPlatformCredentials("gologin"))) {
     throw new CallApiError(409, "Connect GoLogin in Settings → WhatsApp → Integrations to call from this number");
   }
-  // The rep's audio reaches the number only through a TURN relay (contract.ts, RecorderRemoteRep).
-  if (remoteRep && !(await isPlatformConnected("turn"))) {
-    throw new CallApiError(409, "Connect Cloudflare TURN in Settings → WhatsApp → Integrations to talk through a calling number");
-  }
   return { station, brief: remoteRep ? null : trimmed };
 }
 
@@ -571,28 +565,6 @@ async function claimCall({ workerId, launchers, stations }: WorkerClaimRequest):
       .limit(1);
     return found ? recorderLeadFor(found.person, personCompanyName(found.person.raw, found.companyName)) : null;
   });
-  let remoteRep: RecorderRemoteRep | null = null;
-  if (call.remoteRep) {
-    // The station's own TURN credentials, minted now and never stored. Without
-    // a relay the link cannot come up, so the call fails here rather than at the
-    // station; the worker moves on to its next job.
-    try {
-      const iceServers = await runInOrganization(call.organizationId, repLinkIceServers);
-      // Only the offer from the row: the answer is the station's to make.
-      remoteRep = { offer: call.remoteRep.offer, iceServers };
-    } catch (error) {
-      const message = isPlatformNotConnectedError(error)
-        ? "Cloudflare TURN is not connected — connect it in Settings → WhatsApp → Integrations to talk through a calling number"
-        : error instanceof TurnCredentialsError
-          ? `Couldn't get a relay for the call audio: ${error.message}`
-          : "Couldn't get a relay for the call audio";
-      if (!(error instanceof TurnCredentialsError) && !isPlatformNotConnectedError(error)) {
-        console.error(`Call ${call.id}: minting TURN credentials failed`, error);
-      }
-      await releaseCall(call.id, message);
-      return claimCall({ workerId, launchers, stations });
-    }
-  }
   return {
     kind: "call",
     station: await workerStation(station),
@@ -604,7 +576,7 @@ async function claimCall({ workerId, launchers, stations }: WorkerClaimRequest):
       brief: call.agentBrief ?? "",
       agentName: call.agentName ?? null,
       agentVoice: call.agentVoice ?? null,
-      remoteRep,
+      remoteRep: !!call.remoteRep,
     },
   };
 }

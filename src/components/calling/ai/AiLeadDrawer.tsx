@@ -148,7 +148,7 @@ export function AiLeadDrawer({
       const callId = await startRemoteRepCall({
         leadName: who,
         numberName: lead.numberName,
-        place: (offer) => callAiLead(campaignId, contactId, { remoteRep: { offer } }),
+        place: () => callAiLead(campaignId, contactId, { remoteRep: true }),
       });
       if (callId) {
         await load();

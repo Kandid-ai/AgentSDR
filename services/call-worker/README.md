@@ -69,24 +69,24 @@ A lead who calls a station's number back is answered by the AI agent (`src/incom
   `incoming: not answering (<reason>)`. Extensions before 0.22.0 are said once per number and
   their calls ring out.
 
-## Rep calls (extension 0.23.1+)
+## Rep calls (extension 0.24.0+)
 
 A call can also be one a rep talks on from their own AgentSDR tab, through a station's number
-(`WorkerCall.remoteRep` set: the rep's WebRTC offer and the station's own `iceServers`, Cloudflare
-TURN credentials the app mints at the claim from the organization's Cloudflare TURN integration
-and never stores; with TURN not connected, or Cloudflare failing, the claim fails the call instead
-of handing it out). The worker hands `remoteRep` whole to `agentsdrStation.startCall`, with no
-agent; the extension's wa-hook answers the offer (posted to `POST /api/call-recorder/calls/:id/rtc`
-with the call's token), gives WhatsApp the rep's voice as its microphone and sends the lead's side
-back to the rep. The link needs the relay: a GoLogin profile keeps WebRTC on TCP through the
-number's proxy (see "Call audio goes over TCP through the proxy" below), so only a TURN candidate
-over TCP/TLS (`turns:…:443`) gets out — wa-hook logs the candidate kinds it gathered (`rep link:
-candidates — ours: …`, no addresses) to show which. WhatsApp dials only once the link to the
-rep's tab is up; no link within 30 s fails the call undialed ("Your browser did not connect to the
-calling number"). The link lost for 8 s mid-call, or the rep's own hang-up, presses End call.
-Recording, upload and transcript are as for an agent call. Rep calls are outbound only.
-Extensions before 0.23.1 refuse them with a message to update (0.23.0 ignored the TURN servers);
-logs say `starting rep call` vs `starting agent call`.
+(`WorkerCall.remoteRep: true`). The worker hands `agentsdrStation.startCall` `remoteRep: true` and
+no agent. AgentSDR relays the audio (contract.ts, "a rep talking through a calling station"): the
+extension's wa-agent opens `GET /api/call-recorder/calls/:id/relay` (the call's recorder token,
+NDJSON `RepRelayEvent`s) for the rep's voice, which wa-hook plays into WhatsApp's microphone as it
+does the AI agent's, and `POST`s the lead's side to the same path in ~40 ms chunks of 16 kHz PCM
+from dialing on, so the rep hears it ring. WhatsApp dials at once; the rep's hang-up (`hangup` on
+the stream, also sent when their tab is gone) presses End call. The down stream reconnects with a
+short backoff when it drops; unreachable for 15 s, or refused (401/403/404/410), the call is hung
+up — nobody could hear the lead. The relay is plain HTTPS to AgentSDR's own host, which is direct
+(never through the number's proxy, see `directHosts` in `launchers.ts`), so no WebRTC of ours is
+involved: the earlier WebRTC link (0.23.x, through Cloudflare TURN) never connected, because a
+GoLogin browser rewrites and strips WebRTC. Each step is in the call's log as `rep relay: …`
+(connected, first audio each way, reconnects, drops, hang-up). Recording, upload and transcript
+are as for an agent call. Rep calls are outbound only. Extensions before 0.24.0 refuse them with a
+message to update; logs say `starting rep call (relay)` vs `starting agent call`.
 
 ## Environment
 

@@ -5,13 +5,14 @@ import type { StationIncomingCall, StationInboundTake, StationSendResult, Worker
 /**
  * Station mode for calls. Messaging needs 0.21.0+ and answering incoming
  * calls 0.22.0+, each detected by its functions (supportsMessaging,
- * supportsIncoming); a rep talking through the station needs 0.23.1+, by
- * version (supportsRepCalls), since it adds no function of its own (0.23.0
- * had the link but ignored the call's TURN servers, so it never connected
- * through a proxy).
+ * supportsIncoming); a rep talking through the station needs 0.24.0+, by
+ * version (supportsRepCalls), since it adds no function of its own (0.23.x
+ * linked the rep by WebRTC, which a GoLogin browser rewrites and strips, and
+ * expects a WebRTC offer where 0.24.0 takes `remoteRep: true` and AgentSDR's
+ * audio relay).
  */
 export const MIN_EXTENSION_VERSION = "0.17.0";
-export const REP_CALL_MIN_VERSION = "0.23.1";
+export const REP_CALL_MIN_VERSION = "0.24.0";
 
 export type StationCallRequest = Omit<RecorderCallRequest, "source" | "type" | "requestId">;
 export type StationResult = { ok: true } | { ok: false; error: string };
@@ -36,14 +37,14 @@ export type StationWorker = {
   takeIncomingCalls(): Promise<StationIncomingCall[]>;
   /** Answers the ringing call `waCallId` as AgentSDR's call `callId` (0.22.0+). */
   answerCall(req: StationCallRequest & { waCallId: string }): Promise<StationResult>;
-  /** The extension can place a call the rep talks on from AgentSDR (`remoteRep`, 0.23.1+). */
+  /** The extension can place a call the rep talks on from AgentSDR (`remoteRep`, 0.24.0+). */
   supportsRepCalls: boolean;
 };
 
 /**
  * What startCall / answerCall are given for a claimed call: the AI agent, or
- * — for a rep call — the rep's WebRTC offer and the station's ICE servers
- * (TURN credentials), whole, and no agent.
+ * — for a rep call — `remoteRep: true` and no agent (the extension then
+ * carries the audio through AgentSDR's relay, with the call's own token).
  */
 export function stationCallRequest(call: WorkerCall, apiBase: string, clickedAt: number): StationCallRequest {
   return {
@@ -53,7 +54,7 @@ export function stationCallRequest(call: WorkerCall, apiBase: string, clickedAt:
     apiBase,
     lead: call.lead,
     ...(call.remoteRep
-      ? { agent: null, remoteRep: call.remoteRep }
+      ? { agent: null, remoteRep: true }
       : { agent: { brief: call.brief, name: call.agentName, voice: call.agentVoice } }),
     clickedAt,
   };

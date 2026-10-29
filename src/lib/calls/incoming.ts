@@ -158,7 +158,7 @@ async function decide(station: StationRow, { workerId, call }: WorkerIncomingCal
       agentName: created.agentName ?? null,
       agentVoice: created.agentVoice ?? null,
       // The agent answers a call-back; a rep is never on it.
-      remoteRep: null,
+      remoteRep: false,
     },
   };
 }

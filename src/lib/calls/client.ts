@@ -25,8 +25,6 @@ import type {
   RecorderEndCallRequest,
   RecorderUpdateRequest,
   RecorderMessageRequest,
-  RepLinkIceServer,
-  RepLinkIceServersResponse,
   SetLeadStageRequest,
   StartCallRequest,
   StartCallResponse,
@@ -89,40 +87,22 @@ export function getCall(callId: string): Promise<CallDetail> {
   return callsFetch<CallDetail>(`/${encodeURIComponent(callId)}`);
 }
 
-/** Why the rep's tab got no ICE servers; `notConnected` when the organization has no Cloudflare TURN (409). */
-export class RepLinkIceError extends Error {
-  constructor(
-    message: string,
-    readonly notConnected: boolean,
-  ) {
-    super(message);
-    this.name = "RepLinkIceError";
-  }
-}
-
-/** GET /api/calls/rep-link/ice-servers — fresh TURN credentials for a call the rep talks on. Throws RepLinkIceError. */
-export async function getRepLinkIceServers(): Promise<RepLinkIceServer[]> {
-  let response: Response;
-  try {
-    response = await fetch("/api/calls/rep-link/ice-servers", { cache: "no-store" });
-  } catch {
-    throw new RepLinkIceError("Couldn't reach AgentSDR", false);
-  }
-  const body = (await response.json().catch(() => ({}))) as Partial<RepLinkIceServersResponse> & { error?: unknown };
-  if (!response.ok) {
-    const message = typeof body.error === "string" ? body.error : `Request failed (${response.status})`;
-    throw new RepLinkIceError(message, response.status === 409);
-  }
-  if (!Array.isArray(body.iceServers) || !body.iceServers.length) throw new RepLinkIceError("No relay came back for the call audio", false);
-  return body.iceServers;
-}
-
-/** POST /api/calls/:id/transcribe — (re)runs transcription. */
 /** POST /api/calls/:id/cancel — the rep cancels a call that has not connected. */
 export function cancelCall(callId: string): Promise<CallDetail> {
   return callsFetch<CallDetail>(`/${encodeURIComponent(callId)}/cancel`, { method: "POST" });
 }
 
+/**
+ * POST /api/calls/:id/relay/hangup — the rep hangs up a call they talk on
+ * through a calling station; the station ends the WhatsApp call. With
+ * `keepalive` it still goes out as the page unloads.
+ */
+export async function hangUpRelayedCall(callId: string, { keepalive = false }: { keepalive?: boolean } = {}): Promise<void> {
+  const response = await fetch(`/api/calls/${encodeURIComponent(callId)}/relay/hangup`, { method: "POST", keepalive });
+  if (!response.ok) throw new Error(`Hang up failed (${response.status})`);
+}
+
+/** POST /api/calls/:id/transcribe — (re)runs transcription. */
 export function transcribeCall(callId: string): Promise<CallDetail> {
   return callsFetch<CallDetail>(`/${encodeURIComponent(callId)}/transcribe`, { method: "POST" });
 }

@@ -10,7 +10,7 @@
  * the same AI-agent call a rep places from their laptop.
  */
 
-import type { RecorderCallPhase, RecorderLead, RecorderRemoteRep } from "./contract";
+import type { RecorderCallPhase, RecorderLead } from "./contract";
 
 export const STATION_LAUNCHERS = ["cloak", "local", "gologin_sdk", "gologin_cloud"] as const;
 /**
@@ -250,8 +250,8 @@ export type WorkerCall = {
   /** The agent's name and voice (null: the defaults in contract.ts). */
   agentName: string | null;
   agentVoice: string | null;
-  /** Set: the rep talks from AgentSDR instead of the agent (contract.ts, RecorderRemoteRep). */
-  remoteRep: RecorderRemoteRep | null;
+  /** The rep talks from AgentSDR instead of the agent; audio goes through AgentSDR's relay (contract.ts). */
+  remoteRep: boolean;
 };
 
 export type WorkerJob =

@@ -6,7 +6,7 @@
  */
 
 import type { WeeklyHours } from "@/lib/channels/rules";
-import type { AgentOutcomeKind, CallCampaignStatus, CallStatus, RepCallOffer } from "../contract";
+import type { AgentOutcomeKind, CallCampaignStatus, CallStatus } from "../contract";
 import type { StationStatus } from "../stationContract";
 import {
   AI_CAMPAIGN_MAX_CALLBACKS,
@@ -127,7 +127,7 @@ export const AI_LEAD_MAX_INSTRUCTIONS = 2_000;
  * sequence: the AI agent's (no body), or with `remoteRep` the rep's own,
  * talking from their tab through the campaign's number.
  */
-export type CallAiLeadRequest = { remoteRep?: RepCallOffer | null };
+export type CallAiLeadRequest = { remoteRep?: boolean | null };
 export type CallAiLeadResponse = { callId: string; numberName: string | null };
 
 export type AddAiCampaignPeopleResponse = { requested: number; added: number; skippedDuplicate: number; skippedMissingPhone: number };

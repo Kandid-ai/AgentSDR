@@ -1,14 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { CrmConfigurationValidationError } from "@/lib/crm/categories";
-import { MAX_RTC_SDP_CHARS } from "./contract";
-import { assertRtcAnswerAllowed, parseRemoteRep, parseRtcAnswerRequest, parseSdp } from "./remoteRep";
-import { CallApiError, rtcAnswerFor } from "./sessions";
+import {
+  assertRelayable,
+  parseCallAiLeadBody,
+  parseRemoteRep,
+  readRelayPcm,
+  repRelayCredential,
+  stationRelayCredential,
+  validateRelayPcm,
+} from "./remoteRep";
+import { REP_RELAY_MAX_CHUNK_BYTES } from "./repRelay.server";
+import { CallApiError } from "./sessions";
 
-const SDP = "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n";
-
-function expectApiError(fn: () => unknown, status: number) {
+async function expectApiError(fn: () => unknown, status: number) {
   try {
-    fn();
+    await fn();
     throw new Error("expected fn() to throw");
   } catch (error) {
     expect(error).toBeInstanceOf(CallApiError);
@@ -16,66 +22,102 @@ function expectApiError(fn: () => unknown, status: number) {
   }
 }
 
-describe("parseSdp", () => {
-  test("accepts a session description as given", () => {
-    expect(parseSdp(SDP, "offer")).toBe(SDP);
-  });
-
-  test("refuses non-strings, blanks, non-SDP and oversized text", () => {
-    expectApiError(() => parseSdp(42, "offer"), 400);
-    expectApiError(() => parseSdp("   ", "offer"), 400);
-    expectApiError(() => parseSdp("hello", "offer"), 400);
-    expectApiError(() => parseSdp(`v=0\r\n${"a".repeat(MAX_RTC_SDP_CHARS)}`, "offer"), 400);
-  });
-});
+function pcmRequest(body: Uint8Array<ArrayBuffer> | null, headers: Record<string, string> = {}): Request {
+  return new Request("https://app.example/api/calls/x/relay", { method: "POST", body, headers });
+}
 
 describe("parseRemoteRep", () => {
-  test("null or absent is not a rep call", () => {
-    expect(parseRemoteRep(null)).toBeNull();
-    expect(parseRemoteRep(undefined)).toBeNull();
+  test("true is a rep call; null, absent and false are not", () => {
+    expect(parseRemoteRep(true)).toBe(true);
+    expect(parseRemoteRep(false)).toBe(false);
+    expect(parseRemoteRep(null)).toBe(false);
+    expect(parseRemoteRep(undefined)).toBe(false);
   });
 
-  test("keeps only the offer, and refuses other fields", () => {
-    expect(parseRemoteRep({ offer: SDP })).toEqual({ offer: SDP });
-    expect(() => parseRemoteRep({ offer: SDP, answer: SDP })).toThrow(CrmConfigurationValidationError);
-    expect(() => parseRemoteRep("v=0")).toThrow(CrmConfigurationValidationError);
-    expectApiError(() => parseRemoteRep({ offer: "" }), 400);
-  });
-});
-
-describe("parseRtcAnswerRequest", () => {
-  test("returns the answer", () => {
-    expect(parseRtcAnswerRequest({ answer: SDP })).toBe(SDP);
-  });
-
-  test("refuses a missing answer or extra fields", () => {
-    expectApiError(() => parseRtcAnswerRequest({}), 400);
-    expect(() => parseRtcAnswerRequest({ answer: SDP, offer: SDP })).toThrow(CrmConfigurationValidationError);
+  test("refuses anything else, such as the old WebRTC offer", async () => {
+    await expectApiError(() => parseRemoteRep({ offer: "v=0" }), 400);
+    await expectApiError(() => parseRemoteRep("true"), 400);
   });
 });
 
-describe("assertRtcAnswerAllowed", () => {
-  test("stores the first answer to an open rep call", () => {
-    expect(assertRtcAnswerAllowed({ remoteRep: { offer: SDP, answer: null }, status: "pending" }, SDP)).toBe("store");
-    expect(assertRtcAnswerAllowed({ remoteRep: { offer: SDP, answer: null }, status: "in_progress" }, SDP)).toBe("store");
+describe("parseCallAiLeadBody", () => {
+  test("an empty body is the AI agent's call", () => {
+    expect(parseCallAiLeadBody("")).toEqual({});
+    expect(parseCallAiLeadBody("  ")).toEqual({});
   });
 
-  test("a repeat of the same answer is a no-op; a different one is refused", () => {
-    expect(assertRtcAnswerAllowed({ remoteRep: { offer: SDP, answer: SDP }, status: "pending" }, SDP)).toBe("repeat");
-    expectApiError(() => assertRtcAnswerAllowed({ remoteRep: { offer: SDP, answer: SDP }, status: "pending" }, `${SDP}a=x\r\n`), 409);
-  });
-
-  test("refuses a call nobody talks on from AgentSDR, or one that is over", () => {
-    expectApiError(() => assertRtcAnswerAllowed({ remoteRep: null, status: "pending" }, SDP), 409);
-    expectApiError(() => assertRtcAnswerAllowed({ remoteRep: { offer: SDP, answer: null }, status: "failed" }, SDP), 409);
+  test("reads remoteRep, and refuses other fields or bad JSON", async () => {
+    expect(parseCallAiLeadBody('{"remoteRep":true}')).toEqual({ remoteRep: true });
+    expect(parseCallAiLeadBody('{"remoteRep":null}')).toEqual({ remoteRep: false });
+    expect(() => parseCallAiLeadBody('{"remoteRep":true,"x":1}')).toThrow(CrmConfigurationValidationError);
+    await expectApiError(() => parseCallAiLeadBody("{"), 400);
+    await expectApiError(() => parseCallAiLeadBody('{"remoteRep":{"offer":"v=0"}}'), 400);
   });
 });
 
-describe("rtcAnswerFor", () => {
-  test("only an open rep call's answer is read back", () => {
-    expect(rtcAnswerFor({ remoteRep: { offer: SDP, answer: SDP }, status: "pending" })).toBe(SDP);
-    expect(rtcAnswerFor({ remoteRep: { offer: SDP, answer: null }, status: "pending" })).toBeNull();
-    expect(rtcAnswerFor({ remoteRep: { offer: SDP, answer: SDP }, status: "recorded" })).toBeNull();
-    expect(rtcAnswerFor({ remoteRep: null, status: "in_progress" })).toBeNull();
+describe("validateRelayPcm", () => {
+  test("accepts whole 16-bit samples up to the limit", () => {
+    expect(validateRelayPcm(new Uint8Array(1_280)).byteLength).toBe(1_280);
+    expect(validateRelayPcm(new Uint8Array(REP_RELAY_MAX_CHUNK_BYTES)).byteLength).toBe(REP_RELAY_MAX_CHUNK_BYTES);
+  });
+
+  test("refuses empty, odd-length and oversized bodies", async () => {
+    await expectApiError(() => validateRelayPcm(new Uint8Array(0)), 400);
+    await expectApiError(() => validateRelayPcm(new Uint8Array(3)), 400);
+    await expectApiError(() => validateRelayPcm(new Uint8Array(REP_RELAY_MAX_CHUNK_BYTES + 2)), 413);
+  });
+});
+
+describe("readRelayPcm", () => {
+  test("reads the body's bytes", async () => {
+    const bytes = await readRelayPcm(pcmRequest(new Uint8Array([1, 2, 3, 4])));
+    expect([...bytes]).toEqual([1, 2, 3, 4]);
+  });
+
+  test("refuses an oversized body, by its Content-Length or by what arrives", async () => {
+    await expectApiError(() => readRelayPcm(pcmRequest(new Uint8Array(REP_RELAY_MAX_CHUNK_BYTES + 2))), 413);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(REP_RELAY_MAX_CHUNK_BYTES));
+        controller.enqueue(new Uint8Array(2));
+        controller.close();
+      },
+    });
+    const chunked = new Request("https://app.example/x", { method: "POST", body: stream, duplex: "half" } as RequestInit);
+    await expectApiError(() => readRelayPcm(chunked), 413);
+  });
+
+  test("refuses a missing body", async () => {
+    await expectApiError(() => readRelayPcm(pcmRequest(null)), 400);
+  });
+});
+
+describe("assertRelayable", () => {
+  test("an open rep call", () => {
+    expect(() => assertRelayable({ remoteRep: {}, status: "pending" })).not.toThrow();
+    expect(() => assertRelayable({ remoteRep: {}, status: "in_progress" })).not.toThrow();
+  });
+
+  test("refuses a call nobody talks on from AgentSDR, or one that is over", async () => {
+    await expectApiError(() => assertRelayable({ remoteRep: null, status: "in_progress" }), 409);
+    await expectApiError(() => assertRelayable({ remoteRep: {}, status: "recorded" }), 409);
+  });
+});
+
+describe("relay credentials", () => {
+  test("the station's is its bearer token, hashed; none without one", () => {
+    const a = stationRelayCredential(new Request("https://x/", { headers: { authorization: "Bearer token-a" } }));
+    expect(a).toBeTruthy();
+    expect(a).not.toContain("token-a");
+    expect(stationRelayCredential(new Request("https://x/", { headers: { authorization: "Bearer token-a" } }))).toBe(a);
+    expect(stationRelayCredential(new Request("https://x/", { headers: { authorization: "Bearer token-b" } }))).not.toBe(a);
+    expect(stationRelayCredential(new Request("https://x/"))).toBeNull();
+  });
+
+  test("the rep's is their session cookie, hashed; none when signed out", () => {
+    expect(repRelayCredential(new Request("https://x/"))).toBeNull();
+    const signedIn = repRelayCredential(new Request("https://x/", { headers: { cookie: "better-auth.session_token=abc.def" } }));
+    expect(signedIn).toBeTruthy();
+    expect(signedIn).not.toContain("abc");
   });
 });

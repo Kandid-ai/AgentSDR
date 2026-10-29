@@ -10,7 +10,7 @@ const call = (overrides: Partial<WorkerCall> = {}): WorkerCall => ({
   brief: "brief",
   agentName: "Maya",
   agentVoice: "Kore",
-  remoteRep: null,
+  remoteRep: false,
   ...overrides,
 });
 
@@ -27,13 +27,10 @@ describe("stationCallRequest", () => {
     });
   });
 
-  test("a rep call carries the rep's offer and the station's ICE servers, and no agent", () => {
-    const remoteRep = {
-      offer: "v=0 offer",
-      iceServers: [{ urls: ["turns:turn.cloudflare.com:443?transport=tcp"], username: "user", credential: "secret" }],
-    };
-    const request = stationCallRequest(call({ remoteRep }), "https://app.example", 5);
+  test("a rep call says so, and carries no agent", () => {
+    const request = stationCallRequest(call({ remoteRep: true }), "https://app.example", 5);
     expect(request.agent).toBeNull();
-    expect(request.remoteRep).toEqual(remoteRep);
+    expect(request.remoteRep).toBe(true);
+    expect(request.recorderToken).toBe("token");
   });
 });

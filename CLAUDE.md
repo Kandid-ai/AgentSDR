@@ -110,7 +110,7 @@ first name.
 ## Platform integrations, not env
 
 Unipile, Google Workspace (Gmail service account), Cloudflare R2 and, for
-calling, GoLogin, Cal.com and Cloudflare TURN are connected **per
+calling, GoLogin and Cal.com are connected **per
 organization** from the Connection page of the channel each
 powers (Settings → Email / LinkedIn / WhatsApp), never from env —
 there is no env fallback. `src/lib/platform/` owns them: `catalog.ts` (client-safe fields),
@@ -498,23 +498,37 @@ are not gated on Unipile; only syncing Unipile numbers and `/whatsapp/campaigns`
 ### A rep talking through a station ("Call now")
 
 The AI lead drawer's "Call now" is a cloud call (`mode = 'agent_cloud'`)
-with `call_sessions.remote_rep` set (`scripts/add-call-session-remote-rep.ts`):
-the rep talks from their own AgentSDR tab, no agent. The tab
-(`src/components/calls/remoteRepCall.ts`, its bar mounted in the root layout)
-sends a WebRTC offer with the call; the station's wa-hook answers it at
-arming (`POST /api/call-recorder/calls/:id/rtc`, the tab polls `rtcAnswer`),
-plays the rep's voice into WhatsApp's microphone the way it does the agent's,
-and sends the lead's side back. WhatsApp dials only once the link is up; a
-lost link or the rep's hang-up (data channel) ends the call. The link runs
-through a TURN relay, the **Cloudflare TURN** platform integration (`turn`,
-Settings → WhatsApp → Integrations; `src/lib/platform/cloudflareTurn.ts`):
-a GoLogin station's WebRTC goes only over TCP through its number's proxy, so
-STUN alone never connected. Each side gets its own short-lived credentials,
-never stored: the rep's tab from `GET /api/calls/rep-link/ice-servers`
-before it makes the offer, the station in the claimed call
-(`remoteRep.iceServers`, minted in `claimCall`; a failed mint fails the
-call). Not connected: the tab says so and nothing is queued. Contract:
-contract.ts, "a rep talking through a calling station". Extension 0.23.1+.
+with `call_sessions.remote_rep` set to `{}` (`StartCallRequest.remoteRep:
+true`; `WorkerCall.remoteRep` tells the station): the rep talks from their own
+AgentSDR tab, no agent. **AgentSDR relays the audio** — no WebRTC between the
+two browsers: a GoLogin station's browser rewrites and strips WebRTC, so the
+first build (a WebRTC link through Cloudflare TURN) never connected (29 Oct
+2026), while both sides already reach AgentSDR over HTTPS.
+
+The relay (`src/lib/calls/repRelay.server.ts`) is in-process memory, so it
+holds only while the app runs as **one instance**. Per call it has two sides,
+each with one long NDJSON down stream (`GET …/relay`; a newer stream replaces
+the older) and small PCM POSTs up (mono 16-bit LE at 16 kHz, ~40 ms each, at
+most 1 s). Audio for a side with no stream, or one more than ~0.5 s behind,
+is dropped, never queued. It tells each side whether the other is there,
+pings every 5 s, sends the station `hangup` when the rep hangs up (`POST
+/api/calls/:id/relay/hangup`) or when the rep's stream has been gone 10 s,
+and is closed by `finishCall` / `cancelCall` (else forgotten after a minute
+idle). The rep's routes are cookie-authorized, the station's
+(`/api/call-recorder/calls/:id/relay`) by the recorder token with CORS for
+`https://web.whatsapp.com` only; while a side's stream is open, its POSTs
+with the same credential skip the database (`isAuthorized`). Route rules are
+in `src/lib/calls/remoteRep.ts`; contract: contract.ts, "a rep talking
+through a calling station".
+
+The tab (`src/components/calls/remoteRepCall.ts`, its bar mounted in the root
+layout): mic (echo cancellation on) → AudioWorklet → 16 kHz low-passed
+(`src/lib/calls/relayPcm.ts`, the extension's downsampler copied) → POSTs;
+the stream → 16 kHz AudioBuffers scheduled after 100 ms of buffering,
+dropped past 400 ms. Playback goes through an in-page WebRTC loopback
+(`echoLoopback.ts`) because Chrome's echo canceller only treats WebRTC audio
+as the far end; if the loopback does not connect in 2 s it plays directly,
+and the bar asks for headphones either way. Extension 0.24.0+.
 
 ### Incoming calls: the AI answers a lead who calls back
 

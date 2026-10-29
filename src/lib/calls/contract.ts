@@ -246,10 +246,9 @@ export type StartCallRequest = {
   stationId?: string | null;
   /**
    * With "agent_cloud": the rep talks instead of the AI agent, from this tab,
-   * through the station (see RecorderRemoteRep). `agentBrief` is then not needed.
-   * Refused (409) while the organization has not connected Cloudflare TURN.
+   * through the station (see "a rep talking through a calling station"). `agentBrief` is then not needed.
    */
-  remoteRep?: RepCallOffer | null;
+  remoteRep?: boolean | null;
 };
 
 export type StartCallResponse = {
@@ -301,8 +300,6 @@ export type CallSummary = {
   agentOutcome?: AgentOutcome | null;
   /** A cloud call the rep talks on from AgentSDR (no agent). */
   remoteRep?: boolean;
-  /** For such a call: the station's WebRTC answer to the rep's offer, once it has made one. */
-  rtcAnswer?: string | null;
 };
 
 /** GET /api/calls/:id — a call with its transcript. */
@@ -592,73 +589,58 @@ export type RecorderCallRequest = {
   /** Set: the AI voice agent talks to the lead instead of the rep (trial). */
   agent?: RecorderAgent | null;
   /** Set (station mode only): the rep talks from their AgentSDR tab, through this station. */
-  remoteRep?: RecorderRemoteRep | null;
+  remoteRep?: boolean | null;
 };
 
 // --- a rep talking through a calling station ---------------------------------
 
 /**
  * A rep's call placed from a cloud calling station's WhatsApp, with the rep
- * at their own AgentSDR tab. The two browsers are joined by WebRTC: the rep's
- * tab makes `offer` (ICE gathered, no trickle) with one audio track (their
- * microphone) and a data channel (REP_LINK_CHANNEL); the station's wa-hook
- * answers it — the answer reaches the rep's tab through POST
- * /api/call-recorder/calls/:id/rtc and the call's `rtcAnswer` — sends the
- * lead's side back on that track, and gives WhatsApp the rep's voice as its
- * microphone, as it does the agent's. WhatsApp dials only once the link is up.
+ * at their own AgentSDR tab ("Call now"). AgentSDR relays the audio: each
+ * side sends its audio up in small chunks and reads the other side's from one
+ * long streaming response. No WebRTC: a GoLogin station's browser rewrites
+ * and strips WebRTC (29 Oct 2026), and both sides already reach AgentSDR.
  *
- * Both sides go through a TURN relay (the organization's Cloudflare TURN
- * integration): a station's browser may reach the internet only over TCP
- * through its number's proxy, so a direct or STUN-only path does not exist.
- * Each side gets its own short-lived credentials — the rep's tab from GET
- * /api/calls/rep-link/ice-servers, the station with the claimed call
- * (`iceServers`, minted at the claim and never stored).
+ *   rep's tab    POST /api/calls/:id/relay        (cookie; body: PCM)
+ *                GET  /api/calls/:id/relay        (cookie; NDJSON RepRelayEvent stream)
+ *                POST /api/calls/:id/relay/hangup (cookie)
+ *   station      POST /api/call-recorder/calls/:id/relay  (Bearer recorder token; body: PCM)
+ *                GET  /api/call-recorder/calls/:id/relay  (Bearer recorder token; NDJSON stream)
+ *                — CORS-allowed for https://web.whatsapp.com (the extension's
+ *                content script fetches as the page's origin).
+ *
+ * Audio both ways: mono 16-bit little-endian PCM at REP_RELAY_SAMPLE_RATE.
+ * The station plays the rep's audio into WhatsApp's microphone exactly as it
+ * plays the AI agent's, and sends the lead's side from dialing on (the rep
+ * hears it ring). The relay lives in the app process's memory: one app
+ * instance, as deployed today.
  */
-export type RecorderRemoteRep = RepCallOffer & {
-  /** The station side's ICE servers (STUN and TURN, with credentials). */
-  iceServers: RepLinkIceServer[];
-};
 
-/** What the rep's tab sends with the call (StartCallRequest.remoteRep): its offer, nothing else. */
-export type RepCallOffer = {
-  /** SDP of the rep's browser's offer. */
-  offer: string;
-};
+export const REP_RELAY_SAMPLE_RATE = 16_000;
+/** Senders batch about this much audio per POST. */
+export const REP_RELAY_CHUNK_MS = 40;
+/** A POST carrying more than this much audio is refused. */
+export const REP_RELAY_MAX_CHUNK_MS = 1_000;
+/** Players hold this much before starting to play, to ride out network jitter. */
+export const REP_RELAY_JITTER_MS = 100;
+/** Players drop queued audio past this much, to catch up after a stall. */
+export const REP_RELAY_MAX_BUFFER_MS = 400;
+/** A down stream sends a ping this often, so proxies keep it open. */
+export const REP_RELAY_PING_MS = 5_000;
+/** The rep's down stream gone this long while the call is on: the station is told to hang up. */
+export const REP_RELAY_REP_GONE_MS = 10_000;
 
-/** One ICE server, as RTCPeerConnection takes it. */
-export type RepLinkIceServer = { urls: string | string[]; username?: string; credential?: string };
+export type RepRelaySide = "rep" | "station";
 
-/** GET /api/calls/rep-link/ice-servers — the rep's tab's ICE servers for one call. */
-export type RepLinkIceServersResponse = { iceServers: RepLinkIceServer[] };
-
-/** At most this many ICE servers (and URLs per server) are accepted from anywhere. */
-export const MAX_REP_LINK_ICE_SERVERS = 10;
-
-/** POST /api/call-recorder/calls/:id/rtc — the station's answer, once. */
-export type RecorderRtcAnswerRequest = { answer: string };
-
-/** Longest SDP accepted for an offer or answer. */
-export const MAX_RTC_SDP_CHARS = 20_000;
-
-/**
- * How long either side waits for ICE gathering before sending its description
- * with what it has. Long enough for a TURN allocation over TLS through a
- * station's proxy; a browser whose UDP is blocked never "completes" gathering
- * and always waits this long.
- */
-export const REP_LINK_GATHER_MS = 5_000;
-
-/** From arming, how long the station waits for the rep's tab to connect before giving up without dialing. */
-export const REP_LINK_CONNECT_TIMEOUT_MS = 30_000;
-
-/** The link went down mid-call: hang up after this long if it has not come back. */
-export const REP_LINK_LOST_HANGUP_MS = 8_000;
-
-/** The data channel's label. Messages are RepLinkControl, as JSON. */
-export const REP_LINK_CHANNEL = "agentsdr-control";
-
-/** From the rep's tab: hang up. */
-export type RepLinkControl = { type: "hangup" };
+/** One line of a relay down stream (newline-delimited JSON). */
+export type RepRelayEvent =
+  /** The other side's audio: base64 of mono 16-bit LE PCM at REP_RELAY_SAMPLE_RATE. */
+  | { t: "audio"; pcm: string }
+  /** Whether the other side is connected (its down stream is open). */
+  | { t: "peer"; present: boolean }
+  /** To the station only: the rep hung up, or their tab left — end the WhatsApp call. */
+  | { t: "hangup" }
+  | { t: "ping" };
 
 // --- AI voice agent (trial) --------------------------------------------------
 

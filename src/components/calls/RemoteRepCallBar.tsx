@@ -96,8 +96,10 @@ export function RemoteRepCallBar() {
           The browser paused the call audio — click to hear them
         </Button.Root>
       )}
-      {!over && call.stage !== "on-call" && call.stage !== "mic" && (
-        <p className="mt-2 text-paragraph-xs text-text-soft-400">Keep this tab open — the call runs through it.</p>
+      {!over && call.stage !== "mic" && (
+        <p className="mt-2 text-paragraph-xs text-text-soft-400">
+          {call.stage === "on-call" ? "Use headphones for the best sound." : "Keep this tab open — the call runs through it. Use headphones for the best sound."}
+        </p>
       )}
     </div>
   );
@@ -128,8 +130,6 @@ function StageText({ call }: { call: RemoteRepCallState }) {
       return <>Waiting for {number} to be free…</>;
     case "opening":
       return <>Opening {number}&apos;s WhatsApp…</>;
-    case "connecting":
-      return <>Connecting your audio…</>;
     case "dialing":
       return <>Calling…</>;
     case "ringing":

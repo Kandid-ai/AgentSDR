@@ -1,7 +1,7 @@
 /**
  * Where a call the rep talks on through a calling station stands, from the
  * rep's side — the pure half of remoteRepCall.ts, so it can be tested without
- * a browser. `linkUp`: the rep's tab is joined to the station (WebRTC).
+ * a browser. `stationPresent`: the station has joined the call's audio relay.
  */
 
 import { TERMINAL_CALL_STATUSES, type CallDetail } from "@/lib/calls/contract";
@@ -12,7 +12,6 @@ export type RemoteRepStage =
   | "placing"
   | "waiting"
   | "opening"
-  | "connecting"
   | "dialing"
   | "ringing"
   | "on-call"
@@ -26,8 +25,8 @@ export function isRemoteRepOver(stage: RemoteRepStage): stage is "ended" | "erro
 }
 
 export function remoteRepView(
-  call: Pick<CallDetail, "status" | "livePhase" | "rtcAnswer" | "error" | "durationMs">,
-  linkUp: boolean,
+  call: Pick<CallDetail, "status" | "livePhase" | "error" | "durationMs">,
+  stationPresent: boolean,
 ): RemoteRepView {
   const phase = call.livePhase ?? null;
   switch (phase?.kind) {
@@ -57,9 +56,8 @@ export function remoteRepView(
     case "audio-blocked":
       return { stage: "dialing" };
   }
-  // Queued, opening WhatsApp, or armed and waiting for this tab: the station dials once the link is up.
-  if (linkUp) return { stage: "dialing" };
-  if (call.rtcAnswer) return { stage: "connecting" };
+  // Queued or opening WhatsApp; once the station has joined the relay, it is about to dial.
+  if (stationPresent) return { stage: "dialing" };
   return { stage: !phase || phase.kind === "queued" ? "waiting" : "opening" };
 }
 

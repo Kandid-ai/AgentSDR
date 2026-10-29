@@ -38,6 +38,7 @@ import { headRecording, presignRecordingUpload, recordingKeyFor } from "./storag
 import type { CloudCallPhase } from "./stationContract";
 import { createRecorderToken, recorderTokenMatches } from "./token";
 import { transcribeCall } from "./transcription";
+import { endRelay } from "./repRelay.server";
 import { authContextErrorResponse } from "@/lib/auth/context";
 import { currentOrganizationId, inOrg, runInOrganization } from "@/lib/tenancy/scope";
 
@@ -106,7 +107,7 @@ export function toCallSummary(row: CallSessionRow): CallSummary {
     mode: row.mode,
     livePhase: settledLivePhase(row),
     agentOutcome: row.agentOutcome ?? null,
-    remoteRep: row.remoteRep != null,
+    remoteRep: !!row.remoteRep,
   };
 }
 
@@ -147,16 +148,7 @@ export async function getCall(callId: string): Promise<CallDetail> {
     .where(and(inOrg(callSessions), eq(callSessions.id, callId)))
     .limit(1);
   if (!found) throw new CallApiError(404, "Call not found");
-  return { ...toCallDetail(found.row), stationName: found.stationName, rtcAnswer: rtcAnswerFor(found.row) };
-}
-
-/**
- * The station's WebRTC answer, for the rep's tab to finish its link with —
- * only in GET /api/calls/:id (never a list), and only while the call is
- * open: an SDP carries the station's IP addresses.
- */
-export function rtcAnswerFor(row: Pick<CallSessionRow, "remoteRep" | "status">): string | null {
-  return row.remoteRep && !isTerminalStatus(row.status) ? row.remoteRep.answer : null;
+  return { ...toCallDetail(found.row), stationName: found.stationName };
 }
 
 // --- startCall ---------------------------------------------------------------
@@ -232,8 +224,8 @@ export async function startCall(input: StartCallRequest): Promise<StartCallRespo
   const { phone, changed } = resolveStartPhone(person.phone, input.phone);
   // A cloud call waits in the queue for a call worker; see stations.ts.
   // With `remoteRep` the rep talks from their tab instead of the agent: no brief, name or voice.
-  const remoteRep = input.mode === "agent_cloud" && input.remoteRep ? { offer: input.remoteRep.offer, answer: null } : null;
-  const cloud = input.mode === "agent_cloud" ? await stationForCloudCall(input.stationId, input.agentBrief, { remoteRep: !!remoteRep }) : null;
+  const remoteRep = input.mode === "agent_cloud" && input.remoteRep === true;
+  const cloud = input.mode === "agent_cloud" ? await stationForCloudCall(input.stationId, input.agentBrief, { remoteRep }) : null;
   const { token, hash } = createRecorderToken();
   const now = new Date();
   const [[row]] = await Promise.all([
@@ -256,7 +248,7 @@ export async function startCall(input: StartCallRequest): Promise<StartCallRespo
               agentName: remoteRep ? null : (input.agentName ?? null),
               agentVoice: remoteRep ? null : (input.agentVoice ?? null),
               livePhase: QUEUED_PHASE,
-              remoteRep,
+              remoteRep: remoteRep ? {} : null,
             }
           : {}),
       })
@@ -373,6 +365,7 @@ export async function cancelCall(callId: string): Promise<CallDetail> {
     .where(and(inOrg(callSessions), eq(callSessions.id, callId), eq(callSessions.status, "pending")))
     .returning();
   if (updated) {
+    if (updated.remoteRep) endRelay(updated.id);
     // Counts as not picking up: the rep cancels a call that keeps ringing.
     await applyCallResultToContactSafely(updated);
     return toCallDetail(updated);
@@ -587,6 +580,13 @@ export function assertRecordingKeyMatches(
 }
 
 export async function finishCall(row: CallSessionRow, body: FinishCallRequest): Promise<FinishCallResponse["call"]> {
+  const finished = await finishOpenCall(row, body);
+  // Over: a rep talking on it through a station has nothing left to relay.
+  if (row.remoteRep) endRelay(row.id);
+  return finished;
+}
+
+async function finishOpenCall(row: CallSessionRow, body: FinishCallRequest): Promise<FinishCallResponse["call"]> {
   // Idempotent once terminal: a retried report from the extension (e.g. after
   // a flaky response) must not re-run side effects or flip the status again.
   // A recording can still arrive for a call reads closed out as never

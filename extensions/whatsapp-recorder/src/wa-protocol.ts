@@ -11,7 +11,6 @@
  * rep's own call.
  */
 
-import type { RecorderRemoteRep } from "../../../src/lib/calls/contract";
 import type { StationIncomingCall, StationInboundMessage } from "../../../src/lib/calls/stationContract";
 
 export const HOOK_SOURCE = "agentsdr-wa-hook";
@@ -20,7 +19,20 @@ export const AGENT_SOURCE = "agentsdr-wa-agent";
 export type AgentToHook =
   /** Record the next call in this tab; nothing is recorded unless armed. */
   /** `agent`: the AI voice agent talks in this call — WhatsApp gets its voice as the microphone. */
-  | { source: typeof AGENT_SOURCE; type: "arm"; callId: string; agent?: boolean; monitor?: boolean; remoteRep?: RecorderRemoteRep }
+  /**
+   * `repRelay` (station mode, never with `agent`): the rep talks from their
+   * AgentSDR tab through AgentSDR's relay — WhatsApp gets their voice (sent
+   * as agent-play) as the microphone, and the lead's side comes back as
+   * relay-audio from dialing on.
+   */
+  | {
+      source: typeof AGENT_SOURCE;
+      type: "arm";
+      callId: string;
+      agent?: boolean;
+      monitor?: boolean;
+      repRelay?: boolean;
+    }
   | { source: typeof AGENT_SOURCE; type: "disarm" }
   /** The rep clicked the "turn on call audio" prompt — resume suspended audio. */
   | { source: typeof AGENT_SOURCE; type: "resume-audio" }
@@ -28,7 +40,7 @@ export type AgentToHook =
   | { source: typeof AGENT_SOURCE; type: "end-call"; callId: string }
   /** Which call, if any, wa-hook is recording or finishing off — answered with probe-result. */
   | { source: typeof AGENT_SOURCE; type: "probe" }
-  /** The agent's voice: mono 16-bit PCM at `rate` Hz, queued after what is already playing. */
+  /** The agent's voice (or, on a rep call, the rep's): mono 16-bit PCM at `rate` Hz, queued after what is already playing. */
   | { source: typeof AGENT_SOURCE; type: "agent-play"; callId: string; pcm: ArrayBuffer; rate: number }
   /** The lead talked over the agent: drop the agent's voice still queued. */
   | { source: typeof AGENT_SOURCE; type: "agent-interrupt"; callId: string }
@@ -69,10 +81,8 @@ export type HookToAgent =
   | { source: typeof HOOK_SOURCE; type: "call-ui"; callId: string }
   /** The lead's side of an agent call, from the pick-up on: mono 16-bit PCM at 16 kHz. */
   | { source: typeof HOOK_SOURCE; type: "agent-audio"; callId: string; pcm: ArrayBuffer }
-  /** A rep call (armed with remoteRep): the station's WebRTC answer to the rep's offer, for AgentSDR. */
-  | { source: typeof HOOK_SOURCE; type: "rtc-answer"; callId: string; answer: string }
-  /** A rep call: the link to the rep's tab is up (dial now) or could not be made (do not dial). */
-  | { source: typeof HOOK_SOURCE; type: "rtc-state"; callId: string; state: "connected" | "failed"; detail: string }
+  /** The lead's side of a rep call (armed with repRelay), from dialing on: mono 16-bit PCM at REP_RELAY_SAMPLE_RATE. */
+  | { source: typeof HOOK_SOURCE; type: "relay-audio"; callId: string; pcm: ArrayBuffer }
   /** Whether Accept was pressed on the incoming call; `labels`: the call's buttons seen (digits masked), for diagnosis. */
   | { source: typeof HOOK_SOURCE; type: "accept-result"; callId: string; clicked: boolean; labels: string };
 

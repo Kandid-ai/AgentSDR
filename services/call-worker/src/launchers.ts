@@ -193,7 +193,8 @@ async function openCloak(station: WorkerStation, fresh: boolean): Promise<Statio
  * What goes direct instead of through the number's proxy. The proxy is there
  * so WhatsApp sees the number's IP; nothing else needs it, and the proxy is
  * billed by the GB. The AI's audio (Gemini Live, about 4 MB a minute) and the
- * recording's upload to R2 were most of a call's proxy traffic.
+ * recording's upload to R2 were most of a call's proxy traffic. A rep call's
+ * audio goes to and from AgentSDR itself (its relay), so it is direct too.
  *
  * Loopback must be listed: Playwright otherwise proxies even localhost
  * (`<-loopback>`), and the extension's reports to a local AgentSDR went to the
@@ -214,12 +215,6 @@ function directHosts(agentsdrUrl: string): string[] {
     // 2-minute limit ("did not load in time", 23 Oct 2026). The account's own
     // connection (web.whatsapp.com, its /ws/chat socket) stays on the proxy.
     "static.whatsapp.net",
-    // A rep call's TURN relay (Cloudflare TURN). GoLogin resolves every other
-    // host to 0.0.0.0, so the station never got a relay candidate and the
-    // link to the rep's tab failed (29 Oct 2026). WhatsApp never sees this
-    // route: the rep's tab gets the relay's address, not the server's.
-    "turn.cloudflare.com",
-    "stun.cloudflare.com",
   ];
 }
 

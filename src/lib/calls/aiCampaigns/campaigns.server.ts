@@ -1067,7 +1067,8 @@ export async function getAiCampaignStats(campaignId: string): Promise<AiCampaign
  * position is unchanged (the engine waits while it is open). Works on a draft
  * campaign too, so a campaign can be tried on yourself before launch.
  * With `remoteRep` it is the rep's own call from that number, talking from
- * their tab (contract.ts, RecorderRemoteRep): no agent, brief or persona.
+ * their tab (contract.ts, "a rep talking through a calling station"): no
+ * agent, brief or persona.
  */
 export async function callAiLeadNow(campaignId: string, contactId: string, request: CallAiLeadRequest = {}): Promise<CallAiLeadResponse> {
   const campaign = await loadCampaignRow(campaignId);
@@ -1092,7 +1093,7 @@ export async function callAiLeadNow(campaignId: string, contactId: string, reque
       campaignContactId: contact.id,
       mode: "agent_cloud",
       stationId: station.id,
-      remoteRep: request.remoteRep,
+      remoteRep: true,
     });
     return { callId: started.call.id, numberName: station.name };
   }

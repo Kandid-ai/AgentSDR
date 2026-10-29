@@ -215,9 +215,9 @@ export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null, a
     }
     running.set(call.id, worker);
     const request = stationCallRequest(call, new URL(cfg.agentsdrUrl).origin, Date.now());
-    // A rep call: the rep talks from their AgentSDR tab, linked to this
-    // browser by WebRTC; the extension dials once that link is up.
-    const kind = call.remoteRep ? "rep call" : "agent call";
+    // A rep call: the rep talks from their AgentSDR tab; the extension
+    // carries the audio both ways through AgentSDR's relay, and dials at once.
+    const kind = call.remoteRep ? "rep call (relay)" : "agent call";
     let started: StationResult;
     if (answer) {
       step(`answering the incoming call (extension ${worker.version})`);

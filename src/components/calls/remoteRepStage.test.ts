@@ -2,24 +2,23 @@ import { describe, expect, test } from "bun:test";
 import type { CallDetail } from "@/lib/calls/contract";
 import { isRemoteRepOver, microphoneErrorText, remoteRepView } from "./remoteRepStage";
 
-type CallView = Pick<CallDetail, "status" | "livePhase" | "rtcAnswer" | "error" | "durationMs">;
+type CallView = Pick<CallDetail, "status" | "livePhase" | "error" | "durationMs">;
 const call = (over: Partial<CallView> = {}): CallView => ({
   status: "pending",
   livePhase: { kind: "queued" },
-  rtcAnswer: null,
   error: null,
   durationMs: null,
   ...over,
 });
 
 describe("remoteRepView", () => {
-  test("waits for the number, then for its WhatsApp, then for this tab's link", () => {
+  test("waits for the number, then for its WhatsApp, then for it to join the relay", () => {
     expect(remoteRepView(call(), false).stage).toBe("waiting");
     expect(remoteRepView(call({ livePhase: null }), false).stage).toBe("waiting");
     expect(remoteRepView(call({ livePhase: { kind: "starting-browser" } }), false).stage).toBe("opening");
-    expect(remoteRepView(call({ livePhase: { kind: "opening" }, rtcAnswer: "v=0" }), false).stage).toBe("connecting");
-    // The station dials once the link is up, before it reports "calling".
-    expect(remoteRepView(call({ livePhase: { kind: "opening" }, rtcAnswer: "v=0" }), true).stage).toBe("dialing");
+    expect(remoteRepView(call({ livePhase: { kind: "opening" } }), false).stage).toBe("opening");
+    // The station joins the relay as it arms, before it reports "calling".
+    expect(remoteRepView(call({ livePhase: { kind: "opening" } }), true).stage).toBe("dialing");
   });
 
   test("follows the station's dialing and the pick-up", () => {

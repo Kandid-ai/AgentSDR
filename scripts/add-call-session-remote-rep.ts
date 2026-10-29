@@ -1,8 +1,9 @@
 /**
  * A rep talking through a calling station: adds call_sessions.remote_rep —
  * null for every other call; for a cloud call the rep talks on from their
- * AgentSDR tab, { offer, answer } (the tab's WebRTC offer, the station's
- * answer once it has made one). Matches src/lib/calls/schema.ts.
+ * AgentSDR tab, a marker. First { offer, answer } (the tab's WebRTC offer, the
+ * station's answer); since the audio relay (29 Oct 2026) `{}`, with nothing to
+ * migrate: older rows' SDPs are simply never read. Matches src/lib/calls/schema.ts.
  *
  * Run with:  bun run scripts/add-call-session-remote-rep.ts
  *

@@ -112,7 +112,7 @@ function parseLead(value: unknown): RecorderLead | null {
 
 /** Runs in the call's organization (withRecorderScope): the knowledge is that organization's. */
 export async function mintAgentToken(row: CallSessionRow, request: AgentTokenRequest): Promise<AgentTokenResponse> {
-  // A rep talks on this one (contract.ts, RecorderRemoteRep): there is no agent to start.
+  // A rep talks on this one (contract.ts, "a rep talking through a calling station"): there is no agent to start.
   if (row.remoteRep) throw new CallApiError(409, "A rep talks on this call, not the AI agent");
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new CallApiError(409, "The AI voice agent is not set up on this server (GEMINI_API_KEY is missing)");

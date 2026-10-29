@@ -91,13 +91,12 @@ You may see these notices:
 
 You can also call a lead from a cloud calling number and do the talking yourself, with no extension and no WhatsApp in your own browser. Open a lead in an AI calling campaign and click **Call now**. **AI call** has the AI agent make the same call instead.
 
-It needs [Cloudflare TURN](/integrations/cloudflare-turn) connected on **Settings → WhatsApp → Integrations** (an owner or admin connects it). Without it the call bar says so and nothing is queued.
+AgentSDR asks for your microphone, then queues the call on the campaign's number. Your audio and the lead's travel through AgentSDR itself: your voice goes up from this tab, the number plays it into the WhatsApp call, and the lead's side comes back down to your browser. Nothing else needs connecting. A call bar at the bottom of the page shows the stages, **Waiting for the number to be free…**, **Opening the number's WhatsApp…**, **Calling…**, **Ringing…** and **On call**, with **Mute** and **Hang up**. It stays while you move around AgentSDR.
 
-AgentSDR asks for your microphone, then queues the call on the campaign's number. Your browser connects to that number's WhatsApp Web through a Cloudflare TURN relay: your voice goes to the lead, and theirs plays in your browser. The number dials only once your audio is connected. A call bar at the bottom of the page shows the stages, **Waiting for the number to be free…**, **Connecting your audio…**, **Calling…**, **Ringing…** and **On call**, with **Mute** and **Hang up**. It stays while you move around AgentSDR.
-
+- Use headphones for the best sound. Without them your browser cancels most of the echo, but not all of it.
 - Keep the tab open. Closing or reloading it ends the call a few seconds later.
 - If you block the microphone, nothing is queued. Allow it for the site and try again.
-- Both sides reach the relay over TLS on port 443 when nothing else gets through, so this works through the number's proxy and most office networks. If even that fails, the call ends before the number dials.
+- Your voice reaches the lead about a quarter to half a second late, a little more than on a phone. Leave a short pause before you answer.
 
 The call is recorded and transcribed like any other, with you as the rep.
 

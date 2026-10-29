@@ -76,7 +76,7 @@ export async function loadLeadActivity(
         id: session.id,
         status: session.status,
         mode: session.mode,
-        remoteRep: session.remoteRep != null,
+        remoteRep: !!session.remoteRep,
         direction: session.direction,
         numberName: numberName ?? null,
         result: callResult(session),

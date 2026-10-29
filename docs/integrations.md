@@ -7,8 +7,8 @@ icon: "plug"
 AgentSDR talks to outside services in two ways:
 
 - **Per organization**, connected inside the app and stored encrypted in the
-  database. This covers Unipile, Google Workspace, Cloudflare R2, Cloudflare
-  TURN, OpenRouter and the enrichment providers. Each organization connects its own accounts.
+  database. This covers Unipile, Google Workspace, Cloudflare R2,
+  OpenRouter and the enrichment providers. Each organization connects its own accounts.
 - **Per instance**, configured in the environment: Resend (auth email) and the
   Google OAuth client for "Continue with Google" sign-in. See
   [configuration.md](configuration.md).
@@ -45,7 +45,6 @@ Connecting, editing and disconnecting an integration needs the **owner** or
 | Gmail reply sync (Pub/Sub, optional) | Picking up email replies | Same card: the "Gmail Pub/Sub topic" field | [Gmail reply sync](integrations/gmail-reply-sync.mdx) |
 | Unipile | LinkedIn accounts, invitations, messages and search; WhatsApp messaging and calling | Settings, LinkedIn, Connection (the same connection also shows under Settings, WhatsApp, Integrations) | [Unipile](integrations/unipile.mdx) |
 | Cloudflare R2 | WhatsApp call recordings and contact photos | Settings, WhatsApp, Integrations | [Cloudflare R2](integrations/cloudflare-r2.mdx) |
-| Cloudflare TURN | Call now: a rep talking to a lead through a cloud calling number | Settings, WhatsApp, Integrations | [Cloudflare TURN](integrations/cloudflare-turn.mdx) |
 | OpenRouter | Every AI feature: reply classification and drafts, AI columns, call transcription | Settings, AI provider | [OpenRouter](integrations/openrouter.mdx) |
 | Enrichment providers (15) | Enrichment columns in Tables | Inside Tables: Actions, Add enrichment, Add account | [Enrichment providers](integrations/enrichment-providers.mdx) |
 | Resend (per instance) | Verification, password-reset and invitation email | Environment: `RESEND_API_KEY`, `AUTH_EMAIL_FROM` | [Resend](integrations/resend.mdx) |

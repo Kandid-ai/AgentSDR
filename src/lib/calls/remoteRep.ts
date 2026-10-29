@@ -1,37 +1,35 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { createHash } from "node:crypto";
+import { getSessionCookie } from "better-auth/cookies";
 import { assertExactKeys, assertObject } from "@/lib/crm/categories";
-import { inOrg } from "@/lib/tenancy/scope";
 import type { CallAiLeadRequest } from "./aiCampaigns/api";
-import { MAX_RTC_SDP_CHARS, type RepCallOffer } from "./contract";
+import type { RepRelaySide } from "./contract";
 import { callSessions } from "./schema";
-import { CallApiError, isTerminalStatus } from "./sessions";
+import { CallApiError, getCallInOrganization, isTerminalStatus } from "./sessions";
+import {
+  RELAY_STREAM_HEADERS,
+  RelayFullError,
+  REP_RELAY_MAX_CHUNK_BYTES,
+  repRelay,
+  relayStream,
+} from "./repRelay.server";
 
 /**
- * A rep talking through a calling station (contract.ts, RecorderRemoteRep):
- * the server only carries the two SDPs between the rep's tab and the
- * station, in call_sessions.remote_rep. Neither is ever shown to anyone but
- * the call's own organization.
+ * A rep talking through a calling station (contract.ts, "a rep talking through
+ * a calling station"): the call is marked in call_sessions.remote_rep, and its
+ * audio goes through the in-process relay (repRelay.server.ts). These are the
+ * routes' shared rules: what a body may be, which calls may be relayed, and
+ * the streaming response.
  */
 
 type CallSessionRow = typeof callSessions.$inferSelect;
 
-/** One SDP from a browser: a session description, not empty, not huge. */
-export function parseSdp(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value.trim()) throw new CallApiError(400, `${label} must be an SDP`);
-  if (value.length > MAX_RTC_SDP_CHARS) throw new CallApiError(400, `${label} is over ${MAX_RTC_SDP_CHARS} characters`);
-  if (!value.startsWith("v=0")) throw new CallApiError(400, `${label} must be an SDP`);
+/** StartCallRequest.remoteRep / CallAiLeadRequest.remoteRep: true = the rep talks; null/absent/false = not. */
+export function parseRemoteRep(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value !== "boolean") throw new CallApiError(400, "remoteRep must be true or false");
   return value;
-}
-
-/** StartCallRequest.remoteRep: null/absent = not a rep call. */
-export function parseRemoteRep(value: unknown): RepCallOffer | null {
-  if (value == null) return null;
-  assertObject(value, "remoteRep");
-  assertExactKeys(value, ["offer"]);
-  return { offer: parseSdp(value.offer, "remoteRep.offer") };
 }
 
 /**
@@ -39,7 +37,10 @@ export function parseRemoteRep(value: unknown): RepCallOffer | null {
  * optional (an empty one is the AI agent's call, as before this existed).
  */
 export async function readCallAiLeadRequest(request: Request): Promise<CallAiLeadRequest> {
-  const text = await request.text();
+  return parseCallAiLeadBody(await request.text());
+}
+
+export function parseCallAiLeadBody(text: string): CallAiLeadRequest {
   if (!text.trim()) return {};
   let value: unknown;
   try {
@@ -52,46 +53,102 @@ export async function readCallAiLeadRequest(request: Request): Promise<CallAiLea
   return { remoteRep: parseRemoteRep(value.remoteRep) };
 }
 
-/** POST /api/call-recorder/calls/:id/rtc. */
-export function parseRtcAnswerRequest(value: unknown): string {
-  assertObject(value);
-  assertExactKeys(value, ["answer"]);
-  return parseSdp(value.answer, "answer");
-}
+// --- the relay's routes ------------------------------------------------------------
 
-/** Whether a station may answer this call now; throws the route's error if not. */
-export function assertRtcAnswerAllowed(row: Pick<CallSessionRow, "remoteRep" | "status">, answer: string): "store" | "repeat" {
+/** Whether this call's audio may go through the relay now; throws the route's error if not. */
+export function assertRelayable(row: Pick<CallSessionRow, "remoteRep" | "status">): void {
   if (!row.remoteRep) throw new CallApiError(409, "This call is not one a rep talks on");
   if (isTerminalStatus(row.status)) throw new CallApiError(409, "This call is already over");
-  if (row.remoteRep.answer == null) return "store";
-  // A retried post of the same answer is fine; a second, different one is not.
-  if (row.remoteRep.answer === answer) return "repeat";
-  throw new CallApiError(409, "This call has already been answered");
 }
 
-/** Stores the station's answer, once — run inside withRecorderScope. */
-export async function recordRtcAnswer(row: CallSessionRow, answer: string): Promise<void> {
-  if (assertRtcAnswerAllowed(row, answer) === "repeat") return;
-  const [stored] = await db
-    .update(callSessions)
-    .set({ remoteRep: sql`jsonb_set(${callSessions.remoteRep}, '{answer}', to_jsonb(${answer}::text))`, updatedAt: new Date() })
-    .where(
-      and(
-        inOrg(callSessions),
-        eq(callSessions.id, row.id),
-        isNotNull(callSessions.remoteRep),
-        sql`${callSessions.remoteRep}->>'answer' IS NULL`,
-        inArray(callSessions.status, ["pending", "in_progress"]),
-      ),
-    )
-    .returning({ remoteRep: callSessions.remoteRep, status: callSessions.status });
-  if (stored) return;
-  // Raced with another post, or the call ended meanwhile: judge against what is there now.
-  const [current] = await db
-    .select({ remoteRep: callSessions.remoteRep, status: callSessions.status })
-    .from(callSessions)
-    .where(and(inOrg(callSessions), eq(callSessions.id, row.id)))
-    .limit(1);
-  if (!current) throw new CallApiError(404, "Call not found");
-  if (assertRtcAnswerAllowed(current, answer) === "store") throw new CallApiError(409, "The answer could not be stored");
+/** This organization's call, if a rep may talk on it now — run in the organization's scope. */
+export async function requireRelayableCall(callId: string): Promise<CallSessionRow> {
+  const row = await getCallInOrganization(callId);
+  assertRelayable(row);
+  return row;
+}
+
+/** One POST's audio: mono 16-bit PCM, whole samples, at most REP_RELAY_MAX_CHUNK_MS of it. */
+export function validateRelayPcm(bytes: Uint8Array): Uint8Array {
+  if (!bytes.byteLength) throw new CallApiError(400, "The body must carry audio");
+  if (bytes.byteLength % 2) throw new CallApiError(400, "The body must be 16-bit PCM (an even number of bytes)");
+  if (bytes.byteLength > REP_RELAY_MAX_CHUNK_BYTES) throw new CallApiError(413, `At most ${REP_RELAY_MAX_CHUNK_BYTES} bytes of audio per request`);
+  return bytes;
+}
+
+/** Reads a POST's PCM body, never more than the limit allows (a lying or absent Content-Length included). */
+export async function readRelayPcm(request: Request): Promise<Uint8Array> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > REP_RELAY_MAX_CHUNK_BYTES) {
+    throw new CallApiError(413, `At most ${REP_RELAY_MAX_CHUNK_BYTES} bytes of audio per request`);
+  }
+  const reader = request.body?.getReader();
+  if (!reader) return validateRelayPcm(new Uint8Array(0));
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > REP_RELAY_MAX_CHUNK_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw new CallApiError(413, `At most ${REP_RELAY_MAX_CHUNK_BYTES} bytes of audio per request`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return validateRelayPcm(bytes);
+}
+
+/**
+ * What authorized a side's stream, so its POSTs can skip the database while
+ * that stream is open: a hash of the rep's session cookie, or of the
+ * station's recorder token. Null: no credential at all.
+ */
+export function repRelayCredential(request: Request): string | null {
+  const token = getSessionCookie(request);
+  return token ? credentialHash(`rep:${token}`) : null;
+}
+
+export function stationRelayCredential(request: Request): string | null {
+  const match = /^Bearer\s+(.+)$/.exec(request.headers.get("authorization") ?? "");
+  const token = match?.[1]?.trim();
+  return token ? credentialHash(`station:${token}`) : null;
+}
+
+function credentialHash(value: string): string {
+  return createHash("sha256").update(value).digest("base64url");
+}
+
+/** The down stream's response for an already-authorized side. */
+export function relayStreamResponse(
+  request: Request,
+  callId: string,
+  side: RepRelaySide,
+  credential: string,
+  headers: Record<string, string> = {},
+): Response {
+  let body: ReadableStream<Uint8Array>;
+  try {
+    body = relayStream((subscriber) => repRelay().attach(callId, side, subscriber, credential), request.signal);
+  } catch (error) {
+    if (error instanceof RelayFullError) throw new CallApiError(503, error.message);
+    throw error;
+  }
+  return new Response(body, { headers: { ...RELAY_STREAM_HEADERS, ...headers } });
+}
+
+/** The rep hung up — run after the call was checked to be theirs. */
+export function hangUpRelay(callId: string): void {
+  try {
+    repRelay().hangup(callId);
+  } catch (error) {
+    if (error instanceof RelayFullError) throw new CallApiError(503, error.message);
+    throw error;
+  }
 }

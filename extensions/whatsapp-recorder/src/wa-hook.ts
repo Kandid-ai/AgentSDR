@@ -41,29 +41,22 @@
  * The rep hears both sides through the speakers, and the recording keeps the
  * agent left and the lead right, as it would the rep.
  *
- * A rep call (station mode) is armed with `remoteRep`: the rep talks from
- * their own AgentSDR tab, through this cloud browser. At arming, a WebRTC
- * peer connection answers the rep's tab's offer (non-trickle; the answer
- * goes to AgentSDR through wa-agent). The rep's voice arrives on it and
- * becomes WhatsApp's microphone, exactly as the agent's voice does; the
- * lead's side goes back to the rep from the moment WhatsApp dials. wa-agent
- * dials only once the link is up, and the link lost mid-call, or the rep's
- * hang-up on its data channel, presses End call. The recording keeps the
- * rep left and the lead right.
+ * A rep call (station mode) is armed with `repRelay`: the rep talks from
+ * their own AgentSDR tab, through this cloud browser, and AgentSDR relays the
+ * audio (wa-agent holds the relay — rep-relay.ts). It is an agent call with
+ * the rep in the agent's place: their voice arrives as agent-play and becomes
+ * WhatsApp's microphone, played with a jitter buffer (REP_RELAY_JITTER_MS,
+ * dropped past REP_RELAY_MAX_BUFFER_MS so it catches up rather than lags);
+ * the lead's side goes back as relay-audio from the moment WhatsApp dials, so
+ * the rep hears it ring. No WebRTC of ours: a GoLogin browser rewrites and
+ * strips it (29 Oct 2026). The recording keeps the rep left and the lead right.
  */
 
 import { createDownsampler } from "./downsample";
 import {
-  parseRepLinkControl,
-  requestRemoteRep,
-  summarizeLocalCandidates,
-  summarizeSdpCandidates,
-  waitForIceGathering,
-} from "./rep-link";
-import {
-  REP_LINK_CHANNEL,
-  REP_LINK_LOST_HANGUP_MS,
-  type RecorderRemoteRep,
+  REP_RELAY_JITTER_MS,
+  REP_RELAY_MAX_BUFFER_MS,
+  REP_RELAY_SAMPLE_RATE,
 } from "../../../src/lib/calls/contract";
 import { INCOMING_CALL_MAX_AGE_MS, type StationInboundMessage } from "../../../src/lib/calls/stationContract";
 import { isAcceptLabel, maskDigits, phoneFromScreenText } from "./incoming";
@@ -123,9 +116,11 @@ type Disconnect = (this: AudioNode, destination: AudioNode) => void;
 
 type Recording = { recorder: MediaRecorder; chunks: Blob[]; startedAt: number };
 
-/** The audio graph of an agent call: the agent's voice in, the lead's side out. */
+/** The audio graph of an agent call (or a rep call): the agent's voice in, the lead's side out. */
 type AgentRig = {
   callId: string;
+  /** A rep call through AgentSDR's relay: the "agent's voice" is the rep's, and the lead's side goes out from dialing on. */
+  relay: boolean;
   context: AudioContext;
   /** The agent's voice, fanned out to the call's microphone tracks and the rep's speakers. */
   voice: GainNode;
@@ -133,7 +128,7 @@ type AgentRig = {
   queued: Set<AudioBufferSourceNode>;
   /** Context time the queued voice runs to. */
   playHead: number;
-  /** Set at the pick-up: from then on the lead's side goes to the model. */
+  /** Set at the pick-up: from then on the lead's side goes to the model (a rep call's goes from the start). */
   listening: boolean;
   hangupTimer: number;
   /**
@@ -145,48 +140,20 @@ type AgentRig = {
   /** Counters for the diagnostics, reported once each. */
   sentAudio: boolean;
   playedAudio: boolean;
-};
-
-/**
- * A rep call's WebRTC link to the rep's AgentSDR tab (contract.ts,
- * RecorderRemoteRep). Its one audio transceiver carries the rep's voice in —
- * into the rig's `voice`, WhatsApp's microphone — and the lead's side out.
- */
-type RepLink = {
-  callId: string;
-  pc: RTCPeerConnection;
-  /** The audio transceiver's sender: nothing until the call session starts, then the lead's side. */
-  sender: RTCRtpSender | null;
-  /**
-   * The rep's voice, also on a muted media element: Chrome delivers a remote
-   * WebRTC track to Web Audio only while a media element plays it too.
-   */
-  sink: HTMLAudioElement;
-  /** The rep's voice in the rig's context, feeding `voice`. */
-  source: MediaStreamAudioSourceNode | null;
-  /** The lead's side as sent to the rep (the session's remoteBus). */
-  leadTrack: MediaStreamTrack | null;
-  /** Set once the link first came up, when rtc-state "connected" was posted. */
-  connected: boolean;
-  /** Running while the link is down after it was up: hangs up when it fires. */
-  lostTimer: number;
-  closed: boolean;
+  /** A rep call: times queued audio was dropped to catch up, for the log. */
+  catchUps: number;
 };
 
 /** The sample rate Gemini Live takes its input at. */
 const AGENT_INPUT_RATE = 16_000;
 /** ScriptProcessor block size: ~85 ms at 48 kHz, within the 20–100 ms chunks Live wants. */
 const AGENT_CAPTURE_FRAMES = 4096;
+/** A rep call's: ~43 ms at 48 kHz, about one relay chunk (REP_RELAY_CHUNK_MS) — less delay to the rep. */
+const RELAY_CAPTURE_FRAMES = 2048;
 /** Small lead so the first chunk of a reply does not start mid-render. */
 const AGENT_PLAY_LEAD_S = 0.03;
 /** After the agent's goodbye has played, this long before End call is pressed. */
 const AGENT_HANGUP_GRACE_MS = 800;
-/**
- * How long a rep call's station waits for ICE gathering before answering. A
- * GoLogin profile reaches the TURN relay only over TCP/TLS; 5 s left the
- * answer with no relay candidate (29 Oct 2026). Within REP_LINK_CONNECT_TIMEOUT_MS.
- */
-const STATION_GATHER_MS = 12_000;
 
 type Session = {
   callId: string;
@@ -332,11 +299,11 @@ function install(): void {
   let armedCallId: string | null = null;
   /** The armed call's microphone is the rig's voice: an agent call, or a rep call. */
   let armedAgent = false;
+  /** The armed call is a rep call through AgentSDR's relay. */
+  let armedRelay = false;
   /** Play the agent's voice on this machine's speakers too — for a rep at the laptop, not a cloud station. */
   let armedMonitor = true;
   let agentRig: AgentRig | null = null;
-  /** The armed rep call's link to the rep's tab. */
-  let repLink: RepLink | null = null;
   let session: Session | null = null;
   /** A call whose recording is being stopped and handed over (end() until "recording" is posted). */
   let finishingCallId: string | null = null;
@@ -438,9 +405,9 @@ function install(): void {
     const data = event.data as Partial<AgentToHook> | null;
     if (data?.source !== AGENT_SOURCE) return;
     if (data.type === "arm" && data.callId) {
-      const remoteRep = requestRemoteRep(data.remoteRep);
-      if (remoteRep === "invalid") repLog("the rep call's offer or ICE servers are unusable; arming without the link");
-      arm(data.callId, data.agent === true, data.monitor !== false, remoteRep === "invalid" ? null : remoteRep);
+      const agent = data.agent === true;
+      // A rep call never has an agent too.
+      arm(data.callId, agent, data.monitor !== false, data.repRelay === true && !agent);
     }
     else if (data.type === "disarm") {
       armedCallId = null;
@@ -479,19 +446,19 @@ function install(): void {
   let armSawCallUi = false;
   let armCallUiMissing = 0;
 
-  function arm(callId: string, agent: boolean, monitor: boolean, remoteRep: RecorderRemoteRep | null): void {
+  function arm(callId: string, agent: boolean, monitor: boolean, relay: boolean): void {
     // A session whose call ended unseen would block this call's session.
     if (session && !readCallUi().present) end();
     if (!session) dropAgentRig();
     armedCallId = callId;
-    armedAgent = agent || remoteRep !== null;
+    armedAgent = agent || relay;
+    armedRelay = relay;
     armedMonitor = monitor;
     armedAt = Date.now();
     armSawCallUi = false;
     armCallUiMissing = 0;
     window.clearInterval(armWatch);
     armWatch = window.setInterval(watchArmed, WATCH_INTERVAL_MS);
-    if (remoteRep) void openRepLink(callId, remoteRep);
   }
 
   function watchArmed(): void {
@@ -572,8 +539,7 @@ function install(): void {
       link(next, leveled(next, micSource), merger, 0);
       link(next, leveled(next, remoteBus), merger, 1);
       link(next, merger, output);
-      if (repLink?.callId === callId) sendLeadToRep(next, repLink);
-      else if (rig) captureLead(next, rig);
+      if (rig) captureLead(next, rig);
       for (const [playbackContext, nodes] of playback) {
         if (playbackContext.state !== "closed") for (const node of nodes) tap(next, node);
       }
@@ -764,7 +730,6 @@ function install(): void {
 
   function cleanup(current: Session): void {
     if (agentRig?.callId === current.callId) dropAgentRig();
-    if (repLink?.callId === current.callId) closeRepLink();
     nativeStop.call(current.micClone);
     for (const [from, to] of current.links) {
       try {
@@ -831,7 +796,7 @@ function install(): void {
   function agentMicrophone(callId: string, real: MediaStream): MediaStream {
     try {
       const rig = ensureAgentRig(callId);
-      // A rep call's rig was made at arming; capturing now, the page may run it.
+      // Capturing now, the page may run it.
       if (rig.context.state === "suspended") void rig.context.resume();
       const destination = rig.context.createMediaStreamDestination();
       nativeConnect.call(rig.voice, destination, 0, 0);
@@ -840,7 +805,7 @@ function install(): void {
         rig.held.push(track);
       }
       const [fake] = destination.stream.getAudioTracks();
-      const whose = repLink?.callId === callId ? "the rep's" : "the agent's";
+      const whose = rig.relay ? "the rep's" : "the agent's";
       agentLog(`WhatsApp asked for the microphone; gave it ${whose} voice (context ${rig.context.state})`);
       return new MediaStream([fake, ...real.getVideoTracks()]);
     } catch (error) {
@@ -868,6 +833,7 @@ function install(): void {
     });
     agentRig = {
       callId,
+      relay: armedRelay,
       context,
       voice,
       queued: new Set(),
@@ -877,13 +843,12 @@ function install(): void {
       held: [],
       sentAudio: false,
       playedAudio: false,
+      catchUps: 0,
     };
     return agentRig;
   }
 
   function dropAgentRig(): void {
-    // A rep call's link lives as long as its rig: closing it is how the rep's tab learns the call is over.
-    closeRepLink();
     const rig = agentRig;
     if (!rig) return;
     agentRig = null;
@@ -897,23 +862,28 @@ function install(): void {
     }
   }
 
-  /** Sends the lead's side (remoteBus) to wa-agent as 16 kHz mono PCM, once they have picked up. */
+  /**
+   * Sends the lead's side (remoteBus) to wa-agent as 16 kHz mono PCM: for the
+   * agent once they have picked up (agent-audio), for a rep call from dialing
+   * on, ringing included (relay-audio).
+   */
   function captureLead(current: Session, rig: AgentRig): void {
-    const processor = current.context.createScriptProcessor(AGENT_CAPTURE_FRAMES, 1, 1);
+    const processor = current.context.createScriptProcessor(rig.relay ? RELAY_CAPTURE_FRAMES : AGENT_CAPTURE_FRAMES, 1, 1);
     const sink = current.context.createMediaStreamDestination();
+    const rate = rig.relay ? REP_RELAY_SAMPLE_RATE : AGENT_INPUT_RATE;
     // Filtered and continuous across blocks — see downsample.ts for what the
     // old nearest-sample pick did to the lead's voice.
-    const downsample = createDownsampler(current.context.sampleRate, AGENT_INPUT_RATE);
+    const downsample = createDownsampler(current.context.sampleRate, rate);
     processor.onaudioprocess = (event) => {
-      if (!rig.listening || agentRig !== rig) return;
+      if ((!rig.relay && !rig.listening) || agentRig !== rig) return;
       if (!rig.sentAudio) {
         rig.sentAudio = true;
-        agentLog(`sending the lead's audio to the agent (${current.context.sampleRate} Hz → ${AGENT_INPUT_RATE} Hz)`);
+        agentLog(`sending the lead's audio to ${rig.relay ? "the rep" : "the agent"} (${current.context.sampleRate} Hz → ${rate} Hz)`);
       }
       const pcm = downsample(event.inputBuffer.getChannelData(0));
       if (pcm.length === 0) return;
       window.postMessage(
-        { source: HOOK_SOURCE, type: "agent-audio", callId: rig.callId, pcm: pcm.buffer } satisfies HookToAgent,
+        { source: HOOK_SOURCE, type: rig.relay ? "relay-audio" : "agent-audio", callId: rig.callId, pcm: pcm.buffer } satisfies HookToAgent,
         location.origin,
         [pcm.buffer],
       );
@@ -924,13 +894,25 @@ function install(): void {
     link(current, processor, sink);
   }
 
-  /** Queues a chunk of the agent's voice (mono 16-bit PCM) after what is already playing. */
+  /**
+   * Queues a chunk of the agent's voice (mono 16-bit PCM) after what is
+   * already playing. A rep call's arrives over the network in small chunks:
+   * after a gap it starts REP_RELAY_JITTER_MS late, to ride out the next
+   * one, and more than REP_RELAY_MAX_BUFFER_MS queued is dropped, so a stall
+   * leaves the rep heard late for a moment, not for the rest of the call.
+   */
   function agentPlay(rig: AgentRig, data: ArrayBuffer, rate: number): void {
     const samples = new Int16Array(data);
     if (samples.length === 0) return;
     if (!rig.playedAudio) {
       rig.playedAudio = true;
-      agentLog(`playing the agent's voice into the call (context ${rig.context.state})`);
+      agentLog(`playing ${rig.relay ? "the rep's" : "the agent's"} voice into the call (context ${rig.context.state})`);
+    }
+    if (rig.relay && rig.playHead - rig.context.currentTime > REP_RELAY_MAX_BUFFER_MS / 1000) {
+      agentSilence(rig);
+      rig.catchUps += 1;
+      // The first, then every 20th: a network that keeps stalling shows without flooding the log.
+      if (rig.catchUps % 20 === 1) agentLog(`the rep's audio fell behind; dropped what was queued to catch up (${rig.catchUps}×)`);
     }
     const buffer = rig.context.createBuffer(1, samples.length, rate);
     const channel = buffer.getChannelData(0);
@@ -938,7 +920,8 @@ function install(): void {
     const source = rig.context.createBufferSource();
     source.buffer = buffer;
     nativeConnect.call(source, rig.voice, 0, 0);
-    const startAt = Math.max(rig.context.currentTime + AGENT_PLAY_LEAD_S, rig.playHead);
+    const lead = rig.relay ? REP_RELAY_JITTER_MS / 1000 : AGENT_PLAY_LEAD_S;
+    const startAt = Math.max(rig.context.currentTime + lead, rig.playHead);
     source.start(startAt);
     rig.playHead = startAt + buffer.duration;
     rig.queued.add(source);
@@ -957,11 +940,12 @@ function install(): void {
     rig.playHead = 0;
   }
 
-  /** A step of an agent call: in this tab's console, and in AgentSDR's timing table. */
+  /** A step of an agent call (or a rep call): in this tab's console, and in AgentSDR's timing table. */
   function agentLog(text: string): void {
-    console.info("[agentsdr agent]", text);
+    const who = (agentRig?.relay ?? armedRelay) ? "rep relay" : "agent";
+    console.info(`[agentsdr ${who}]`, text);
     const callId = agentRig?.callId ?? session?.callId ?? armedCallId;
-    if (callId) post({ source: HOOK_SOURCE, type: "diag", callId, text: `agent: ${text}` });
+    if (callId) post({ source: HOOK_SOURCE, type: "diag", callId, text: `${who}: ${text}` });
   }
 
   /** Presses End call once the agent's goodbye has finished playing. */
@@ -973,175 +957,6 @@ function install(): void {
       if (button) button.click();
       else if (session) end();
     }, remainingMs + AGENT_HANGUP_GRACE_MS);
-  }
-
-  // --- a rep talking through this station ---------------------------------------
-
-  /**
-   * Answers the rep's tab's offer: the rig is made now, so the rep's voice
-   * has WhatsApp's microphone to go into before WhatsApp asks for one, and
-   * the call session is built in the rig's context (begin). Posts the answer
-   * once ICE gathering is done, then rtc-state as the link comes up or fails.
-   */
-  async function openRepLink(callId: string, { offer, iceServers }: RecorderRemoteRep): Promise<void> {
-    closeRepLink();
-    const rig = ensureAgentRig(callId);
-    const sink = new Audio();
-    sink.muted = true;
-    let pc: RTCPeerConnection;
-    try {
-      // The call's own TURN credentials (minted at the claim): through the number's proxy, only a relay connects.
-      pc = new RTCPeerConnection({ iceServers });
-    } catch (error) {
-      post({ source: HOOK_SOURCE, type: "rtc-state", callId, state: "failed", detail: `no WebRTC here: ${describe(error)}` });
-      return;
-    }
-    const rep: RepLink = { callId, pc, sender: null, sink, source: null, leadTrack: null, connected: false, lostTimer: 0, closed: false };
-    repLink = rep;
-    pc.ontrack = (event) => {
-      if (repLink !== rep || event.track.kind !== "audio") return;
-      const stream = new MediaStream([event.track]);
-      sink.srcObject = stream;
-      void sink.play().catch((error: unknown) => repLog(`the rep's voice would not play on the media element: ${describe(error)}`));
-      // Native connect: the rep's voice is WhatsApp's microphone, never the lead's side.
-      rep.source = rig.context.createMediaStreamSource(stream);
-      nativeConnect.call(rep.source, rig.voice, 0, 0);
-      repLog("receiving the rep's voice");
-    };
-    pc.ondatachannel = (event) => {
-      const channel = event.channel;
-      if (channel.label !== REP_LINK_CHANNEL) return;
-      channel.onmessage = (message) => {
-        if (parseRepLinkControl(message.data)?.type === "hangup") repHangup(rep, "the rep hung up");
-      };
-      channel.onclose = () => repLinkDown(rep, "the rep's tab closed the link");
-    };
-    pc.onconnectionstatechange = () => onRepLinkState(rep);
-    // Why a relay could not be reached (a lookup that failed, a refused or
-    // timed-out connection): the URL and code, never an address or credential.
-    const iceErrors = new Set<string>();
-    pc.onicecandidateerror = (event) => {
-      const error = event as RTCPeerConnectionIceErrorEvent;
-      const line = `${error.url || "?"} → ${error.errorCode} ${error.errorText || ""}`.trim();
-      if (repLink === rep && !iceErrors.has(line) && iceErrors.size < 12) {
-        iceErrors.add(line);
-        repLog(`ICE error: ${line}`);
-      }
-    };
-    try {
-      await pc.setRemoteDescription({ type: "offer", sdp: offer });
-      const transceiver = pc.getTransceivers().find((t) => t.receiver.track.kind === "audio");
-      if (!transceiver) throw new Error("the offer carries no audio");
-      // Both ways; nothing is sent until the call session gives it the lead's side.
-      transceiver.direction = "sendrecv";
-      rep.sender = transceiver.sender;
-      repLog(`relay servers: ${iceServers.flatMap((server) => (Array.isArray(server.urls) ? server.urls : [server.urls])).map((url) => url.split("?")[0] + (url.includes("transport=tcp") ? "/tcp" : "")).join(" ")}`);
-      const gatherStart = Date.now();
-      await pc.setLocalDescription(await pc.createAnswer());
-      // Longer than the rep's tab: the station's relay may be reached over TCP/TLS.
-      await waitForIceGathering(pc, STATION_GATHER_MS);
-      if (repLink !== rep) return;
-      const answer = pc.localDescription?.sdp;
-      if (!answer) throw new Error("no answer was made");
-      repLog(`answer ready (ICE gathering ${pc.iceGatheringState} after ${Date.now() - gatherStart} ms)`);
-      post({ source: HOOK_SOURCE, type: "rtc-answer", callId, answer });
-      // Candidate kinds only, never addresses: what each side can be reached
-      // by, and how ours reach the relay (relay/tls is the one through a proxy).
-      const relays = await pc
-        .getStats()
-        .then((stats) => summarizeLocalCandidates(stats.values() as Iterable<{ type?: string }>))
-        .catch(() => "unknown");
-      repLog(
-        `candidates — ours: ${summarizeSdpCandidates(answer)} (gathered, relays by how we reach them: ${relays}); the rep's: ${summarizeSdpCandidates(offer)}`,
-      );
-    } catch (error) {
-      if (repLink !== rep) return;
-      repLog(`could not answer the rep's offer: ${describe(error)}`);
-      post({ source: HOOK_SOURCE, type: "rtc-state", callId, state: "failed", detail: `could not answer the offer: ${describe(error)}` });
-    }
-  }
-
-  function onRepLinkState(rep: RepLink): void {
-    if (repLink !== rep) return;
-    const state = rep.pc.connectionState;
-    if (state === "connected") {
-      if (rep.lostTimer) {
-        window.clearTimeout(rep.lostTimer);
-        rep.lostTimer = 0;
-        repLog("the link to the rep's browser is back");
-      }
-      if (rep.connected) return;
-      rep.connected = true;
-      repLog("connected to the rep's browser");
-      post({ source: HOOK_SOURCE, type: "rtc-state", callId: rep.callId, state: "connected", detail: "" });
-    } else if (state === "failed" && !rep.connected) {
-      post({
-        source: HOOK_SOURCE,
-        type: "rtc-state",
-        callId: rep.callId,
-        state: "failed",
-        detail: "no network route between the two browsers, even through the TURN relay",
-      });
-    } else if (state === "failed" || state === "disconnected") {
-      repLinkDown(rep, `the link to the rep's browser is ${state}`);
-    }
-  }
-
-  /** The link went down after it was up: hang up unless it is back within REP_LINK_LOST_HANGUP_MS. */
-  function repLinkDown(rep: RepLink, why: string): void {
-    if (repLink !== rep || !rep.connected || rep.lostTimer) return;
-    repLog(`${why}; hanging up in ${REP_LINK_LOST_HANGUP_MS / 1000} s unless it comes back`);
-    rep.lostTimer = window.setTimeout(() => repHangup(rep, `${why}, and did not come back`), REP_LINK_LOST_HANGUP_MS);
-  }
-
-  /** Ends the rep call wherever it is: End call, or — not dialed yet — closed out unanswered. */
-  function repHangup(rep: RepLink, why: string): void {
-    if (repLink !== rep) return;
-    repLog(`${why} — hanging up`);
-    const button = readCallUi().endButton;
-    if (button) button.click();
-    else if (session?.callId === rep.callId) end();
-    else if (armedCallId === rep.callId) reportNotAnswered();
-  }
-
-  /** The lead's side (remoteBus) to the rep, from the call session's start: they hear it ring. */
-  function sendLeadToRep(current: Session, rep: RepLink): void {
-    const out = current.context.createMediaStreamDestination();
-    link(current, current.remoteBus, out);
-    const [track] = out.stream.getAudioTracks();
-    rep.leadTrack = track;
-    if (!rep.sender) {
-      repLog("no link to send the lead's side on");
-      return;
-    }
-    rep.sender.replaceTrack(track).then(
-      () => repLog("sending the lead's side to the rep"),
-      (error: unknown) => repLog(`could not send the lead's side to the rep: ${describe(error)}`),
-    );
-  }
-
-  function closeRepLink(): void {
-    const rep = repLink;
-    if (!rep) return;
-    repLink = null;
-    rep.closed = true;
-    window.clearTimeout(rep.lostTimer);
-    try {
-      rep.source?.disconnect();
-    } catch {
-      // Gone with its context.
-    }
-    if (rep.leadTrack) nativeStop.call(rep.leadTrack);
-    rep.sink.pause();
-    rep.sink.srcObject = null;
-    rep.pc.close();
-  }
-
-  /** A step of a rep call's link: in this tab's console, and in the call's log. */
-  function repLog(text: string): void {
-    console.info("[agentsdr rep]", text);
-    const callId = repLink?.callId ?? session?.callId ?? armedCallId;
-    if (callId) post({ source: HOOK_SOURCE, type: "diag", callId, text: `rep link: ${text}` });
   }
 
   // --- audio that Chrome's autoplay policy held back --------------------------

@@ -2,27 +2,37 @@
 
 /**
  * The rep's side of a call they talk on through a cloud calling station
- * (contract.ts, RecorderRemoteRep): their microphone, the WebRTC link to the
- * station's browser, the lead's voice coming back, mute and hang-up.
+ * (contract.ts, "a rep talking through a calling station"): their microphone
+ * up to AgentSDR's audio relay, the lead's voice down from it, mute and
+ * hang-up. No WebRTC to the station: a GoLogin station's browser rewrites and
+ * strips it, and both sides reach AgentSDR anyway.
  *
  * One call at a time, held at module level rather than in a component, so it
  * survives the drawer that started it closing and client-side navigation;
  * RemoteRepCallBar (mounted once in the root layout) shows it. A full page
- * load or a closed tab ends it — the station hangs up when the link drops.
+ * load or a closed tab ends it — the hang-up goes out as the page leaves, and
+ * the relay hangs up on its own once this tab's stream has been gone a while.
  *
- *   relay (TURN credentials) → mic → offer (ICE gathered, no trickle) →
- *   queued with the offer → the station answers (GET /api/calls/:id `rtcAnswer`, polled) → link up →
- *   the station dials → on call → ended
+ *   mic → queued (`remoteRep: true`) → relay stream open at once → the station
+ *   opens WhatsApp and joins the relay → dials → on call → ended
+ *
+ * Up: microphone → AudioWorklet → 16 kHz low-passed → Int16LE, one POST in
+ * flight every ~REP_RELAY_CHUNK_MS. Down: NDJSON stream → AudioBuffers at
+ * 16 kHz, scheduled back to back after REP_RELAY_JITTER_MS of buffering, and
+ * played through echoLoopback.ts so the echo canceller hears them.
  */
 
-import { cancelCall, getCall, getRepLinkIceServers, RepLinkIceError } from "@/lib/calls/client";
+import { cancelCall, getCall, hangUpRelayedCall } from "@/lib/calls/client";
 import {
-  REP_LINK_CHANNEL,
-  REP_LINK_GATHER_MS,
+  REP_RELAY_CHUNK_MS,
+  REP_RELAY_JITTER_MS,
+  REP_RELAY_MAX_BUFFER_MS,
+  REP_RELAY_SAMPLE_RATE,
   type CallDetail,
-  type RepLinkIceServer,
-  type RepLinkControl,
+  type RepRelayEvent,
 } from "@/lib/calls/contract";
+import { base64ToBytes, createDownsampler, leBytesToFloat32, nextPlayTime, PcmOutbox } from "@/lib/calls/relayPcm";
+import { routePlayback, type PlaybackRoute } from "./echoLoopback";
 import { isRemoteRepOver, microphoneErrorText, remoteRepView, type RemoteRepStage } from "./remoteRepStage";
 
 export type RemoteRepCallState = {
@@ -35,36 +45,52 @@ export type RemoteRepCallState = {
   /** Ended or failed: what to tell the rep. */
   message: string | null;
   muted: boolean;
-  /** The link to the number dropped mid-call; the station hangs up if it does not come back. */
+  /** On call, but the relay to the number is down for now; the call ends if it does not come back. */
   unstable: boolean;
   /** The browser held back the lead's audio until a click (autoplay rules). */
   audioBlocked: boolean;
 };
 
-/** Before the station answers: quick, so the link is up as soon as it can be. */
+/** Until the number joins: quick, so the bar keeps up. */
 const POLL_WAITING_MS = 1_000;
 const POLL_LIVE_MS = 2_000;
-/**
- * A rep sits waiting on this; past it, the call is withdrawn. The offer's
- * reflexive candidates also age (NAT mappings), so a very late answer may not
- * connect anyway.
- */
+/** A rep sits waiting on this; past it, a call the number has not started is withdrawn. */
 const WAIT_FOR_NUMBER_MS = 5 * 60_000;
-/** After the link closes, how long to keep reading the call for how it ended. */
+/** After the call ends, how long to keep reading it for how it ended. */
 const SETTLE_MS = 20_000;
+/** The relay stream dropped: try again after this, doubling up to the cap. */
+const RECONNECT_MIN_MS = 500;
+const RECONNECT_MAX_MS = 4_000;
+/** Microphone samples per message from the capture worklet (~10 ms at 48 kHz). */
+const CAPTURE_BLOCK = 512;
 
 type Session = {
-  pc: RTCPeerConnection;
-  stream: MediaStream;
-  channel: RTCDataChannel;
-  audio: HTMLAudioElement;
+  mic: MediaStream;
+  context: AudioContext;
+  capture: AudioNode;
+  /** The microphone's rate down to REP_RELAY_SAMPLE_RATE, its filter state kept from block to block. */
+  downsample: (block: Float32Array) => Int16Array;
+  /** Root of the playback graph: every buffer from the relay plays into it. */
+  playback: GainNode;
+  route: PlaybackRoute | null;
+  outbox: PcmOutbox;
+  /** Where the next buffer from the relay starts, on the context's clock. */
+  playhead: number;
   callId: string | null;
   placedAt: number;
-  answerApplied: boolean;
-  linkUp: boolean;
+  muted: boolean;
+  /** The station's relay stream is open (its peer event). */
+  stationPresent: boolean;
+  /** Our relay stream is open. */
+  streamUp: boolean;
+  down: AbortController | null;
+  reconnectMs: number;
+  sending: boolean;
   /** Media released: hung up, failed or over. */
   ended: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
+  sendTimer: ReturnType<typeof setInterval> | undefined;
+  reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 };
 
 let state: RemoteRepCallState | null = null;
@@ -99,15 +125,14 @@ export function isRemoteRepCallActive(): boolean {
 export type StartRemoteRepCall = {
   leadName: string;
   numberName: string | null;
-  /** Queues the call on the server with this offer (e.g. callAiLead with `remoteRep`). */
-  place: (offer: string) => Promise<{ callId: string; numberName?: string | null }>;
+  /** Queues the call on the server (e.g. callAiLead with `remoteRep: true`). */
+  place: () => Promise<{ callId: string; numberName?: string | null }>;
 };
 
 /**
- * Gets a relay and the microphone, makes the offer and queues the call.
- * Resolves with the call id once queued, or null if it was not (the reason is
- * in the state, so the call bar shows it). Nothing is queued without a relay
- * (Cloudflare TURN) or a microphone.
+ * Gets the microphone and sets up the audio, then queues the call. Resolves
+ * with the call id once queued, or null if it was not (the reason is in the
+ * state, so the call bar shows it). Nothing is queued without a microphone.
  */
 export async function startRemoteRepCall({ leadName, numberName, place }: StartRemoteRepCall): Promise<string | null> {
   if (isRemoteRepCallActive()) throw new Error("You are already on a call");
@@ -116,108 +141,120 @@ export async function startRemoteRepCall({ leadName, numberName, place }: StartR
   session = null;
   emit({ callId: null, leadName, numberName, stage: "mic", answeredAt: null, message: null, muted: false, unstable: false, audioBlocked: false });
 
-  if (typeof RTCPeerConnection === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+  if (typeof AudioContext === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof ReadableStream === "undefined") {
     emit({ ...state!, stage: "error", message: "This browser can't place calls — use a recent Chrome, Edge or Firefox." });
     return null;
   }
-  // The station reaches the internet only through its number's proxy, over
-  // TCP: the link needs a TURN relay (contract.ts, RecorderRemoteRep).
-  let iceServers: RepLinkIceServer[];
+  let mic: MediaStream;
   try {
-    iceServers = await getRepLinkIceServers();
-  } catch (error) {
-    emit({ ...state!, stage: "error", message: relayErrorText(error) });
-    return null;
-  }
-  let stream: MediaStream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    mic = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
   } catch (error) {
     emit({ ...state!, stage: "error", message: microphoneErrorText(error) });
     return null;
   }
 
-  const pc = new RTCPeerConnection({ iceServers });
-  for (const track of stream.getAudioTracks()) pc.addTrack(track, stream);
-  const channel = pc.createDataChannel(REP_LINK_CHANNEL);
-  const audio = document.createElement("audio");
-  audio.autoplay = true;
-  const s: Session = { pc, stream, channel, audio, callId: null, placedAt: Date.now(), answerApplied: false, linkUp: false, ended: false, timer: undefined };
-  session = s;
+  const context = new AudioContext();
+  let s: Session | undefined;
+  try {
+    // Started from a click, so the context may run; a blocked one is resumed from the bar.
+    await context.resume().catch(() => {});
+    const capture = await startCapture(context, mic, (block) => {
+      if (s) onMicBlock(s, block);
+    });
+    s = {
+      mic,
+      context,
+      capture,
+      downsample: createDownsampler(context.sampleRate, REP_RELAY_SAMPLE_RATE),
+      playback: context.createGain(),
+      route: null,
+      outbox: new PcmOutbox(),
+      playhead: 0,
+      callId: null,
+      placedAt: Date.now(),
+      muted: false,
+      stationPresent: false,
+      streamUp: false,
+      down: null,
+      reconnectMs: RECONNECT_MIN_MS,
+      sending: false,
+      ended: false,
+      timer: undefined,
+      sendTimer: undefined,
+      reconnectTimer: undefined,
+    };
+  } catch (error) {
+    for (const track of mic.getTracks()) track.stop();
+    void context.close().catch(() => {});
+    emit({ ...state!, stage: "error", message: error instanceof Error ? `Couldn't set up the call audio: ${error.message}` : "Couldn't set up the call audio" });
+    return null;
+  }
+  const live = s;
+  session = live;
   window.addEventListener("beforeunload", warnBeforeUnload);
   window.addEventListener("pagehide", hangUpOnUnload);
 
-  pc.ontrack = (event) => {
-    audio.srcObject = event.streams[0] ?? new MediaStream([event.track]);
-    playRemoteAudio(s);
-  };
-  pc.onconnectionstatechange = () => onConnectionState(s);
-  channel.onclose = () => {
-    // The station closes the link when the call is over (or it gave up on it).
-    if (s.linkUp && !s.ended) void finish(s, { stage: "ended", message: "Call ended" }, { settle: true });
-  };
-
-  try {
-    await pc.setLocalDescription(await pc.createOffer());
-    await iceGathered(pc, REP_LINK_GATHER_MS);
-  } catch (error) {
-    await finish(s, { stage: "error", message: error instanceof Error ? `Couldn't set up the call audio: ${error.message}` : "Couldn't set up the call audio" });
-    return null;
-  }
-  if (s.ended) return null;
-  const offer = pc.localDescription?.sdp;
-  if (!offer) {
-    await finish(s, { stage: "error", message: "Couldn't set up the call audio" });
-    return null;
-  }
-
-  patch(s, { stage: "placing" });
+  patch(live, { stage: "placing" });
+  // The loopback takes a moment to connect; let it while the call is queued.
+  const routing = routePlayback(context, live.playback, { onBlocked: (blocked) => patch(live, { audioBlocked: blocked }) });
   let placed: { callId: string; numberName?: string | null };
   try {
-    placed = await place(offer);
+    placed = await place();
   } catch (error) {
-    await finish(s, { stage: "error", message: error instanceof Error ? error.message : "Could not place the call" });
+    void routing.then((route) => route.close());
+    await finish(live, { stage: "error", message: error instanceof Error ? error.message : "Could not place the call" });
     return null;
   }
-  s.callId = placed.callId;
-  s.placedAt = Date.now();
-  if (s.ended) {
+  live.callId = placed.callId;
+  live.placedAt = Date.now();
+  if (live.ended) {
     // Hung up while it was being queued: withdraw it.
+    void routing.then((route) => route.close());
     await cancelCall(placed.callId).catch(() => {});
     return placed.callId;
   }
-  patch(s, { callId: placed.callId, numberName: placed.numberName ?? numberName, stage: "waiting" });
-  void poll(s);
+  patch(live, { callId: placed.callId, numberName: placed.numberName ?? numberName, stage: "waiting" });
+  void openRelayStream(live);
+  live.sendTimer = setInterval(() => void sendUp(live), REP_RELAY_CHUNK_MS);
+  void poll(live);
+  void routing.then((route) => {
+    if (live.ended) route.close();
+    else live.route = route;
+  });
   return placed.callId;
 }
 
 export function setRemoteRepMuted(muted: boolean) {
   const s = session;
   if (!s || s.ended) return;
-  for (const track of s.stream.getAudioTracks()) track.enabled = !muted;
+  s.muted = muted;
+  s.outbox.clear();
+  for (const track of s.mic.getAudioTracks()) track.enabled = !muted;
   patch(s, { muted });
 }
 
 /** Retries the lead's audio after the browser blocked it; call from a click. */
 export function resumeRemoteRepAudio() {
-  if (session && !session.ended) playRemoteAudio(session);
+  const s = session;
+  if (!s || s.ended) return;
+  void s.context.resume().catch(() => {});
+  void s.route?.resume().then((playing) => patch(s, { audioBlocked: !playing }));
 }
 
 /**
- * Hangs up: tells the station over the link (it ends the WhatsApp call, and
- * the recording is kept), and withdraws the call if it had not connected yet.
+ * Hangs up: the relay tells the station (it ends the WhatsApp call, and the
+ * recording is kept), and a call that had not connected yet is withdrawn.
  */
 export async function hangUpRemoteRepCall(): Promise<void> {
   const s = session;
   if (!s || s.ended || !state) return;
   const connected = state.stage === "on-call";
-  sendHangup(s);
-  // Give the message a moment to leave before the connection closes.
-  await waitForDrain(s.channel, 500);
+  const callId = s.callId;
+  if (callId) await hangUpRelayedCall(callId).catch(() => {});
   await finish(s, { stage: "ended", message: connected ? "You hung up" : "Call cancelled" }, { settle: connected });
-  if (!connected && s.callId) await cancelCall(s.callId).catch(() => {});
+  if (!connected && callId) await cancelCall(callId).catch(() => {});
 }
 
 /** Clears a finished call from the bar. */
@@ -229,7 +266,197 @@ export function dismissRemoteRepCall() {
   }
 }
 
-// --- internals ------------------------------------------------------------------
+// --- up: the microphone -------------------------------------------------------------
+
+/** The capture worklet: hands the microphone's first channel to the page in CAPTURE_BLOCK-sample blocks. */
+const CAPTURE_WORKLET = `
+class AgentsdrRelayCapture extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.block = new Float32Array(${CAPTURE_BLOCK});
+    this.length = 0;
+  }
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (channel) {
+      let offset = 0;
+      while (offset < channel.length) {
+        const n = Math.min(channel.length - offset, this.block.length - this.length);
+        this.block.set(channel.subarray(offset, offset + n), this.length);
+        this.length += n;
+        offset += n;
+        if (this.length === this.block.length) {
+          this.port.postMessage(this.block.slice(0));
+          this.length = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("agentsdr-relay-capture", AgentsdrRelayCapture);
+`;
+
+/**
+ * Microphone → `onBlock` (Float32 at the context's rate), through an
+ * AudioWorklet, or a ScriptProcessor where there is none. Either feeds a
+ * silent gain into the destination, so the browser keeps pulling it.
+ */
+async function startCapture(context: AudioContext, mic: MediaStream, onBlock: (block: Float32Array) => void): Promise<AudioNode> {
+  const source = context.createMediaStreamSource(mic);
+  const silent = context.createGain();
+  silent.gain.value = 0;
+  silent.connect(context.destination);
+  if (context.audioWorklet) {
+    const url = URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: "application/javascript" }));
+    try {
+      await context.audioWorklet.addModule(url);
+      const node = new AudioWorkletNode(context, "agentsdr-relay-capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      node.port.onmessage = (event: MessageEvent<Float32Array>) => onBlock(event.data);
+      source.connect(node);
+      node.connect(silent);
+      return node;
+    } catch (error) {
+      console.warn("Call audio: no AudioWorklet, capturing with a ScriptProcessor", error);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  const processor = context.createScriptProcessor(2048, 1, 1);
+  processor.onaudioprocess = (event) => onBlock(new Float32Array(event.inputBuffer.getChannelData(0)));
+  source.connect(processor);
+  processor.connect(silent);
+  return processor;
+}
+
+function onMicBlock(s: Session, block: Float32Array) {
+  if (s.ended) return;
+  // Always through the filter, so it keeps its history; queued only when it can go somewhere.
+  const pcm = s.downsample(block);
+  if (s.muted || !s.callId || !s.stationPresent) return;
+  s.outbox.push(pcm);
+}
+
+/** One POST in flight at a time; what gathered meanwhile goes in the next (PcmOutbox caps the backlog). */
+async function sendUp(s: Session) {
+  if (s.ended || s.sending || !s.callId) return;
+  const body = s.outbox.take();
+  if (!body) return;
+  s.sending = true;
+  try {
+    await fetch(`/api/calls/${encodeURIComponent(s.callId)}/relay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body,
+    });
+  } catch {
+    // A lost chunk is a gap in the rep's voice; the next one goes anyway.
+  } finally {
+    s.sending = false;
+  }
+}
+
+// --- down: the lead ----------------------------------------------------------------
+
+/** Reads the relay stream until it ends, then reconnects while the call is on. */
+async function openRelayStream(s: Session) {
+  if (s.ended || !s.callId || session !== s) return;
+  const abort = new AbortController();
+  s.down = abort;
+  let response: Response;
+  try {
+    response = await fetch(`/api/calls/${encodeURIComponent(s.callId)}/relay`, {
+      cache: "no-store",
+      headers: { Accept: "application/x-ndjson" },
+      signal: abort.signal,
+    });
+  } catch {
+    reconnect(s);
+    return;
+  }
+  if (!response.ok || !response.body) {
+    // Over, not this organization's, or signed out: the poll tells the rep how it ended.
+    if ([401, 403, 404, 409].includes(response.status)) return;
+    reconnect(s);
+    return;
+  }
+  s.streamUp = true;
+  s.reconnectMs = RECONNECT_MIN_MS;
+  refreshUnstable(s);
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let pending = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending += value;
+      let newline: number;
+      while ((newline = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, newline);
+        pending = pending.slice(newline + 1);
+        if (line.trim()) onRelayLine(s, line);
+      }
+    }
+  } catch {
+    // Dropped (network, proxy, or aborted by finish).
+  }
+  if (s.down === abort) s.down = null;
+  s.streamUp = false;
+  // Not known until the stream is back (it says so on opening).
+  s.stationPresent = false;
+  refreshUnstable(s);
+  reconnect(s);
+}
+
+function reconnect(s: Session) {
+  if (s.ended || session !== s) return;
+  clearTimeout(s.reconnectTimer);
+  s.reconnectTimer = setTimeout(() => void openRelayStream(s), s.reconnectMs);
+  s.reconnectMs = Math.min(RECONNECT_MAX_MS, s.reconnectMs * 2);
+}
+
+function onRelayLine(s: Session, line: string) {
+  let event: RepRelayEvent;
+  try {
+    event = JSON.parse(line) as RepRelayEvent;
+  } catch {
+    return;
+  }
+  switch (event.t) {
+    case "audio":
+      play(s, event.pcm);
+      return;
+    case "peer":
+      s.stationPresent = event.present;
+      if (!event.present) s.outbox.clear();
+      refreshUnstable(s);
+      return;
+  }
+}
+
+function play(s: Session, base64: string) {
+  if (s.ended) return;
+  const samples = leBytesToFloat32(base64ToBytes(base64));
+  if (!samples.length) return;
+  // 16 kHz buffers; the context resamples them to its own rate.
+  const buffer = s.context.createBuffer(1, samples.length, REP_RELAY_SAMPLE_RATE);
+  buffer.copyToChannel(samples, 0);
+  const at = nextPlayTime(s.context.currentTime, s.playhead, REP_RELAY_JITTER_MS / 1000, REP_RELAY_MAX_BUFFER_MS / 1000);
+  // Too far behind (a stall): drop this to catch up.
+  if (at == null) return;
+  const node = s.context.createBufferSource();
+  node.buffer = buffer;
+  node.connect(s.playback);
+  node.start(at);
+  s.playhead = at + buffer.duration;
+}
+
+function refreshUnstable(s: Session) {
+  const unstable = state?.stage === "on-call" && (!s.streamUp || !s.stationPresent);
+  if (state && state.unstable !== unstable) patch(s, { unstable });
+}
+
+// --- where the call stands -----------------------------------------------------------
 
 async function poll(s: Session) {
   if (s.ended || !s.callId) return;
@@ -241,71 +468,43 @@ async function poll(s: Session) {
   }
   if (s.ended || session !== s) return;
   if (call) {
-    if (call.rtcAnswer && !s.answerApplied) {
-      s.answerApplied = true;
-      try {
-        await s.pc.setRemoteDescription({ type: "answer", sdp: call.rtcAnswer });
-      } catch {
-        await finish(s, { stage: "error", message: "Couldn't connect to the number's audio — the call was withdrawn" });
-        await cancelCall(s.callId).catch(() => {});
-        return;
-      }
-    }
-    const view = remoteRepView(call, s.linkUp);
+    const view = remoteRepView(call, s.stationPresent);
     if (isRemoteRepOver(view.stage)) {
       await finish(s, { stage: view.stage, message: view.message ?? null });
       return;
     }
-    if (!s.answerApplied && Date.now() - s.placedAt > WAIT_FOR_NUMBER_MS) {
+    if ((view.stage === "waiting" || view.stage === "opening") && Date.now() - s.placedAt > WAIT_FOR_NUMBER_MS) {
       await finish(s, { stage: "error", message: "The number didn't take this call within 5 minutes — it was withdrawn. Try again." });
+      await hangUpRelayedCall(s.callId).catch(() => {});
       await cancelCall(s.callId).catch(() => {});
       return;
     }
     patch(s, { stage: view.stage, answeredAt: view.answeredAt ?? state?.answeredAt ?? null });
+    refreshUnstable(s);
   }
-  s.timer = setTimeout(() => void poll(s), s.linkUp ? POLL_LIVE_MS : POLL_WAITING_MS);
-}
-
-function onConnectionState(s: Session) {
-  if (s.ended) return;
-  switch (s.pc.connectionState) {
-    case "connected":
-      s.linkUp = true;
-      patch(s, { unstable: false, ...(state?.stage === "connecting" || state?.stage === "opening" ? { stage: "dialing" as const } : {}) });
-      return;
-    case "disconnected":
-      if (s.linkUp) patch(s, { unstable: true });
-      return;
-    case "failed":
-      if (s.linkUp) {
-        void finish(s, { stage: "ended", message: "The connection to the number was lost" }, { settle: true });
-      } else {
-        // The station never dials without the link, so there is nothing to keep.
-        void finish(s, {
-          stage: "error",
-          message: "Couldn't connect your audio to the number, even through the relay. Check your network, or try again.",
-        }).then(() => (s.callId ? cancelCall(s.callId).catch(() => {}) : undefined));
-      }
-      return;
-  }
+  s.timer = setTimeout(() => void poll(s), s.stationPresent ? POLL_LIVE_MS : POLL_WAITING_MS);
 }
 
 /**
- * Releases the microphone and the link and shows how the call ended. With
- * `settle`, keeps reading the call for a while for a better ending ("Not
- * answered", the call's length) than the link closing can tell.
+ * Releases the microphone, the relay and the audio, and shows how the call
+ * ended. With `settle`, keeps reading the call for a while for a better
+ * ending ("Not answered", the call's length) than the hang-up can tell.
  */
 async function finish(s: Session, end: { stage: "ended" | "error"; message: string | null }, { settle = false } = {}) {
   if (s.ended) return;
   s.ended = true;
   clearTimeout(s.timer);
-  for (const track of s.stream.getTracks()) track.stop();
-  s.channel.onclose = null;
-  s.pc.ontrack = null;
-  s.pc.onconnectionstatechange = null;
-  s.pc.close();
-  s.audio.pause();
-  s.audio.srcObject = null;
+  clearInterval(s.sendTimer);
+  clearTimeout(s.reconnectTimer);
+  s.down?.abort();
+  s.down = null;
+  s.outbox.clear();
+  for (const track of s.mic.getTracks()) track.stop();
+  s.capture.disconnect();
+  if (s.capture instanceof AudioWorkletNode) s.capture.port.onmessage = null;
+  s.route?.close();
+  s.route = null;
+  void s.context.close().catch(() => {});
   window.removeEventListener("beforeunload", warnBeforeUnload);
   window.removeEventListener("pagehide", hangUpOnUnload);
   patch(s, { stage: end.stage, message: end.message, unstable: false, audioBlocked: false });
@@ -326,59 +525,6 @@ async function settleEnding(s: Session, callId: string, until: number) {
   s.timer = setTimeout(() => void settleEnding(s, callId, until), POLL_LIVE_MS);
 }
 
-function relayErrorText(error: unknown): string {
-  if (error instanceof RepLinkIceError && error.notConnected) {
-    return "Calls through a number need Cloudflare TURN. An owner or admin connects it in Settings → WhatsApp → Integrations.";
-  }
-  return `Couldn't get a relay for the call audio: ${error instanceof Error ? error.message : "unknown error"}`;
-}
-
-function playRemoteAudio(s: Session) {
-  s.audio.play().then(
-    () => patch(s, { audioBlocked: false }),
-    () => patch(s, { audioBlocked: true }),
-  );
-}
-
-function sendHangup(s: Session) {
-  if (s.channel.readyState !== "open") return;
-  const message: RepLinkControl = { type: "hangup" };
-  try {
-    s.channel.send(JSON.stringify(message));
-  } catch {
-    // The link is going anyway; the station hangs up when it drops.
-  }
-}
-
-function waitForDrain(channel: RTCDataChannel, capMs: number): Promise<void> {
-  const until = Date.now() + capMs;
-  return new Promise((resolve) => {
-    const check = () => {
-      if (channel.readyState !== "open" || channel.bufferedAmount === 0 || Date.now() > until) resolve();
-      else setTimeout(check, 50);
-    };
-    // Even with nothing buffered, a beat for the SCTP packet to go out.
-    setTimeout(check, 100);
-  });
-}
-
-/** Waits for ICE gathering to finish (no trickle), or `capMs`, whichever is first. */
-function iceGathered(pc: RTCPeerConnection, capMs: number): Promise<void> {
-  if (pc.iceGatheringState === "complete") return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      pc.removeEventListener("icegatheringstatechange", onChange);
-      resolve();
-    };
-    const onChange = () => {
-      if (pc.iceGatheringState === "complete") done();
-    };
-    const timer = setTimeout(done, capMs);
-    pc.addEventListener("icegatheringstatechange", onChange);
-  });
-}
-
 function warnBeforeUnload(event: BeforeUnloadEvent) {
   if (!isRemoteRepCallActive()) return;
   event.preventDefault();
@@ -387,6 +533,11 @@ function warnBeforeUnload(event: BeforeUnloadEvent) {
 }
 
 function hangUpOnUnload() {
-  // Best effort: the page is going, and with it the link; the station hangs up on its own soon after.
-  if (session && !session.ended) sendHangup(session);
+  // Best effort, as the page goes: hang up, and withdraw a call that has not connected.
+  const s = session;
+  if (!s || s.ended || !s.callId) return;
+  void hangUpRelayedCall(s.callId, { keepalive: true }).catch(() => {});
+  if (state?.stage !== "on-call") {
+    void fetch(`/api/calls/${encodeURIComponent(s.callId)}/cancel`, { method: "POST", keepalive: true }).catch(() => {});
+  }
 }
