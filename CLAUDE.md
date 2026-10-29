@@ -508,9 +508,16 @@ first build (a WebRTC link through Cloudflare TURN) never connected (29 Oct
 The relay (`src/lib/calls/repRelay.server.ts`) is in-process memory, so it
 holds only while the app runs as **one instance**. Per call it has two sides,
 each with one long NDJSON down stream (`GET …/relay`; a newer stream replaces
-the older) and small PCM POSTs up (mono 16-bit LE at 16 kHz, ~40 ms each, at
-most 1 s). Audio for a side with no stream, or one more than ~0.5 s behind,
-is dropped, never queued. It tells each side whether the other is there,
+the older) and audio up (mono 16-bit LE at 16 kHz) as ONE streaming POST
+(`X-Relay-Stream: 1`, rotated every 45 s; HTTP/2 only in Chrome) — or, where
+that does not get through, small POSTs (~40 ms each, at most 1 s; ~1 s a
+round trip each, which is why the stream exists). Both senders share
+`src/lib/calls/relayUplink.ts`; the relay acks a stream's first audio with
+an `uplink` event, and two failed or unheard streams before any worked fall
+back to POSTs for the call. Upload streams skip `src/proxy.ts` (its matcher
+excludes exactly them): Next.js holds a body the proxy sees until it ends.
+Audio for a side with no stream, or one more than ~0.5 s behind, is dropped,
+never queued. It tells each side whether the other is there,
 pings every 5 s, sends the station `hangup` when the rep hangs up (`POST
 /api/calls/:id/relay/hangup`) or when the rep's stream has been gone 10 s,
 and is closed by `finishCall` / `cancelCall` (else forgotten after a minute
@@ -523,12 +530,13 @@ through a calling station".
 
 The tab (`src/components/calls/remoteRepCall.ts`, its bar mounted in the root
 layout): mic (echo cancellation on) → AudioWorklet → 16 kHz low-passed
-(`src/lib/calls/relayPcm.ts`, the extension's downsampler copied) → POSTs;
+(`src/lib/calls/relayPcm.ts`, the extension's downsampler copied) → the uplink;
 the stream → 16 kHz AudioBuffers scheduled after 100 ms of buffering,
 dropped past 400 ms. Playback goes through an in-page WebRTC loopback
 (`echoLoopback.ts`) because Chrome's echo canceller only treats WebRTC audio
 as the far end; if the loopback does not connect in 2 s it plays directly,
-and the bar asks for headphones either way. Extension 0.24.0+.
+and the bar asks for headphones either way. Extension 0.24.0+ (0.24.1+
+streams its uplink).
 
 ### Incoming calls: the AI answers a lead who calls back
 

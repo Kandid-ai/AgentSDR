@@ -11,18 +11,17 @@
  *         while the call is on; unreachable for RELAY_LOST_HANGUP_MS, or
  *         refused for good (the call is over, or not this token's), the
  *         call is hung up — nobody could hear the lead.
- *   up:   the lead's side, batched to about REP_RELAY_CHUNK_MS per POST, one
- *         POST in flight. A backlog past REP_RELAY_MAX_CHUNK_MS loses its
- *         oldest audio: after a stall the rep hears the lead now, not late.
+ *   up:   the lead's side, through RelayUplink (src/lib/calls/relayUplink.ts):
+ *         one long streaming POST, or — where streaming does not get
+ *         through — POSTs of about REP_RELAY_CHUNK_MS, one in flight. A
+ *         backlog past REP_RELAY_MAX_CHUNK_MS loses its oldest audio: after a
+ *         stall the rep hears the lead now, not late. One request per chunk
+ *         could not keep up (~1 s a round trip, 29 Oct 2026: 13 s of a
+ *         100 s call dropped), which is why the stream exists.
  */
 
-import {
-  REP_RELAY_CHUNK_MS,
-  REP_RELAY_MAX_CHUNK_MS,
-  REP_RELAY_PING_MS,
-  REP_RELAY_SAMPLE_RATE,
-  type RepRelayEvent,
-} from "../../../src/lib/calls/contract";
+import { REP_RELAY_PING_MS, type RepRelayEvent } from "../../../src/lib/calls/contract";
+import { RelayUplink } from "../../../src/lib/calls/relayUplink";
 
 /** Waits between attempts to (re)open the down stream; the last repeats. */
 const RECONNECT_BACKOFF_MS = [250, 500, 1_000, 2_000];
@@ -34,10 +33,6 @@ const STREAM_SILENT_MS = 3 * REP_RELAY_PING_MS;
 const RELAY_LOST_HANGUP_MS = 15_000;
 /** Answers that will not change on a retry: the call is over, or the token is not its. */
 const PERMANENT_STATUSES = new Set([401, 403, 404, 410]);
-
-const samplesFor = (ms: number) => Math.round((REP_RELAY_SAMPLE_RATE * ms) / 1000);
-const CHUNK_SAMPLES = samplesFor(REP_RELAY_CHUNK_MS);
-const MAX_CHUNK_SAMPLES = samplesFor(REP_RELAY_MAX_CHUNK_MS);
 
 // --- pure pieces (tested) --------------------------------------------------------
 
@@ -71,6 +66,7 @@ function parseRelayEvent(line: string): RepRelayEvent | null {
   if (event.t === "audio") return typeof event.pcm === "string" ? { t: "audio", pcm: event.pcm } : null;
   if (event.t === "peer") return typeof event.present === "boolean" ? { t: "peer", present: event.present } : null;
   if (event.t === "hangup") return { t: "hangup" };
+  if (event.t === "uplink") return { t: "uplink" };
   if (event.t === "ping") return { t: "ping" };
   return null;
 }
@@ -82,53 +78,6 @@ export function pcmFromBase64(data: string): ArrayBuffer {
   const bytes = new Uint8Array(length);
   for (let i = 0; i < length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
-}
-
-/** Audio waiting to go up, capped at `maxSamples`: past it, the oldest is dropped. */
-export class PcmBacklog {
-  private chunks: Int16Array[] = [];
-  private count = 0;
-
-  constructor(private readonly maxSamples: number) {}
-
-  get samples(): number {
-    return this.count;
-  }
-
-  /** Queues `pcm`; returns how many samples were dropped to stay within the cap. */
-  push(pcm: Int16Array): number {
-    if (pcm.length === 0) return 0;
-    this.chunks.push(pcm);
-    this.count += pcm.length;
-    let dropped = 0;
-    while (this.count > this.maxSamples) {
-      const over = this.count - this.maxSamples;
-      const oldest = this.chunks[0];
-      if (oldest.length <= over) {
-        this.chunks.shift();
-        this.count -= oldest.length;
-        dropped += oldest.length;
-      } else {
-        this.chunks[0] = oldest.subarray(over);
-        this.count -= over;
-        dropped += over;
-      }
-    }
-    return dropped;
-  }
-
-  /** Everything queued, as one block, oldest first; the backlog is then empty. */
-  take(): Int16Array<ArrayBuffer> {
-    const out = new Int16Array(this.count);
-    let offset = 0;
-    for (const chunk of this.chunks) {
-      out.set(chunk, offset);
-      offset += chunk.length;
-    }
-    this.chunks = [];
-    this.count = 0;
-    return out;
-  }
 }
 
 // --- the relay -------------------------------------------------------------------
@@ -146,29 +95,36 @@ export type RepRelayOptions = {
   trace: (step: string) => void;
   /** For tests; the global fetch otherwise. */
   fetch?: Fetch;
+  /** For tests: whether to try a streaming upload first (detected otherwise). */
+  canStream?: boolean;
 };
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
 export class RepRelay {
   private readonly fetch: Fetch;
-  private readonly backlog = new PcmBacklog(MAX_CHUNK_SAMPLES);
+  /** The lead's side up to the rep. */
+  private readonly uplink: RelayUplink;
   private closed = false;
   /** The open (or opening) down stream's request, aborted by close(). */
   private attempt: AbortController | null = null;
-  private sending = false;
-  /** For the log, once each: the first audio either way, and drops. */
+  /** For the log, once: the first of the rep's audio. */
   private heardRep = false;
-  private sentLead = false;
-  private upFailing = false;
-  private droppedSamples = 0;
 
   constructor(private readonly options: RepRelayOptions) {
     this.fetch = options.fetch ?? ((url, init) => fetch(url, init));
+    this.uplink = new RelayUplink({
+      url: options.url,
+      headers: this.headers(),
+      log: options.trace,
+      fetch: this.fetch,
+      canStream: options.canStream,
+    });
   }
 
   start(): void {
     void this.down();
+    this.uplink.start();
   }
 
   /** Stops both directions; nothing more is played, sent or hung up. */
@@ -177,59 +133,17 @@ export class RepRelay {
     this.closed = true;
     this.attempt?.abort();
     this.attempt = null;
-    if (this.droppedSamples) {
-      this.options.trace(`dropped ${Math.round((this.droppedSamples / REP_RELAY_SAMPLE_RATE) * 1000)} ms of the lead's audio that could not go up in time`);
-    }
+    this.uplink.close();
   }
 
   /** A block of the lead's side (mono 16-bit PCM at REP_RELAY_SAMPLE_RATE), for the rep. */
   sendLead(pcm: ArrayBuffer): void {
     if (this.closed) return;
-    const dropped = this.backlog.push(new Int16Array(pcm));
-    if (dropped) {
-      if (!this.droppedSamples) this.options.trace("the lead's audio is backing up; dropping the oldest");
-      this.droppedSamples += dropped;
-    }
-    void this.up();
+    this.uplink.send(new Int16Array(pcm));
   }
 
   private headers(): Record<string, string> {
     return { Authorization: `Bearer ${this.options.token}` };
-  }
-
-  /** POSTs what is queued, one request at a time, while there is at least a chunk of it. */
-  private async up(): Promise<void> {
-    if (this.sending) return;
-    this.sending = true;
-    try {
-      while (!this.closed && this.backlog.samples >= CHUNK_SAMPLES) {
-        const body = this.backlog.take();
-        try {
-          const response = await this.fetch(this.options.url, {
-            method: "POST",
-            headers: { ...this.headers(), "Content-Type": "application/octet-stream" },
-            body,
-          });
-          if (!response.ok) throw new Error(`AgentSDR answered ${response.status}`);
-          if (!this.sentLead) {
-            this.sentLead = true;
-            this.options.trace("first of the lead's audio sent to AgentSDR");
-          }
-          if (this.upFailing) {
-            this.upFailing = false;
-            this.options.trace("sending the lead's audio works again");
-          }
-        } catch (error) {
-          // Real-time audio: what did not get through is not sent again.
-          if (!this.upFailing && !this.closed) {
-            this.upFailing = true;
-            this.options.trace(`could not send the lead's audio: ${describe(error)}`);
-          }
-        }
-      }
-    } finally {
-      this.sending = false;
-    }
   }
 
   /** Keeps the down stream open while the call is on. */
@@ -324,6 +238,9 @@ export class RepRelay {
       case "hangup":
         this.giveUp("the rep hung up");
         return "hangup";
+      case "uplink":
+        this.uplink.heard();
+        return null;
       case "ping":
         return null;
     }

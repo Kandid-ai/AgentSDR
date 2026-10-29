@@ -3,14 +3,17 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { getSessionCookie } from "better-auth/cookies";
 import { assertExactKeys, assertObject } from "@/lib/crm/categories";
+import { DEMO_READ_ONLY_MESSAGE, demoRequestBlock } from "@/lib/demo/mode";
+import { migrationMutationBlockReason } from "@/lib/migration/controls";
 import type { CallAiLeadRequest } from "./aiCampaigns/api";
-import type { RepRelaySide } from "./contract";
+import { REP_RELAY_STREAM_HEADER, type RepRelaySide } from "./contract";
 import { callSessions } from "./schema";
 import { CallApiError, getCallInOrganization, isTerminalStatus } from "./sessions";
 import {
   RELAY_STREAM_HEADERS,
   RelayFullError,
   REP_RELAY_MAX_CHUNK_BYTES,
+  receiveUploadStream,
   repRelay,
   relayStream,
 } from "./repRelay.server";
@@ -141,6 +144,39 @@ export function relayStreamResponse(
     throw error;
   }
   return new Response(body, { headers: { ...RELAY_STREAM_HEADERS, ...headers } });
+}
+
+/** A POST whose body is an upload stream (REP_RELAY_STREAM_HEADER), not one chunk. */
+export function isRelayUploadStream(request: Request): boolean {
+  return request.headers.get(REP_RELAY_STREAM_HEADER) === "1";
+}
+
+/**
+ * An upload stream skips src/proxy.ts — its matcher leaves these out, since
+ * Next.js holds back a body the proxy sees until the body has ended — so
+ * what the proxy would refuse is refused here. (Its sign-in check is only a
+ * cookie's presence; the routes authorize for real either way.)
+ */
+export function assertProxyRules(request: Request): void {
+  const { pathname } = new URL(request.url);
+  const blocked = migrationMutationBlockReason(pathname, request.method);
+  if (blocked) throw new CallApiError(503, blocked);
+  if (demoRequestBlock(pathname, request.method)) throw new CallApiError(403, DEMO_READ_ONLY_MESSAGE);
+}
+
+/**
+ * Reads an already-authorized side's upload stream into the relay as it
+ * arrives, until the client ends it, goes, or the relay stops it (a newer
+ * stream, the call over, REP_RELAY_STREAM_MAX_MS). Then the route answers.
+ */
+export async function receiveRelayUpload(request: Request, callId: string, side: RepRelaySide): Promise<void> {
+  if (!request.body) throw new CallApiError(400, "The body must carry audio");
+  try {
+    await receiveUploadStream(repRelay(), callId, side, request.body, request.signal);
+  } catch (error) {
+    if (error instanceof RelayFullError) throw new CallApiError(503, error.message);
+    throw error;
+  }
 }
 
 /** The rep hung up — run after the call was checked to be theirs. */

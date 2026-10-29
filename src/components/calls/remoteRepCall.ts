@@ -16,22 +16,24 @@
  *   mic → queued (`remoteRep: true`) → relay stream open at once → the station
  *   opens WhatsApp and joins the relay → dials → on call → ended
  *
- * Up: microphone → AudioWorklet → 16 kHz low-passed → Int16LE, one POST in
- * flight every ~REP_RELAY_CHUNK_MS. Down: NDJSON stream → AudioBuffers at
+ * Up: microphone → AudioWorklet → 16 kHz low-passed → RelayUplink
+ * (src/lib/calls/relayUplink.ts): one long streaming POST, or POSTs of
+ * ~REP_RELAY_CHUNK_MS where streaming does not get through; its steps go to
+ * the console. Down: NDJSON stream → AudioBuffers at
  * 16 kHz, scheduled back to back after REP_RELAY_JITTER_MS of buffering, and
  * played through echoLoopback.ts so the echo canceller hears them.
  */
 
 import { cancelCall, getCall, hangUpRelayedCall } from "@/lib/calls/client";
 import {
-  REP_RELAY_CHUNK_MS,
   REP_RELAY_JITTER_MS,
   REP_RELAY_MAX_BUFFER_MS,
   REP_RELAY_SAMPLE_RATE,
   type CallDetail,
   type RepRelayEvent,
 } from "@/lib/calls/contract";
-import { base64ToBytes, createDownsampler, leBytesToFloat32, nextPlayTime, PcmOutbox } from "@/lib/calls/relayPcm";
+import { base64ToBytes, createDownsampler, leBytesToFloat32, nextPlayTime } from "@/lib/calls/relayPcm";
+import { RelayUplink } from "@/lib/calls/relayUplink";
 import { routePlayback, type PlaybackRoute } from "./echoLoopback";
 import { isRemoteRepOver, microphoneErrorText, remoteRepView, type RemoteRepStage } from "./remoteRepStage";
 
@@ -73,7 +75,8 @@ type Session = {
   /** Root of the playback graph: every buffer from the relay plays into it. */
   playback: GainNode;
   route: PlaybackRoute | null;
-  outbox: PcmOutbox;
+  /** The microphone up to the relay; set once the call is queued. */
+  uplink: RelayUplink | null;
   /** Where the next buffer from the relay starts, on the context's clock. */
   playhead: number;
   callId: string | null;
@@ -85,11 +88,9 @@ type Session = {
   streamUp: boolean;
   down: AbortController | null;
   reconnectMs: number;
-  sending: boolean;
   /** Media released: hung up, failed or over. */
   ended: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
-  sendTimer: ReturnType<typeof setInterval> | undefined;
   reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 };
 
@@ -170,7 +171,7 @@ export async function startRemoteRepCall({ leadName, numberName, place }: StartR
       downsample: createDownsampler(context.sampleRate, REP_RELAY_SAMPLE_RATE),
       playback: context.createGain(),
       route: null,
-      outbox: new PcmOutbox(),
+      uplink: null,
       playhead: 0,
       callId: null,
       placedAt: Date.now(),
@@ -179,10 +180,8 @@ export async function startRemoteRepCall({ leadName, numberName, place }: StartR
       streamUp: false,
       down: null,
       reconnectMs: RECONNECT_MIN_MS,
-      sending: false,
       ended: false,
       timer: undefined,
-      sendTimer: undefined,
       reconnectTimer: undefined,
     };
   } catch (error) {
@@ -217,7 +216,11 @@ export async function startRemoteRepCall({ leadName, numberName, place }: StartR
   }
   patch(live, { callId: placed.callId, numberName: placed.numberName ?? numberName, stage: "waiting" });
   void openRelayStream(live);
-  live.sendTimer = setInterval(() => void sendUp(live), REP_RELAY_CHUNK_MS);
+  live.uplink = new RelayUplink({
+    url: `/api/calls/${encodeURIComponent(placed.callId)}/relay`,
+    log: (step) => console.info(`Call audio: ${step}`),
+  });
+  live.uplink.start();
   void poll(live);
   void routing.then((route) => {
     if (live.ended) route.close();
@@ -230,7 +233,7 @@ export function setRemoteRepMuted(muted: boolean) {
   const s = session;
   if (!s || s.ended) return;
   s.muted = muted;
-  s.outbox.clear();
+  s.uplink?.clear();
   for (const track of s.mic.getAudioTracks()) track.enabled = !muted;
   patch(s, { muted });
 }
@@ -333,27 +336,8 @@ function onMicBlock(s: Session, block: Float32Array) {
   if (s.ended) return;
   // Always through the filter, so it keeps its history; queued only when it can go somewhere.
   const pcm = s.downsample(block);
-  if (s.muted || !s.callId || !s.stationPresent) return;
-  s.outbox.push(pcm);
-}
-
-/** One POST in flight at a time; what gathered meanwhile goes in the next (PcmOutbox caps the backlog). */
-async function sendUp(s: Session) {
-  if (s.ended || s.sending || !s.callId) return;
-  const body = s.outbox.take();
-  if (!body) return;
-  s.sending = true;
-  try {
-    await fetch(`/api/calls/${encodeURIComponent(s.callId)}/relay`, {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream" },
-      body,
-    });
-  } catch {
-    // A lost chunk is a gap in the rep's voice; the next one goes anyway.
-  } finally {
-    s.sending = false;
-  }
+  if (s.muted || !s.stationPresent) return;
+  s.uplink?.send(pcm);
 }
 
 // --- down: the lead ----------------------------------------------------------------
@@ -428,8 +412,11 @@ function onRelayLine(s: Session, line: string) {
       return;
     case "peer":
       s.stationPresent = event.present;
-      if (!event.present) s.outbox.clear();
+      if (!event.present) s.uplink?.clear();
       refreshUnstable(s);
+      return;
+    case "uplink":
+      s.uplink?.heard();
       return;
   }
 }
@@ -494,11 +481,10 @@ async function finish(s: Session, end: { stage: "ended" | "error"; message: stri
   if (s.ended) return;
   s.ended = true;
   clearTimeout(s.timer);
-  clearInterval(s.sendTimer);
   clearTimeout(s.reconnectTimer);
   s.down?.abort();
   s.down = null;
-  s.outbox.clear();
+  s.uplink?.close();
   for (const track of s.mic.getTracks()) track.stop();
   s.capture.disconnect();
   if (s.capture instanceof AudioWorkletNode) s.capture.port.onmessage = null;

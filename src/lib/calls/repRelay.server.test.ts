@@ -1,11 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { REP_RELAY_MAX_CHUNK_MS, REP_RELAY_PING_MS, REP_RELAY_REP_GONE_MS, REP_RELAY_SAMPLE_RATE, type RepRelayEvent } from "./contract";
+import {
+  REP_RELAY_MAX_CHUNK_MS,
+  REP_RELAY_PING_MS,
+  REP_RELAY_REP_GONE_MS,
+  REP_RELAY_SAMPLE_RATE,
+  REP_RELAY_STREAM_MAX_MS,
+  type RepRelayEvent,
+} from "./contract";
 import {
   encodeRelayEvent,
+  PcmStreamSplitter,
+  receiveUploadStream,
   RelayFullError,
   REP_RELAY_IDLE_MS,
   REP_RELAY_MAX_CHUNK_BYTES,
   REP_RELAY_MAX_QUEUED_BYTES,
+  REP_RELAY_UPLINK_GRACE_MS,
   RepRelayHub,
   relayAudioEvent,
   relayStream,
@@ -285,5 +295,176 @@ describe("relayStream", () => {
     expect(delivered).toBeGreaterThan(0);
     expect(delivered * lineBytes).toBeLessThanOrEqual(REP_RELAY_MAX_QUEUED_BYTES);
     expect(delivered).toBeLessThan(100);
+  });
+});
+
+describe("PcmStreamSplitter", () => {
+  test("keeps samples whole: an odd trailing byte waits for the next chunk", () => {
+    const splitter = new PcmStreamSplitter();
+    expect(splitter.push(new Uint8Array([1, 0, 2]))).toEqual([new Uint8Array([1, 0])]);
+    expect(splitter.push(new Uint8Array([0, 3]))).toEqual([new Uint8Array([2, 0])]);
+    expect(splitter.push(new Uint8Array([0]))).toEqual([new Uint8Array([3, 0])]);
+    expect(splitter.push(new Uint8Array([5]))).toEqual([]);
+    expect(splitter.push(new Uint8Array(0))).toEqual([]);
+    expect(splitter.push(new Uint8Array([0]))).toEqual([new Uint8Array([5, 0])]);
+  });
+
+  test("splits a large chunk into pieces of at most the limit", () => {
+    const splitter = new PcmStreamSplitter(4);
+    const pieces = splitter.push(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
+    expect(pieces).toEqual([new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6, 7, 8]), new Uint8Array([9, 10])]);
+    expect(new PcmStreamSplitter().push(new Uint8Array(REP_RELAY_MAX_CHUNK_BYTES * 2 + 2)).map((piece) => piece.byteLength)).toEqual([
+      REP_RELAY_MAX_CHUNK_BYTES,
+      REP_RELAY_MAX_CHUNK_BYTES,
+      2,
+    ]);
+  });
+});
+
+/** An upload body the test writes to as it goes, the way a client streams one. */
+function uploadBody() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return {
+    body,
+    write: (bytes: number[]) => controller.enqueue(new Uint8Array(bytes)),
+    end: () => controller.close(),
+    fail: () => controller.error(new Error("connection reset")),
+    get cancelled() {
+      return cancelled;
+    },
+  };
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const audioOf = (subscriber: FakeSubscriber) =>
+  subscriber.events.flatMap((event) => (event.t === "audio" ? [Array.from(Buffer.from(event.pcm, "base64"))] : []));
+
+describe("receiveUploadStream", () => {
+  function connected() {
+    const { timers, hub } = setup();
+    const rep = new FakeSubscriber();
+    const station = new FakeSubscriber();
+    hub.attach(CALL, "rep", rep, "r");
+    hub.attach(CALL, "station", station, "s");
+    return { timers, hub, rep, station };
+  }
+
+  test("forwards audio as it arrives, before the body ends, with odd bytes carried over", async () => {
+    const { timers, hub, rep, station } = connected();
+    const upload = uploadBody();
+    const done = receiveUploadStream(hub, CALL, "station", upload.body, new AbortController().signal, timers);
+    upload.write([1, 0, 2]);
+    await tick();
+    expect(audioOf(rep)).toEqual([[1, 0]]);
+    // The stream works: the station (its own side) is told, once.
+    expect(station.kinds().filter((kind) => kind === "uplink")).toHaveLength(1);
+    upload.write([0, 3, 0]);
+    await tick();
+    expect(audioOf(rep)).toEqual([[1, 0], [2, 0, 3, 0]]);
+    expect(station.kinds().filter((kind) => kind === "uplink")).toHaveLength(1);
+    upload.end();
+    expect(await done).toBe("ended");
+    // The duration limit's timer is gone with it.
+    timers.advance(REP_RELAY_STREAM_MAX_MS);
+    expect(rep.closed).toBe(false);
+  });
+
+  test("ends when the client goes, and when the body breaks", async () => {
+    const { timers, hub } = connected();
+    const aborted = uploadBody();
+    const abort = new AbortController();
+    const first = receiveUploadStream(hub, CALL, "rep", aborted.body, abort.signal, timers);
+    aborted.write([1, 0]);
+    await tick();
+    abort.abort();
+    expect(await first).toBe("aborted");
+    expect(aborted.cancelled).toBe(true);
+
+    const broken = uploadBody();
+    const second = receiveUploadStream(hub, CALL, "rep", broken.body, new AbortController().signal, timers);
+    broken.fail();
+    expect(await second).toBe("broken");
+  });
+
+  test("the call's relay ending stops it", async () => {
+    const { timers, hub } = connected();
+    const upload = uploadBody();
+    const done = receiveUploadStream(hub, CALL, "rep", upload.body, new AbortController().signal, timers);
+    await tick();
+    hub.end(CALL);
+    expect(await done).toBe("stopped");
+    expect(upload.cancelled).toBe(true);
+  });
+
+  test("is stopped after REP_RELAY_STREAM_MAX_MS", async () => {
+    const { timers, hub } = connected();
+    const upload = uploadBody();
+    const done = receiveUploadStream(hub, CALL, "rep", upload.body, new AbortController().signal, timers);
+    await tick();
+    timers.advance(REP_RELAY_STREAM_MAX_MS);
+    expect(await done).toBe("stopped");
+  });
+
+  test("a newer stream of the same side retires the older after a grace, which still delivers meanwhile", async () => {
+    const { timers, hub, rep } = connected();
+    const older = uploadBody();
+    const olderDone = receiveUploadStream(hub, CALL, "station", older.body, new AbortController().signal, timers);
+    const newer = uploadBody();
+    const newerDone = receiveUploadStream(hub, CALL, "station", newer.body, new AbortController().signal, timers);
+    older.write([1, 0]);
+    newer.write([2, 0]);
+    await tick();
+    expect(audioOf(rep)).toEqual([[1, 0], [2, 0]]);
+    timers.advance(REP_RELAY_UPLINK_GRACE_MS);
+    expect(await olderDone).toBe("stopped");
+    newer.write([3, 0]);
+    await tick();
+    expect(audioOf(rep)).toEqual([[1, 0], [2, 0], [3, 0]]);
+    newer.end();
+    expect(await newerDone).toBe("ended");
+  });
+
+  test("an older stream that ends on its own within the grace is not stopped", async () => {
+    const { timers, hub } = connected();
+    const older = uploadBody();
+    const olderDone = receiveUploadStream(hub, CALL, "rep", older.body, new AbortController().signal, timers);
+    const newer = uploadBody();
+    void receiveUploadStream(hub, CALL, "rep", newer.body, new AbortController().signal, timers);
+    await tick();
+    older.end();
+    expect(await olderDone).toBe("ended");
+    expect(timers.count).toBeGreaterThan(0);
+    timers.advance(REP_RELAY_UPLINK_GRACE_MS);
+    expect(newer.cancelled).toBe(false);
+  });
+
+  test("a side's down stream that reconnects hears again that its upload stream works", async () => {
+    const { timers, hub } = connected();
+    const upload = uploadBody();
+    void receiveUploadStream(hub, CALL, "station", upload.body, new AbortController().signal, timers);
+    upload.write([1, 0]);
+    await tick();
+    const again = new FakeSubscriber();
+    hub.attach(CALL, "station", again, "s");
+    expect(again.kinds()).toContain("uplink");
+    const rep = new FakeSubscriber();
+    hub.attach(CALL, "rep", rep, "r");
+    expect(rep.kinds()).not.toContain("uplink");
+  });
+
+  test("past the relay cap it throws RelayFullError and lets go of the body", async () => {
+    const { timers, hub } = setup(0);
+    const upload = uploadBody();
+    await expect(receiveUploadStream(hub, CALL, "rep", upload.body, new AbortController().signal, timers)).rejects.toBeInstanceOf(RelayFullError);
+    expect(upload.cancelled).toBe(true);
   });
 });

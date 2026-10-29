@@ -597,9 +597,9 @@ export type RecorderCallRequest = {
 /**
  * A rep's call placed from a cloud calling station's WhatsApp, with the rep
  * at their own AgentSDR tab ("Call now"). AgentSDR relays the audio: each
- * side sends its audio up in small chunks and reads the other side's from one
- * long streaming response. No WebRTC: a GoLogin station's browser rewrites
- * and strips WebRTC (29 Oct 2026), and both sides already reach AgentSDR.
+ * side sends its audio up and reads the other side's from one long streaming
+ * response. No WebRTC: a GoLogin station's browser rewrites and strips WebRTC
+ * (29 Oct 2026), and both sides already reach AgentSDR.
  *
  *   rep's tab    POST /api/calls/:id/relay        (cookie; body: PCM)
  *                GET  /api/calls/:id/relay        (cookie; NDJSON RepRelayEvent stream)
@@ -609,6 +609,18 @@ export type RecorderCallRequest = {
  *                — CORS-allowed for https://web.whatsapp.com (the extension's
  *                content script fetches as the page's origin).
  *
+ * Up, each side holds ONE long POST open whose body is a stream of PCM
+ * (REP_RELAY_STREAM_HEADER: 1; Chrome streams a request body over HTTP/2 or
+ * newer only), and starts a fresh one every REP_RELAY_STREAM_ROTATE_MS. The
+ * relay answers the stream's first audio with an `uplink` event on that
+ * side's down stream, so a sender learns its stream really arrives (nothing
+ * in between holds it back). A stream that cannot start, or is not heard,
+ * twice in a row before any worked, sends the rest of the call as small POSTs
+ * instead (~REP_RELAY_CHUNK_MS each, one in flight): one request a chunk
+ * costs a round trip each, ~1 s through the app (29 Oct 2026), which is why
+ * the stream exists. Either way a sender's backlog is capped at
+ * REP_RELAY_MAX_CHUNK_MS, oldest dropped.
+ *
  * Audio both ways: mono 16-bit little-endian PCM at REP_RELAY_SAMPLE_RATE.
  * The station plays the rep's audio into WhatsApp's microphone exactly as it
  * plays the AI agent's, and sends the lead's side from dialing on (the rep
@@ -617,10 +629,20 @@ export type RecorderCallRequest = {
  */
 
 export const REP_RELAY_SAMPLE_RATE = 16_000;
-/** Senders batch about this much audio per POST. */
+/** Senders batch about this much audio per POST (chunked, the fallback). */
 export const REP_RELAY_CHUNK_MS = 40;
-/** A POST carrying more than this much audio is refused. */
+/** A POST carrying more than this much audio is refused; a sender's backlog never holds more. */
 export const REP_RELAY_MAX_CHUNK_MS = 1_000;
+/** Marks a POST whose body is a stream of PCM (value "1"), read as it arrives. */
+export const REP_RELAY_STREAM_HEADER = "X-Relay-Stream";
+/**
+ * Senders start a new upload stream this often, ending the old one. Proxies
+ * limit how long reading one request may take (Traefik v3: 60 s, body
+ * included), and a long call outlasts that.
+ */
+export const REP_RELAY_STREAM_ROTATE_MS = 45_000;
+/** The relay ends an upload stream that has run this long (a sender rotates far sooner). */
+export const REP_RELAY_STREAM_MAX_MS = 5 * 60_000;
 /** Players hold this much before starting to play, to ride out network jitter. */
 export const REP_RELAY_JITTER_MS = 100;
 /** Players drop queued audio past this much, to catch up after a stall. */
@@ -640,6 +662,8 @@ export type RepRelayEvent =
   | { t: "peer"; present: boolean }
   /** To the station only: the rep hung up, or their tab left — end the WhatsApp call. */
   | { t: "hangup" }
+  /** This side's upload stream delivered audio: streaming works (sent once per stream, and again on reconnecting). */
+  | { t: "uplink" }
   | { t: "ping" };
 
 // --- AI voice agent (trial) --------------------------------------------------

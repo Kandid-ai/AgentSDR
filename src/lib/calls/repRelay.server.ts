@@ -6,6 +6,7 @@ import {
   REP_RELAY_PING_MS,
   REP_RELAY_REP_GONE_MS,
   REP_RELAY_SAMPLE_RATE,
+  REP_RELAY_STREAM_MAX_MS,
   type RepRelayEvent,
   type RepRelaySide,
 } from "./contract";
@@ -14,9 +15,10 @@ import {
  * The audio relay for a rep talking through a calling station (contract.ts,
  * "a rep talking through a calling station"): per call, two sides — the rep's
  * tab and the station's WhatsApp Web — each with at most one down stream
- * open. What one side POSTs goes straight to the other's stream; nothing is
- * stored, and audio for a side with no stream (or a stream that has fallen
- * behind) is dropped, never queued.
+ * open. What one side POSTs (a chunk at a time, or as one upload stream) goes
+ * straight to the other's stream; nothing is stored, and audio for a side
+ * with no stream (or a stream that has fallen behind) is dropped, never
+ * queued.
  *
  * In-process memory, so it holds only while the app runs as one instance (as
  * deployed today). The hub is pure — timers are injected — so its rules are
@@ -34,6 +36,13 @@ export const REP_RELAY_MAX_QUEUED_BYTES = Math.ceil(((REP_RELAY_SAMPLE_RATE * 2 
 export const MAX_REP_RELAYS = 100;
 /** A call with neither side connected is forgotten after this. */
 export const REP_RELAY_IDLE_MS = 60_000;
+/**
+ * A side's newer upload stream retires its older one after this: a sender
+ * rotating streams ends the old one itself, so this only cuts one whose
+ * client is gone without the server having noticed (a half-open connection).
+ * Not at once, so the old stream's last audio, still on its way, arrives.
+ */
+export const REP_RELAY_UPLINK_GRACE_MS = 2_000;
 
 export function encodeRelayEvent(event: RepRelayEvent): string {
   return `${JSON.stringify(event)}\n`;
@@ -94,8 +103,29 @@ type Attached = {
   ping: TimerHandle;
 };
 
+/** One open upload stream. */
+type Uplink = {
+  side: RepRelaySide;
+  /** Ends the stream's reading (replaced, or the call is over). */
+  stop: () => void;
+  /** It has delivered audio, and its side was told (`uplink`). */
+  heard: boolean;
+  /** A newer stream of the same side took over: this one is stopped when it fires. */
+  retire: TimerHandle | null;
+};
+
+/** An open upload stream, as its route holds it. */
+export type UplinkHandle = {
+  /** Forwards a piece of its audio, like RepRelayHub.up; the first tells its side the stream works. */
+  up(pcm: Uint8Array): boolean;
+  /** The stream is done: forget it. */
+  release(): void;
+};
+
 type Relay = {
   sides: Partial<Record<RepRelaySide, Attached>>;
+  /** Open upload streams, oldest first. */
+  uplinks: Uplink[];
   /** The rep's stream has been open at least once. */
   repSeen: boolean;
   /** Hung up (the rep, or their tab gone): a station that connects later is told at once. */
@@ -145,7 +175,42 @@ export class RepRelayHub {
     send(subscriber, { t: "peer", present: !!other });
     if (!previous && other) send(other.subscriber, { t: "peer", present: true });
     if (side === "station" && relay.hungUp) send(subscriber, { t: "hangup" });
+    // A stream reopened while its side's upload stream works: say so again, the first telling may have been lost with the old one.
+    if (newestUplink(relay, side)?.heard) send(subscriber, { t: "uplink" });
     return () => this.detach(callId, side, attached);
+  }
+
+  /**
+   * Opens an upload stream for `side`; `stop` ends its reading. An older
+   * stream of the same side is retired after REP_RELAY_UPLINK_GRACE_MS (a
+   * newer replaces an older, as with down streams). Throws RelayFullError.
+   */
+  openUplink(callId: string, side: RepRelaySide, stop: () => void): UplinkHandle {
+    const relay = this.ensure(callId);
+    for (const older of relay.uplinks) {
+      if (older.side !== side || older.retire != null) continue;
+      older.retire = this.timers.setTimeout(() => {
+        older.retire = null;
+        older.stop();
+      }, REP_RELAY_UPLINK_GRACE_MS);
+    }
+    const uplink: Uplink = { side, stop, heard: false, retire: null };
+    relay.uplinks.push(uplink);
+    return {
+      up: (pcm) => {
+        if (!uplink.heard && pcm.byteLength) {
+          uplink.heard = true;
+          const own = this.relays.get(callId)?.sides[side];
+          if (own) send(own.subscriber, { t: "uplink" });
+        }
+        return this.up(callId, side, pcm);
+      },
+      release: () => {
+        if (uplink.retire != null) this.timers.clearTimeout(uplink.retire);
+        uplink.retire = null;
+        relay.uplinks = relay.uplinks.filter((open) => open !== uplink);
+      },
+    };
   }
 
   /** Whether `side`'s open stream was authorized with this credential. */
@@ -190,6 +255,17 @@ export class RepRelayHub {
       safeClose(attached.subscriber);
     }
     relay.sides = {};
+    const uplinks = relay.uplinks;
+    relay.uplinks = [];
+    for (const uplink of uplinks) {
+      if (uplink.retire != null) this.timers.clearTimeout(uplink.retire);
+      uplink.retire = null;
+      try {
+        uplink.stop();
+      } catch {
+        // Its reading is already over.
+      }
+    }
   }
 
   private detach(callId: string, side: RepRelaySide, attached: Attached): void {
@@ -216,7 +292,7 @@ export class RepRelayHub {
     const existing = this.relays.get(callId);
     if (existing) return existing;
     if (this.relays.size >= this.maxRelays) throw new RelayFullError();
-    const relay: Relay = { sides: {}, repSeen: false, hungUp: false, repGone: null, idle: null };
+    const relay: Relay = { sides: {}, uplinks: [], repSeen: false, hungUp: false, repGone: null, idle: null };
     this.relays.set(callId, relay);
     this.scheduleIdle(callId, relay);
     return relay;
@@ -235,6 +311,11 @@ export class RepRelayHub {
     if (handle != null) this.timers.clearTimeout(handle);
     relay[which] = null;
   }
+}
+
+function newestUplink(relay: Relay, side: RepRelaySide): Uplink | undefined {
+  for (let i = relay.uplinks.length - 1; i >= 0; i--) if (relay.uplinks[i]!.side === side) return relay.uplinks[i];
+  return undefined;
 }
 
 function send(subscriber: RelaySubscriber, event: RepRelayEvent): void {
@@ -325,3 +406,98 @@ export const RELAY_STREAM_HEADERS = {
   "Cache-Control": "no-cache, no-transform",
   "X-Accel-Buffering": "no",
 } as const;
+
+// --- upload streams ----------------------------------------------------------------
+
+/**
+ * Cuts an upload stream's bytes into pieces the relay forwards: whole
+ * samples only (an odd trailing byte waits for the next chunk), each at most
+ * REP_RELAY_MAX_CHUNK_BYTES.
+ */
+export class PcmStreamSplitter {
+  private carry: number | null = null;
+
+  constructor(private readonly maxBytes = REP_RELAY_MAX_CHUNK_BYTES) {}
+
+  push(chunk: Uint8Array): Uint8Array[] {
+    let bytes = chunk;
+    if (this.carry != null && chunk.byteLength) {
+      bytes = new Uint8Array(chunk.byteLength + 1);
+      bytes[0] = this.carry;
+      bytes.set(chunk, 1);
+      this.carry = null;
+    }
+    const whole = bytes.byteLength - (bytes.byteLength % 2);
+    if (whole < bytes.byteLength) this.carry = bytes[whole]!;
+    const pieces: Uint8Array[] = [];
+    for (let offset = 0; offset < whole; offset += this.maxBytes) {
+      pieces.push(bytes.subarray(offset, Math.min(whole, offset + this.maxBytes)));
+    }
+    return pieces;
+  }
+}
+
+/**
+ * How an upload stream's reading ended: `ended` — the client ended the body;
+ * `stopped` — the relay stopped it (replaced, the call is over, or
+ * REP_RELAY_STREAM_MAX_MS); `aborted` — the client went (`signal`);
+ * `broken` — the body failed.
+ */
+export type UploadStreamEnd = "ended" | "stopped" | "aborted" | "broken";
+
+/**
+ * Reads one side's upload stream into the relay as it arrives — never the
+ * whole body first — until it ends one of the ways above. Pure but for the
+ * hub and the timers, so it is tested with a constructed stream.
+ */
+export async function receiveUploadStream(
+  hub: RepRelayHub,
+  callId: string,
+  side: RepRelaySide,
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  timers: RelayTimers = SYSTEM_TIMERS,
+): Promise<UploadStreamEnd> {
+  const reader = body.getReader();
+  let end: UploadStreamEnd | null = null;
+  const finish = (why: UploadStreamEnd) => {
+    if (end) return;
+    end = why;
+    // A pending read() then resolves as done.
+    void reader.cancel().catch(() => {});
+  };
+  const onAbort = () => finish("aborted");
+  let handle: UplinkHandle;
+  try {
+    handle = hub.openUplink(callId, side, () => finish("stopped"));
+  } catch (error) {
+    void reader.cancel().catch(() => {});
+    throw error;
+  }
+  const limit = timers.setTimeout(() => finish("stopped"), REP_RELAY_STREAM_MAX_MS);
+  if (signal.aborted) onAbort();
+  else signal.addEventListener("abort", onAbort, { once: true });
+  const splitter = new PcmStreamSplitter();
+  try {
+    while (!end) {
+      let result: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        result = await reader.read();
+      } catch {
+        finish(signal.aborted ? "aborted" : "broken");
+        break;
+      }
+      if (result.done) {
+        finish("ended");
+        break;
+      }
+      if (end) break;
+      for (const pcm of splitter.push(result.value)) handle.up(pcm);
+    }
+  } finally {
+    timers.clearTimeout(limit);
+    signal.removeEventListener("abort", onAbort);
+    handle.release();
+  }
+  return end ?? "ended";
+}

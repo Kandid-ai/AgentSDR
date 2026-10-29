@@ -117,9 +117,21 @@ export function proxy(request: NextRequest) {
   return NextResponse.redirect(url);
 }
 
+/**
+ * Skips Next assets, favicons, and other static files in /public — and a call
+ * relay's upload stream (POST …/relay with X-Relay-Stream, contract.ts "a rep
+ * talking through a calling station"): Next.js holds back the body of any
+ * request the proxy sees until that body has ended, so a stream that lasts
+ * the call would never reach its route. Those routes apply this file's rules
+ * themselves (assertProxyRules in src/lib/calls/remoteRep.ts). Every other
+ * request to the two relay paths still comes through here.
+ *
+ * Literal values only: Next.js reads this object at build time.
+ */
 export const config = {
-  // Skip auth for Next assets, favicons, and other static files in /public
   matcher: [
-    "/((?!_next/static|_next/image|favicon|linkbird|.*\\.(?:png|jpe?g|gif|svg|webp|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon|linkbird|api/calls/[^/]+/relay$|api/call-recorder/calls/[^/]+/relay$|.*\\.(?:png|jpe?g|gif|svg|webp|ico)$).*)",
+    { source: "/api/calls/:id/relay", missing: [{ type: "header", key: "x-relay-stream" }] },
+    { source: "/api/call-recorder/calls/:id/relay", missing: [{ type: "header", key: "x-relay-stream" }] },
   ],
 };

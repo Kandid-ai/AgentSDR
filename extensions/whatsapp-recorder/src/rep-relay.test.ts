@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PcmBacklog, RepRelay, parseRelayLines, pcmFromBase64 } from "./rep-relay";
+import { RepRelay, parseRelayLines, pcmFromBase64 } from "./rep-relay";
 
 const base64Of = (samples: number[]) => Buffer.from(new Int16Array(samples).buffer).toString("base64");
 
@@ -12,8 +12,8 @@ describe("parseRelayLines", () => {
   });
 
   test("skips blank lines, bad JSON and unknown or malformed events", () => {
-    const text = '\n  \nnot json\n{"t":"dance"}\n{"t":"audio"}\n{"t":"peer","present":"yes"}\n[1]\nnull\n{"t":"hangup"}\r\n';
-    expect(parseRelayLines(text)).toEqual({ events: [{ t: "hangup" }], rest: "" });
+    const text = '\n  \nnot json\n{"t":"dance"}\n{"t":"audio"}\n{"t":"peer","present":"yes"}\n[1]\nnull\n{"t":"hangup"}\r\n{"t":"uplink"}\n';
+    expect(parseRelayLines(text)).toEqual({ events: [{ t: "hangup" }, { t: "uplink" }], rest: "" });
   });
 });
 
@@ -26,33 +26,6 @@ describe("pcmFromBase64", () => {
   test("drops an odd trailing byte", () => {
     const odd = Buffer.from([1, 0, 2, 0, 9]).toString("base64");
     expect(Array.from(new Int16Array(pcmFromBase64(odd)))).toEqual([1, 2]);
-  });
-});
-
-describe("PcmBacklog", () => {
-  test("takes everything queued, oldest first, as one block", () => {
-    const backlog = new PcmBacklog(10);
-    expect(backlog.push(new Int16Array([1, 2]))).toBe(0);
-    expect(backlog.push(new Int16Array([3]))).toBe(0);
-    expect(backlog.samples).toBe(3);
-    expect(Array.from(backlog.take())).toEqual([1, 2, 3]);
-    expect(backlog.samples).toBe(0);
-    expect(backlog.take().length).toBe(0);
-  });
-
-  test("drops the oldest audio past the cap, splitting a chunk if needed", () => {
-    const backlog = new PcmBacklog(4);
-    backlog.push(new Int16Array([1, 2, 3]));
-    expect(backlog.push(new Int16Array([4, 5]))).toBe(1);
-    expect(backlog.push(new Int16Array([6, 7, 8]))).toBe(3);
-    expect(backlog.samples).toBe(4);
-    expect(Array.from(backlog.take())).toEqual([5, 6, 7, 8]);
-  });
-
-  test("a single block larger than the cap keeps its newest samples", () => {
-    const backlog = new PcmBacklog(2);
-    expect(backlog.push(new Int16Array([1, 2, 3, 4, 5]))).toBe(3);
-    expect(Array.from(backlog.take())).toEqual([4, 5]);
   });
 });
 
@@ -80,6 +53,7 @@ describe("RepRelay", () => {
       play: (pcm) => played.push(Array.from(new Int16Array(pcm))),
       hangup: (why) => hangups.push(why),
       trace: () => {},
+      canStream: false,
       fetch: async (_url, init) => {
         requests.push(init);
         const audio = JSON.stringify({ t: "audio", pcm: base64Of([7, 8]) });
@@ -104,6 +78,7 @@ describe("RepRelay", () => {
       play: () => {},
       hangup: (why) => hangups.push(why),
       trace: () => {},
+      canStream: false,
       fetch: async () => {
         calls += 1;
         return new Response("gone", { status: 410 });
@@ -115,7 +90,7 @@ describe("RepRelay", () => {
     expect(calls).toBe(1);
   });
 
-  test("sends the lead's audio in batches, one request in flight", async () => {
+  test("where streaming is not possible, sends the lead's audio in batches, one request in flight", async () => {
     const bodies: number[][] = [];
     const gate = { release: () => {} };
     const relay = new RepRelay({
@@ -124,8 +99,10 @@ describe("RepRelay", () => {
       play: () => {},
       hangup: () => {},
       trace: () => {},
+      canStream: false,
       fetch: async (_url, init) => {
-        bodies.push(Array.from(init.body as Int16Array));
+        const bytes = init.body as Uint8Array;
+        bodies.push(Array.from(new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)));
         await new Promise<void>((resolve) => (gate.release = resolve));
         return new Response(null, { status: 204 });
       },

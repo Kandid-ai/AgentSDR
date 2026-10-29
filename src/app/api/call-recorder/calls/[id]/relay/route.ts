@@ -1,6 +1,15 @@
 import type { NextRequest } from "next/server";
 import { CallApiError, callApiErrorResponse, withRecorderScope } from "@/lib/calls/sessions";
-import { assertRelayable, readRelayPcm, relayStreamResponse, stationRelayCredential } from "@/lib/calls/remoteRep";
+import {
+  assertProxyRules,
+  assertRelayable,
+  isRelayUploadStream,
+  readRelayPcm,
+  receiveRelayUpload,
+  relayStreamResponse,
+  stationRelayCredential,
+} from "@/lib/calls/remoteRep";
+import { REP_RELAY_STREAM_HEADER } from "@/lib/calls/contract";
 import { repRelay } from "@/lib/calls/repRelay.server";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +41,7 @@ export function OPTIONS() {
     headers: {
       ...CORS_HEADERS,
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Headers": `Authorization, Content-Type, ${REP_RELAY_STREAM_HEADER}`,
       "Access-Control-Max-Age": "600",
     },
   });
@@ -54,17 +63,22 @@ export async function GET(request: NextRequest, { params }: Params) {
 }
 
 /**
- * POST — a chunk of the lead's side (mono 16-bit LE PCM at
- * REP_RELAY_SAMPLE_RATE) for the rep. While the station's stream is open, the
- * token it was opened with is enough, without a database read per chunk.
+ * POST — the lead's side (mono 16-bit LE PCM at REP_RELAY_SAMPLE_RATE) for
+ * the rep: as an upload stream (REP_RELAY_STREAM_HEADER), read as it arrives
+ * and answered when it ends, or as one chunk (the fallback). While the
+ * station's down stream is open, the token it was opened with is enough,
+ * without a database read per request.
  */
 export async function POST(request: NextRequest, { params }: Params) {
   try {
     const id = (await params).id;
+    const streaming = isRelayUploadStream(request);
+    if (streaming) assertProxyRules(request);
     if (!repRelay().isAuthorized(id, "station", stationRelayCredential(request))) {
       await withRecorderScope(request, id, async (row) => assertRelayable(row));
     }
-    repRelay().up(id, "station", await readRelayPcm(request));
+    if (streaming) await receiveRelayUpload(request, id, "station");
+    else repRelay().up(id, "station", await readRelayPcm(request));
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   } catch (error) {
     return withCors(callApiErrorResponse(error));

@@ -1,15 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { CrmConfigurationValidationError } from "@/lib/crm/categories";
+import type { RepRelayEvent } from "./contract";
 import {
+  assertProxyRules,
   assertRelayable,
+  isRelayUploadStream,
   parseCallAiLeadBody,
   parseRemoteRep,
   readRelayPcm,
+  receiveRelayUpload,
   repRelayCredential,
   stationRelayCredential,
   validateRelayPcm,
 } from "./remoteRep";
-import { REP_RELAY_MAX_CHUNK_BYTES } from "./repRelay.server";
+import { REP_RELAY_MAX_CHUNK_BYTES, repRelay } from "./repRelay.server";
 import { CallApiError } from "./sessions";
 
 async function expectApiError(fn: () => unknown, status: number) {
@@ -119,5 +123,50 @@ describe("relay credentials", () => {
     const signedIn = repRelayCredential(new Request("https://x/", { headers: { cookie: "better-auth.session_token=abc.def" } }));
     expect(signedIn).toBeTruthy();
     expect(signedIn).not.toContain("abc");
+  });
+});
+
+describe("upload streams", () => {
+  test("are marked by the stream header", () => {
+    expect(isRelayUploadStream(pcmRequest(new Uint8Array(2), { "X-Relay-Stream": "1" }))).toBe(true);
+    expect(isRelayUploadStream(pcmRequest(new Uint8Array(2)))).toBe(false);
+  });
+
+  test("a streamed request's body reaches the relay as it arrives, and the route answers once it ends", async () => {
+    const callId = "33333333-3333-3333-3333-333333333333";
+    const heard: RepRelayEvent[] = [];
+    const subscriber = { queuedBytes: () => 0, write: (line: string) => heard.push(JSON.parse(line) as RepRelayEvent), close: () => {} };
+    const detachRep = repRelay().attach(callId, "rep", subscriber, "r");
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start: (c) => void (controller = c) });
+    const init = { method: "POST", body, duplex: "half", headers: { "X-Relay-Stream": "1" } };
+    const request = new Request(`https://app.example/api/call-recorder/calls/${callId}/relay`, init as RequestInit);
+    let answered = false;
+    const done = receiveRelayUpload(request, callId, "station").then(() => (answered = true));
+    controller.enqueue(new Uint8Array([1, 0, 2]));
+    const deadline = Date.now() + 1_000;
+    while (!heard.some((event) => event.t === "audio") && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 2));
+    expect(heard.filter((event) => event.t === "audio")).toEqual([{ t: "audio", pcm: "AQA=" }]);
+    expect(answered).toBe(false);
+    controller.enqueue(new Uint8Array([0]));
+    controller.close();
+    await done;
+    expect(heard.filter((event) => event.t === "audio")).toEqual([{ t: "audio", pcm: "AQA=" }, { t: "audio", pcm: "AgA=" }]);
+    detachRep();
+    repRelay().end(callId);
+  });
+
+  test("apply the proxy's rules, which they skip: the demo refuses them", async () => {
+    const request = pcmRequest(new Uint8Array(2), { "X-Relay-Stream": "1" });
+    const previous = process.env.DEMO_MODE;
+    try {
+      delete process.env.DEMO_MODE;
+      expect(() => assertProxyRules(request)).not.toThrow();
+      process.env.DEMO_MODE = "true";
+      await expectApiError(() => assertProxyRules(request), 403);
+    } finally {
+      if (previous === undefined) delete process.env.DEMO_MODE;
+      else process.env.DEMO_MODE = previous;
+    }
   });
 });

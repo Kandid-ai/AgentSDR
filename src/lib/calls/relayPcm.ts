@@ -86,9 +86,9 @@ export function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
 export const MAX_OUTBOX_SAMPLES = (REP_RELAY_SAMPLE_RATE * REP_RELAY_MAX_CHUNK_MS) / 1000;
 
 /**
- * The microphone's PCM waiting to go up. The sender takes everything at once
- * (one POST in flight; what arrives meanwhile goes in the next); while a POST
- * is stuck, the oldest audio is dropped so the backlog never passes
+ * PCM waiting to go up (relayUplink.ts). The sender takes everything at once
+ * (the stream's next read, or the next POST); while the network is stuck,
+ * the oldest audio is dropped so the backlog never passes
  * REP_RELAY_MAX_CHUNK_MS — late speech is worse than a gap.
  */
 export class PcmOutbox {
@@ -101,21 +101,26 @@ export class PcmOutbox {
     return this.samples;
   }
 
-  push(pcm: Int16Array): void {
-    if (!pcm.length) return;
+  /** Queues `pcm`; returns how many samples were dropped to stay within the cap. */
+  push(pcm: Int16Array): number {
+    if (!pcm.length) return 0;
     this.blocks.push(pcm);
     this.samples += pcm.length;
+    let dropped = 0;
     while (this.samples > this.maxSamples) {
       const oldest = this.blocks[0]!;
       const excess = this.samples - this.maxSamples;
       if (oldest.length <= excess) {
         this.blocks.shift();
         this.samples -= oldest.length;
+        dropped += oldest.length;
       } else {
         this.blocks[0] = oldest.subarray(excess);
         this.samples -= excess;
+        dropped += excess;
       }
     }
+    return dropped;
   }
 
   /** Everything waiting, as LE bytes; null when empty. */
