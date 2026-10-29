@@ -214,6 +214,12 @@ function directHosts(agentsdrUrl: string): string[] {
     // 2-minute limit ("did not load in time", 23 Oct 2026). The account's own
     // connection (web.whatsapp.com, its /ws/chat socket) stays on the proxy.
     "static.whatsapp.net",
+    // A rep call's TURN relay (Cloudflare TURN). GoLogin resolves every other
+    // host to 0.0.0.0, so the station never got a relay candidate and the
+    // link to the rep's tab failed (29 Oct 2026). WhatsApp never sees this
+    // route: the rep's tab gets the relay's address, not the server's.
+    "turn.cloudflare.com",
+    "stun.cloudflare.com",
   ];
 }
 
