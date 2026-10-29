@@ -109,9 +109,9 @@ export async function aiCallingOrganizationIds(): Promise<string[]> {
     .from(callCampaigns)
     .where(and(
       eq(callCampaigns.runBy, "ai"),
-      isNotNull(callCampaigns.aiLaunchedAt),
       or(
-        and(eq(callCampaigns.status, "active"), isNull(callCampaigns.archivedAt)),
+        and(isNotNull(callCampaigns.aiLaunchedAt), eq(callCampaigns.status, "active"), isNull(callCampaigns.archivedAt)),
+        // Launched or not: a lead's call-back opens a step run too (src/lib/calls/incoming.ts).
         sql`exists (select 1 from ${callCampaignContacts} c join ${callCampaignStepRuns} r on r.contact_id = c.id
                      where c.campaign_id = ${callCampaigns.id} and r.status = 'started')`,
       ),

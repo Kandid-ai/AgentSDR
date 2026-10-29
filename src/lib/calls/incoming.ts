@@ -179,6 +179,8 @@ async function aiContactFor(personId: string) {
       inOrg(callCampaigns),
       eq(callCampaignContacts.personId, personId),
       eq(callCampaigns.runBy, "ai"),
+      // A draft campaign is not working the lead yet; its step run would never be settled.
+      sql`${callCampaigns.aiLaunchedAt} IS NOT NULL`,
       sql`${callCampaigns.archivedAt} IS NULL`,
     ))
     .orderBy(
