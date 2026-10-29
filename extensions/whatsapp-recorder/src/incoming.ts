@@ -76,3 +76,15 @@ export function isAcceptLabel(text: string | null | undefined): boolean {
 export function maskDigits(text: string): string {
   return text.replace(/\d/g, "#");
 }
+
+/**
+ * A phone number written on the incoming-call screen (an unsaved caller is
+ * shown by number, "+91 96000 00001"), E.164, or null. Needs a leading "+"
+ * so that a time or a count is never taken for one.
+ */
+export function phoneFromScreenText(text: string | null | undefined): string | null {
+  const match = /\+\d[\d\s().-]{6,18}\d/.exec(text ?? "");
+  if (!match) return null;
+  const digits = match[0].replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
+}

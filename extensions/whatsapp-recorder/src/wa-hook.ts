@@ -44,7 +44,7 @@
 
 import { createDownsampler } from "./downsample";
 import { INCOMING_CALL_MAX_AGE_MS, type StationInboundMessage } from "../../../src/lib/calls/stationContract";
-import { isAcceptLabel, maskDigits } from "./incoming";
+import { isAcceptLabel, maskDigits, phoneFromScreenText } from "./incoming";
 import { isNonPersonalJid, jidToPhone, parseMessageId, serializedMessageId, storeMessage } from "./inbound";
 import {
   AGENT_MESSAGING_SOURCE,
@@ -1248,6 +1248,7 @@ function onMsgAdded(msg: WaMsg): void {
     // Older messages are added too when a chat loads its history; a recent one counts even unflagged.
     const recent = typeof msg?.t === "number" && msg.t * 1000 >= messaging.attachedAt - MESSAGING_SWEEP_MARGIN_MS;
     if (!msg?.isNewMsg && !recent) return;
+    noteCallLog(msg);
     if (msg.type !== "ciphertext") {
       emitMessages([msg], "event");
       return;
@@ -1554,7 +1555,31 @@ const incoming = {
   loggedButtons: false,
   loggedMissingStore: false,
   loggedShape: false,
+  /**
+   * The newest call-log message from someone else: WhatsApp adds one to the
+   * caller's chat as the call starts ringing (2.3000.105 reported nothing in
+   * its call store), so it names who is calling.
+   */
+  lastCallLog: null as { at: number; phone: string | null; jid: string | null } | null,
 };
+
+/** A call-log message within this long of the screen appearing is that call's. */
+const CALL_LOG_MATCH_MS = 15_000;
+
+/** Remembers who a just-added call-log message is from (the caller of a call ringing now). */
+function noteCallLog(msg: WaMsg): void {
+  try {
+    // Any direction: only matched to an incoming-call screen showing within seconds of it.
+    if (msg?.type !== "call_log") return;
+    const remote = msg.id?.remote;
+    const jid = widString(remote);
+    if (!jid || isNonPersonalJid(jid)) return;
+    const lidDigits = jid.endsWith("@lid") ? lidToPhoneDigits(remote) : null;
+    incoming.lastCallLog = { at: Date.now(), jid, phone: jidToPhone(jid) ?? (lidDigits ? `+${lidDigits}` : null) };
+  } catch {
+    // only a hint for the page watch
+  }
+}
 
 function startIncomingCalls(): void {
   if (incoming.started) return;
@@ -1705,11 +1730,26 @@ function watchIncomingScreen(): void {
     // The store reported it (around when the screen appeared): nothing to add.
     if (incoming.lastStoreAt >= screen.appearedAt - 5_000) return;
     screen.offeredId = `dom-${screen.appearedAt}`;
-    messagingLog("incoming calls: the page shows an incoming call the store did not report — offering it with no number");
+    // Who is calling: the call-log message WhatsApp added to their chat as it
+    // started ringing, else a number written on the screen itself.
+    const log = incoming.lastCallLog && Math.abs(incoming.lastCallLog.at - screen.appearedAt) <= CALL_LOG_MATCH_MS ? incoming.lastCallLog : null;
+    const screenText = callScreenText(found.button);
+    const phone = log?.phone ?? phoneFromScreenText(screenText);
+    const source = log?.phone ? "its call-log message" : phone ? "the screen" : null;
+    messagingLog(
+      `incoming calls: the page shows an incoming call the store did not report — offering it ${source ? `(caller from ${source}${log?.jid ? `, ${jidKind(log.jid)}` : ""})` : `with no number${log ? ` (its call-log chat is ${jidKind(log.jid)}, not resolved to a number)` : ""}`}`,
+    );
     postMessaging({
       source: HOOK_MESSAGING_SOURCE,
       type: "incoming-call",
-      call: { waCallId: screen.offeredId, phone: null, callerName: null, isVideo: /video/i.test(found.labels), isGroup: false, at: screen.appearedAt },
+      call: {
+        waCallId: screen.offeredId,
+        phone,
+        callerName: log?.jid ? contactName(log.jid) : null,
+        isVideo: /video/i.test(found.labels),
+        isGroup: false,
+        at: screen.appearedAt,
+      },
     });
   } catch (error) {
     messagingLog(`incoming calls: the page watch failed: ${describe(error)}`);
@@ -1733,6 +1773,16 @@ function findAcceptButton(): { button: HTMLElement; labels: string; where: strin
     if (button) return { button, labels: callButtonLabels(button), where: i === 0 ? "on the page" : "in picture-in-picture" };
   }
   return null;
+}
+
+/** The text of the call screen around `button` (the caller's name or number). */
+function callScreenText(button: HTMLElement): string {
+  let container: HTMLElement = button;
+  for (let level = 0; level < 10 && container.parentElement; level++) {
+    container = container.parentElement;
+    if ((container.innerText ?? "").length > 200) break;
+  }
+  return container.innerText ?? container.textContent ?? "";
 }
 
 /** The labels of the buttons around `button` (its call screen), digits masked — for the log. */

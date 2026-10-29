@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { INCOMING_CALL_MAX_AGE_MS, type StationIncomingCall } from "../../../src/lib/calls/stationContract";
-import { addIncoming, asIncomingCall, endIncoming, INCOMING_KEEP_MS, isAcceptLabel, maskDigits, takeIncoming, type IncomingEntry } from "./incoming";
+import { addIncoming, asIncomingCall, endIncoming, INCOMING_KEEP_MS, isAcceptLabel, maskDigits, phoneFromScreenText, takeIncoming, type IncomingEntry } from "./incoming";
 
 const NOW = 1_800_000_000_000;
 const ring = (waCallId: string, ageMs = 1_000, phone: string | null = "+911111111111"): StationIncomingCall => ({
@@ -62,5 +62,17 @@ describe("isAcceptLabel", () => {
   });
   test("masks digits for the log", () => {
     expect(maskDigits("Call +91 98765")).toBe("Call +## #####");
+  });
+});
+
+describe("phoneFromScreenText", () => {
+  test("reads a number shown on the call screen", () => {
+    expect(phoneFromScreenText("+91 96000 00001 WhatsApp voice call Decline Accept")).toBe("+919600000001");
+    expect(phoneFromScreenText("Incoming call from +1 (415) 555-0100")).toBe("+14155550100");
+  });
+  test("a saved name, a time or a count is not a number", () => {
+    expect(phoneFromScreenText("Pulkit WhatsApp voice call")).toBeNull();
+    expect(phoneFromScreenText("12:45 3 missed calls")).toBeNull();
+    expect(phoneFromScreenText(null)).toBeNull();
   });
 });
