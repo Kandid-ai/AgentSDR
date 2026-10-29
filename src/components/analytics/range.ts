@@ -12,7 +12,7 @@ export const RANGE_PRESETS = [
 export type PresetKey = (typeof RANGE_PRESETS)[number]["key"];
 export type RangeSelection = { kind: "preset"; key: PresetKey } | { kind: "custom"; from: string; to: string };
 
-export const DEFAULT_RANGE: RangeSelection = { kind: "preset", key: "30d" };
+export const DEFAULT_RANGE: RangeSelection = { kind: "preset", key: "7d" };
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function parseView(value: string | undefined): AnalyticsView {
