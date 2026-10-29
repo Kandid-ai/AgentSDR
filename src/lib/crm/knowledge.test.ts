@@ -115,3 +115,17 @@ describe("CRM Knowledge retrieval", () => {
     assert.equal(executed, true);
   });
 });
+
+describe("CRM Knowledge without a budget", () => {
+  test("every selected document reaches the draft whole", () => {
+    const long = "Case study. ".repeat(2_000);
+    const result = selectKnowledgeCandidates([
+      candidate({ documentId: "case", documentVersionId: "case-v1", alwaysInclude: true, content: long }),
+      candidate({ documentId: "sender", documentVersionId: "sender-v1", alwaysInclude: true, content: "Sender and calendar link." }),
+    ]);
+    assert.equal(result.entries.length, 2);
+    assert.equal(result.truncated, false);
+    assert.equal(result.maxTokens, null);
+    assert.equal(result.entries.find((entry) => entry.documentId === "case")?.excerpt, long.trim());
+  });
+});

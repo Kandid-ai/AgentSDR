@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull } from "drizzle-orm";
 import { messageParticipants } from "./participants";
 import { formatAiInstructions } from "./ai/instructions";
 import { db } from "@/lib/db";
 import { companies, people } from "@/lib/leads/schema";
 import { generateCrmDraft, type DraftCompletion, type DraftRevisionRequest, type GenerateCrmDraftInput } from "./ai/draft";
 import { loadCallContextMessages } from "./callHistory";
+import { loadDraftNow, loadDraftSender } from "./draftSender";
 import { appendCrmEvent } from "./events";
 import { retrieveKnowledge } from "./knowledge";
 import { isPersonDoNotContact } from "./policies";
@@ -93,6 +94,13 @@ async function loadDraftSubject(
 
   const retrieved = await retrieveKnowledge(tx, knowledge);
   const stageMove = await currentStageMoveInTransaction(tx, record);
+  const [conversation] = await tx
+    .select({ channel: crmConversations.channel, accountRef: crmConversations.accountRef })
+    .from(crmConversations)
+    .where(eq(crmConversations.id, conversationId))
+    .limit(1);
+  const sender = conversation ? await loadDraftSender(tx, conversation) : null;
+  const now = await loadDraftNow();
   const [settings] = await tx
     .select({ draftInstructions: crmSettings.draftInstructions })
     .from(crmSettings)
@@ -141,6 +149,8 @@ async function loadDraftSubject(
     },
     stageChange: stageMove,
     instructions: formatAiInstructions(settings?.draftInstructions),
+    sender,
+    now,
     mergeVariables: {
       first_name: profile.person.firstName,
       last_name: profile.person.lastName,
@@ -197,6 +207,10 @@ async function loadDraftContext(
     query: [scope.step.name, scope.step.aiInstructions, scope.step.bodyTemplate].filter(Boolean).join(" "),
     knowledgeTags: scope.step.knowledgeTags,
   });
+  const [{ totalSteps } = { totalSteps: 0 }] = await tx
+    .select({ totalSteps: count() })
+    .from(crmSequenceSteps)
+    .where(eq(crmSequenceSteps.sequenceVersionId, scope.step.sequenceVersionId));
 
   let [draft] = scope.stepRun.draftId
     ? await tx.select().from(crmDrafts).where(eq(crmDrafts.id, scope.stepRun.draftId)).limit(1).for("update")
@@ -255,6 +269,7 @@ async function loadDraftContext(
         knowledgeTags: scope.step.knowledgeTags,
       },
       ...subject,
+      totalSteps: Number(totalSteps) || null,
     },
   };
 }

@@ -190,6 +190,18 @@ the campaign scheduler yields a mailbox's turn to a waiting follow-up. A draft
 the sender cannot send within 48 h, or that a person takes over ("Review
 before sending"), goes to Action required like any other.
 
+Every draft (`buildDraftPrompt`, `src/lib/crm/ai/draft.ts`) is told who it
+goes out as (`sender`: the sending mailbox's display name or LinkedIn
+account's name, `src/lib/crm/draftSender.ts`), `now` in the organization's
+time zone, and `sequenceProgress` (step of total, our messages since the
+person last wrote). Knowledge reaches it whole: there is no default budget,
+because a 2,000-token cap cut the case study and dropped the documents after
+it. The system prompt's general rules (write as the sender, no claims of work
+not shown in the thread, no promises to send later, confirm a proposed time
+instead of sending a booking link, no repeating a follow-up's ask) are not
+tied to any stage; stage-specific behaviour belongs in the sequence step's
+instructions or the organization's draft instructions.
+
 ## Drizzle is the only ORM
 
 The LinkedIn subsystem was migrated from Prisma to Drizzle. Prisma is gone —

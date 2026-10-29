@@ -260,3 +260,37 @@ describe("CRM draft operator instructions", () => {
     assert.equal(buildDraftPrompt(fixture({ instructions: "   " })).systemPrompt, base);
   });
 });
+
+describe("CRM draft sender, time and sequence progress", () => {
+  test("the snapshot says who it goes out as, when, and where the step sits", () => {
+    const prompt = buildDraftPrompt(fixture({
+      sequenceStep: { ...fixture().sequenceStep, position: 3, stepType: "follow_up" },
+      totalSteps: 3,
+      sender: { name: "Dinesh Arora", account: "LinkedIn @dinesh" },
+      now: { iso: "2026-10-29T04:30:00.000Z", timeZone: "Asia/Kolkata", local: "Thursday, 29 October 2026 at 10:00" },
+      recentConversation: [
+        { id: "m1", channel: "email", direction: "inbound", sentAt: "2026-10-20T10:00:00.000Z", subject: null, bodyText: "Sounds interesting" },
+        { id: "m2", channel: "email", direction: "outbound", sentAt: "2026-10-21T10:00:00.000Z", subject: null, bodyText: "Here is the demo" },
+        { id: "m3", channel: "email", direction: "outbound", sentAt: "2026-10-24T10:00:00.000Z", subject: null, bodyText: "Following up" },
+      ],
+    }));
+    assert.deepEqual(prompt.snapshot.sender, { name: "Dinesh Arora", account: "LinkedIn @dinesh" });
+    assert.deepEqual(prompt.snapshot.now, { iso: "2026-10-29T04:30:00.000Z", timeZone: "Asia/Kolkata", local: "Thursday, 29 October 2026 at 10:00" });
+    assert.deepEqual(prompt.snapshot.sequenceProgress, {
+      step: 3, totalSteps: 3, stepType: "follow_up", isLastStep: true, ourMessagesSinceTheirLastReply: 2,
+    });
+  });
+
+  test("without them the snapshot carries none of the keys", () => {
+    const snapshot = buildDraftPrompt(fixture()).snapshot;
+    for (const key of ["sender", "now", "sequenceProgress"]) assert.equal(key in snapshot, false);
+  });
+
+  test("the system prompt carries the general rules", () => {
+    const { systemPrompt } = buildDraftPrompt(fixture());
+    assert.match(systemPrompt, /sender is who this message goes out as/);
+    assert.match(systemPrompt, /Never promise to send something later/);
+    assert.match(systemPrompt, /You cannot see anyone's calendar/);
+    assert.match(systemPrompt, /do not repeat an ask, figure or link/);
+  });
+});

@@ -8,9 +8,8 @@ import {
   type CrmKnowledgeKind,
 } from "./schema";
 
-/** Knowledge is budgeted using the same deliberately conservative estimate as context. */
+/** Token estimate (characters per token), shared with the context estimate. */
 export const KNOWLEDGE_CHARS_PER_TOKEN = 4;
-export const DEFAULT_KNOWLEDGE_TOKENS = 2_000;
 const TRUNCATION_MARKER = "…[truncated]";
 
 export type KnowledgeCandidate = {
@@ -55,7 +54,8 @@ export type KnowledgeSelection = Readonly<{
   knowledge: readonly KnowledgeSelectionEntry[];
   citations: readonly KnowledgeCitation[];
   estimatedTokens: number;
-  maxTokens: number;
+  /** The budget applied, or null when none was: every selected document whole. */
+  maxTokens: number | null;
   truncated: boolean;
 }>;
 
@@ -64,6 +64,13 @@ export type KnowledgeRetrievalInput = {
   knowledgeTags?: readonly string[] | null;
   /** Alias useful to callers that already call these "step tags". */
   tags?: readonly string[] | null;
+  /**
+   * Optional cap. Drafts pass none: a document the organization marked
+   * "always include", tagged for the step, or matched by search reaches the
+   * model in full. A shared 2,000-token cap used to cut the long case study
+   * and drop the documents after it (the sender and contact details reached
+   * 4 of 194 drafts).
+   */
   maxTokens?: number;
   limit?: number;
 };
@@ -134,14 +141,15 @@ export function estimateKnowledgeTokens(text: string): number {
 /**
  * Selects already-ranked latest-version candidates without doing I/O. Always-included
  * documents win first, then step-tag overlap, then PostgreSQL rank, with id tie-breakers.
- * The excerpt is the exact text used to build the prompt and citation.
+ * The excerpt is the exact text used to build the prompt and citation: the whole
+ * document unless a `maxTokens` cap is passed.
  */
 export function selectKnowledgeCandidates(
   candidates: readonly KnowledgeCandidate[],
   options: { knowledgeTags?: readonly string[] | null; tags?: readonly string[] | null; maxTokens?: number } = {},
 ): KnowledgeSelection {
-  const maxTokens = Math.floor(options.maxTokens ?? DEFAULT_KNOWLEDGE_TOKENS);
-  if (!Number.isFinite(maxTokens) || maxTokens <= 0) {
+  const maxTokens = options.maxTokens === undefined ? null : Math.floor(options.maxTokens);
+  if (maxTokens !== null && (!Number.isFinite(maxTokens) || maxTokens <= 0)) {
     throw new Error("Knowledge maxTokens must be a positive finite integer");
   }
 
@@ -169,7 +177,7 @@ export function selectKnowledgeCandidates(
   }
 
   const ordered = [...byVersion.values()].sort(compareCandidates);
-  const maxCharacters = maxTokens * KNOWLEDGE_CHARS_PER_TOKEN;
+  const maxCharacters = maxTokens === null ? Number.POSITIVE_INFINITY : maxTokens * KNOWLEDGE_CHARS_PER_TOKEN;
   let remainingCharacters = maxCharacters;
   let truncated = false;
   const entries: KnowledgeSelectionEntry[] = [];
@@ -291,7 +299,7 @@ export async function queryKnowledgeCandidates(
   }));
 }
 
-/** Search and apply the deterministic application-side token budget. */
+/** Search, then select: every match whole, unless the caller passes a `maxTokens` cap. */
 export async function retrieveKnowledge(
   executor: CrmExecutor,
   input: KnowledgeRetrievalInput = {},
