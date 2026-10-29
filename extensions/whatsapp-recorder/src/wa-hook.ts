@@ -62,7 +62,6 @@ import {
 } from "./rep-link";
 import {
   REP_LINK_CHANNEL,
-  REP_LINK_GATHER_MS,
   REP_LINK_LOST_HANGUP_MS,
   type RecorderRemoteRep,
 } from "../../../src/lib/calls/contract";
@@ -182,6 +181,12 @@ const AGENT_CAPTURE_FRAMES = 4096;
 const AGENT_PLAY_LEAD_S = 0.03;
 /** After the agent's goodbye has played, this long before End call is pressed. */
 const AGENT_HANGUP_GRACE_MS = 800;
+/**
+ * How long a rep call's station waits for ICE gathering before answering. A
+ * GoLogin profile reaches the TURN relay only over TCP/TLS; 5 s left the
+ * answer with no relay candidate (29 Oct 2026). Within REP_LINK_CONNECT_TIMEOUT_MS.
+ */
+const STATION_GATHER_MS = 12_000;
 
 type Session = {
   callId: string;
@@ -1012,6 +1017,17 @@ function install(): void {
       channel.onclose = () => repLinkDown(rep, "the rep's tab closed the link");
     };
     pc.onconnectionstatechange = () => onRepLinkState(rep);
+    // Why a relay could not be reached (a lookup that failed, a refused or
+    // timed-out connection): the URL and code, never an address or credential.
+    const iceErrors = new Set<string>();
+    pc.onicecandidateerror = (event) => {
+      const error = event as RTCPeerConnectionIceErrorEvent;
+      const line = `${error.url || "?"} → ${error.errorCode} ${error.errorText || ""}`.trim();
+      if (repLink === rep && !iceErrors.has(line) && iceErrors.size < 12) {
+        iceErrors.add(line);
+        repLog(`ICE error: ${line}`);
+      }
+    };
     try {
       await pc.setRemoteDescription({ type: "offer", sdp: offer });
       const transceiver = pc.getTransceivers().find((t) => t.receiver.track.kind === "audio");
@@ -1019,12 +1035,15 @@ function install(): void {
       // Both ways; nothing is sent until the call session gives it the lead's side.
       transceiver.direction = "sendrecv";
       rep.sender = transceiver.sender;
+      repLog(`relay servers: ${iceServers.flatMap((server) => (Array.isArray(server.urls) ? server.urls : [server.urls])).map((url) => url.split("?")[0] + (url.includes("transport=tcp") ? "/tcp" : "")).join(" ")}`);
+      const gatherStart = Date.now();
       await pc.setLocalDescription(await pc.createAnswer());
-      await waitForIceGathering(pc, REP_LINK_GATHER_MS);
+      // Longer than the rep's tab: the station's relay may be reached over TCP/TLS.
+      await waitForIceGathering(pc, STATION_GATHER_MS);
       if (repLink !== rep) return;
       const answer = pc.localDescription?.sdp;
       if (!answer) throw new Error("no answer was made");
-      repLog(`answer ready (ICE gathering ${pc.iceGatheringState})`);
+      repLog(`answer ready (ICE gathering ${pc.iceGatheringState} after ${Date.now() - gatherStart} ms)`);
       post({ source: HOOK_SOURCE, type: "rtc-answer", callId, answer });
       // Candidate kinds only, never addresses: what each side can be reached
       // by, and how ours reach the relay (relay/tls is the one through a proxy).
