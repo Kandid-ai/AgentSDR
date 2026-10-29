@@ -21,6 +21,7 @@ import * as Dropdown from "@/components/alignui/dropdown";
 import * as Input from "@/components/alignui/input";
 import * as Modal from "@/components/alignui/modal";
 import * as SegmentedControl from "@/components/alignui/segmented-control";
+import * as Switch from "@/components/alignui/switch";
 import * as Table from "@/components/alignui/table";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
 import { KpiCell, KpiStrip } from "@/components/analytics/kit/KpiStrip";
@@ -149,6 +150,23 @@ export default function CrmSequencesClient() {
     }
   };
 
+  // Not versioned: applies at once, no publish. Turning it off moves any
+  // follow-ups already waiting to send into Action required (server side).
+  const toggleAutoSend = async (sequence: Sequence, value: boolean) => {
+    const id = String(sequence.id);
+    setBusyKey(`auto:${id}`);
+    setError("");
+    setSequences((current) => current.map((row) => String(row.id) === id ? { ...row, autoSendFollowUps: value } : row));
+    try {
+      await crmFetch(`/sequences/${id}`, { method: "PATCH", body: JSON.stringify({ autoSendFollowUps: value }) });
+    } catch (cause) {
+      setSequences((current) => current.map((row) => String(row.id) === id ? { ...row, autoSendFollowUps: !value } : row));
+      setError(errorMessage(cause));
+    } finally {
+      setBusyKey("");
+    }
+  };
+
   const counts = useMemo(() => {
     const byStatus: Record<Tab, number> = { all: sequences.length, published: 0, draft: 0, archived: 0 };
     for (const sequence of sequences) byStatus[sequenceStatus(sequence)] += 1;
@@ -170,7 +188,7 @@ export default function CrmSequencesClient() {
     <>
       <PageHeader
         title="Sequences"
-        description="Reusable Email and LinkedIn reply flows for CRM subcategories. Every message waits for approval — nothing sends on its own."
+        description="Reusable reply flows for CRM subcategories. The immediate reply always waits for you; with Auto-send on, a sequence's follow-ups send themselves."
         actions={
           <Button.Root variant="primary" mode="filled" size="small" disabled={Boolean(busyKey)} onClick={() => setShowCreate(true)}>
             <Button.Icon as={RiAddLine} />
@@ -218,14 +236,15 @@ export default function CrmSequencesClient() {
                 : <EmptyState icon={RiSearchLine} title="No sequences match" description="Try another status or search." />
             ) : (
               <div aria-busy={loading || undefined} className={cn("overflow-x-auto p-2 transition-opacity", loading && "opacity-60")}>
-                <Table.Root className="min-w-[900px]" style={{ tableLayout: "fixed" }}>
+                <Table.Root className="min-w-[980px]" style={{ tableLayout: "fixed" }}>
                   <caption className="sr-only">CRM sequence library</caption>
                   <Table.Header>
                     <Table.Row>
-                      <Table.Head scope="col" className="w-[30%] px-4">Sequence</Table.Head>
-                      <Table.Head scope="col" className="w-[22%] px-4">Steps</Table.Head>
-                      <Table.Head scope="col" className="w-[30%] px-4">Used for</Table.Head>
-                      <Table.Head scope="col" className="w-[13%] px-4">Status</Table.Head>
+                      <Table.Head scope="col" className="w-[27%] px-4">Sequence</Table.Head>
+                      <Table.Head scope="col" className="w-[18%] px-4">Steps</Table.Head>
+                      <Table.Head scope="col" className="w-[25%] px-4">Used for</Table.Head>
+                      <Table.Head scope="col" className="w-[15%] px-4" title="Follow-ups drafted by the AI send themselves, one per account every 30 minutes, inside sending hours. The immediate reply always waits for you.">Auto-send</Table.Head>
+                      <Table.Head scope="col" className="w-[12%] px-4">Status</Table.Head>
                       <Table.Head scope="col" className="w-14 px-2"><span className="sr-only">Actions</span></Table.Head>
                     </Table.Row>
                   </Table.Header>
@@ -239,6 +258,7 @@ export default function CrmSequencesClient() {
                         now={now}
                         onOpen={open}
                         onDelete={remove}
+                        onToggleAutoSend={toggleAutoSend}
                       />
                     ))}
                   </Table.Body>
@@ -265,6 +285,7 @@ function SequenceRow({
   now,
   onOpen,
   onDelete,
+  onToggleAutoSend,
 }: {
   sequence: Sequence;
   subcategoryById: Record<string, SubcategoryReference>;
@@ -272,6 +293,7 @@ function SequenceRow({
   now: number;
   onOpen: (id: string) => void;
   onDelete: (sequence: Sequence) => Promise<void>;
+  onToggleAutoSend: (sequence: Sequence, value: boolean) => Promise<void>;
 }) {
   const id = String(sequence.id);
   const name = String(sequence.name ?? "Unnamed sequence");
@@ -283,6 +305,7 @@ function SequenceRow({
   const assignments = asList<string>(sequence.assignedSubcategoryIds)
     .map((subcategoryId) => subcategoryById[String(subcategoryId)])
     .filter((value): value is SubcategoryReference => Boolean(value));
+  const autoSend = sequence.autoSendFollowUps === true;
   const visible = assignments.slice(0, 3);
   const hidden = assignments.slice(3);
 
@@ -297,16 +320,11 @@ function SequenceRow({
       onKeyDown={(event) => { if (event.target === event.currentTarget && event.key === "Enter") onOpen(id); }}
     >
       <Table.Cell className="px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-bg-weak-50 ring-1 ring-inset ring-stroke-soft-200">
-            <RiLoopLeftLine className="size-4 text-text-sub-600" aria-hidden="true" />
-          </span>
-          <div className="min-w-0">
-            <Link href={`/crm/sequences/${id}`} className={cn("block truncate text-label-sm hover:text-primary-base", archived ? "text-text-sub-600" : "text-text-strong-950")} title={name}>{name}</Link>
-            <p className="mt-0.5 truncate text-paragraph-xs text-text-sub-600" title={sequence.description ? String(sequence.description) : undefined}>
-              {sequence.description ? String(sequence.description) : updated ? `Updated ${updated}` : "No description"}
-            </p>
-          </div>
+        <div className="min-w-0">
+          <Link href={`/crm/sequences/${id}`} className={cn("block truncate text-label-sm hover:text-primary-base", archived ? "text-text-sub-600" : "text-text-strong-950")} title={name}>{name}</Link>
+          <p className="mt-0.5 truncate text-paragraph-xs text-text-sub-600" title={sequence.description ? String(sequence.description) : undefined}>
+            {sequence.description ? String(sequence.description) : updated ? `Updated ${updated}` : "No description"}
+          </p>
         </div>
       </Table.Cell>
       <Table.Cell className="px-4 py-3">
@@ -333,6 +351,20 @@ function SequenceRow({
         ) : (
           <span className="inline-flex items-center gap-1.5 text-paragraph-xs text-text-soft-400"><RiPriceTag3Line className="size-3.5" aria-hidden="true" />Not assigned</span>
         )}
+      </Table.Cell>
+      <Table.Cell className="px-4 py-3" onKeyDown={(event) => event.stopPropagation()}>
+        <div className="flex items-center gap-2">
+          <Switch.Root
+            checked={autoSend}
+            disabled={busy || archived}
+            onCheckedChange={(value) => void onToggleAutoSend(sequence, value)}
+            aria-label={`Send ${name}'s follow-ups automatically`}
+          />
+          <span className={cn("text-label-sm", autoSend ? "text-text-strong-950" : "text-text-sub-600")}>{autoSend ? "On" : "Off"}</span>
+        </div>
+        <p className="mt-1 truncate text-paragraph-xs text-text-sub-600">
+          {archived ? "Archived" : steps <= 1 ? "No follow-ups" : autoSend ? "Sends on its own" : "Waits for you"}
+        </p>
       </Table.Cell>
       <Table.Cell className="px-4 py-3">
         <Badge.Root variant="lighter" size="medium" color={STATUS_META[status].color}>
