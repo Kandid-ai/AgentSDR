@@ -20,6 +20,27 @@ export function parseMessageId(id: string | null | undefined): ParsedMessageId |
   return { fromMe: match[1] === "true", jid: match[2], keyId: match[3] };
 }
 
+/**
+ * A message key's serialized id. WhatsApp Web used to carry it as
+ * `_serialized`; from about 2.3000.105 (Oct 2026) the key has no such field,
+ * so it is its toString(), else built from the key's own parts the way
+ * WhatsApp serializes them. Null when none of these gives a valid id.
+ */
+export function serializedMessageId(key: {
+  serialized: unknown;
+  text: unknown;
+  fromMe: unknown;
+  remoteJid: string | null;
+  keyId: unknown;
+}): string | null {
+  for (const candidate of [key.serialized, key.text]) {
+    if (typeof candidate === "string" && parseMessageId(candidate)) return candidate.trim();
+  }
+  if (typeof key.fromMe !== "boolean" || !key.remoteJid || typeof key.keyId !== "string" || !key.keyId) return null;
+  const built = `${key.fromMe}_${key.remoteJid}_${key.keyId}`;
+  return parseMessageId(built) ? built : null;
+}
+
 /** What a message is deduplicated on: its key id (the server keys on it too), else the whole id. */
 export function messageDedupeKey(providerMessageId: string): string {
   return parseMessageId(providerMessageId)?.keyId ?? providerMessageId;

@@ -44,7 +44,7 @@
 
 import { createDownsampler } from "./downsample";
 import type { StationInboundMessage } from "../../../src/lib/calls/stationContract";
-import { isNonPersonalJid, parseMessageId, storeMessage } from "./inbound";
+import { isNonPersonalJid, parseMessageId, serializedMessageId, storeMessage } from "./inbound";
 import {
   AGENT_MESSAGING_SOURCE,
   AGENT_SOURCE,
@@ -1321,9 +1321,13 @@ function emitMessages(msgs: WaMsg[], via: "event" | "sweep" | "backfill"): void 
   const messages: StationInboundMessage[] = [];
   for (const msg of msgs) {
     try {
-      const id = msg?.id?._serialized;
+      const id = msgId(msg);
       if (!id) {
-        messagingLog(`${via}: a ${msg?.type ?? "?"} message has no id; skipped`);
+        // Said once per message: the sweep sees it again every few seconds.
+        if (!idlessLogged.has(msg)) {
+          idlessLogged.add(msg);
+          messagingLog(`${via}: a ${msg?.type ?? "?"} message has no id; skipped`);
+        }
         continue;
       }
       if (messaging.emitted.has(id)) continue;
@@ -1348,6 +1352,21 @@ function emitMessages(msgs: WaMsg[], via: "event" | "sweep" | "backfill"): void 
   postMessaging({ source: HOOK_MESSAGING_SOURCE, type: "messages", messages });
 }
 
+const idlessLogged = new WeakSet<WaMsg>();
+
+/** A message's serialized id ("false_<chat jid>_<key id>"), however this WhatsApp Web version carries it. */
+function msgId(msg: WaMsg | null | undefined): string | null {
+  const key = msg?.id;
+  if (!key) return null;
+  let text: unknown = null;
+  try {
+    text = typeof key.toString === "function" ? key.toString() : null;
+  } catch {
+    // built from its parts below
+  }
+  return serializedMessageId({ serialized: key._serialized, text, fromMe: key.fromMe, remoteJid: widString(key.remote), keyId: key.id });
+}
+
 /** The kind of chat, for logs only (never the number). */
 function jidKind(jid: string | null): string {
   const server = jid?.split("@")[1];
@@ -1360,7 +1379,7 @@ function readStoreMessage(msg: WaMsg): StationInboundMessage | null {
   if (!chatJid || isNonPersonalJid(chatJid)) return null;
   const fromMe = msg.id?.fromMe === true;
   return storeMessage({
-    id: msg.id?._serialized ?? null,
+    id: msgId(msg),
     fromMe,
     chatJid,
     lidPhone: chatJid.endsWith("@lid") ? lidToPhoneDigits(remote) : null,
@@ -1442,7 +1461,7 @@ function findSent(chatDigits: string, body: string, sinceMs: number, keyId: stri
   let best: { id: string; t: number } | null = null;
   for (const msg of candidates) {
     try {
-      const id = msg?.id?._serialized;
+      const id = msgId(msg);
       if (!id || msg.id?.fromMe !== true) continue;
       if (keyId && (msg.id.id === keyId || parseMessageId(id)?.keyId === keyId)) return id;
       const t = (msg.t ?? 0) * 1000;

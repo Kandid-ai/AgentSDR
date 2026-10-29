@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { StationInboundMessage } from "../../../src/lib/calls/stationContract";
 import {
+  serializedMessageId,
   isKeptMessageType,
   isNonPersonalJid,
   jidToPhone,
@@ -37,6 +38,31 @@ describe("parseMessageId", () => {
     expect(messageDedupeKey("true_919876543210@c.us_KEY1")).toBe("KEY1");
     expect(messageDedupeKey("true_55555@lid_KEY1")).toBe("KEY1");
     expect(messageDedupeKey("KEY2")).toBe("KEY2");
+  });
+});
+
+describe("serializedMessageId", () => {
+  const parts = { fromMe: false, remoteJid: "919800000001@c.us", keyId: "3EB0ABC123" };
+
+  test("uses _serialized when the key has it", () => {
+    expect(serializedMessageId({ ...parts, serialized: "false_919800000001@c.us_3EB0ABC123", text: "[object Object]" })).toBe(
+      "false_919800000001@c.us_3EB0ABC123",
+    );
+  });
+
+  test("falls back to the key's toString()", () => {
+    expect(serializedMessageId({ ...parts, serialized: undefined, text: "false_1234567890@lid_AC55" })).toBe("false_1234567890@lid_AC55");
+  });
+
+  test("builds it from the key's parts when neither is there (WhatsApp Web 2.3000.105)", () => {
+    expect(serializedMessageId({ ...parts, serialized: undefined, text: "[object Object]" })).toBe("false_919800000001@c.us_3EB0ABC123");
+    expect(serializedMessageId({ ...parts, fromMe: true, serialized: undefined, text: null })).toBe("true_919800000001@c.us_3EB0ABC123");
+  });
+
+  test("null when the parts are missing", () => {
+    expect(serializedMessageId({ ...parts, keyId: undefined, serialized: undefined, text: "[object Object]" })).toBeNull();
+    expect(serializedMessageId({ ...parts, remoteJid: null, serialized: undefined, text: null })).toBeNull();
+    expect(serializedMessageId({ ...parts, fromMe: undefined, serialized: undefined, text: null })).toBeNull();
   });
 });
 
