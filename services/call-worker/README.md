@@ -109,8 +109,12 @@ On Dokploy, auto-deploy with these Watch Paths (everything the image is built fr
 here when the worker or extension starts importing another one from `src/lib/calls/`):
 `services/call-worker/**`, `extensions/whatsapp-recorder/**`, `src/lib/calls/contract.ts`,
 `src/lib/calls/stationContract.ts`, `src/lib/calls/digits.ts`, `src/lib/calls/whatsappContact.ts`.
-The app's own service watches `**` and `!services/call-worker/**`, so a worker-only change does
-not rebuild the app (an extension change rebuilds both: the app serves the extension's zip).
+The app's own service watches what its image is built from — `src/**`, `public/**`,
+`extensions/**`, `db/**`, `docker/**`, `scripts/db/setup.ts`, `scripts/create-scheduled-job-runs.ts`,
+`package.json`, `bun.lock`, `Dockerfile`, `.dockerignore`, `next.config.ts`, `tsconfig.json`,
+`postcss.config.mjs` — so a worker-only or docs-only change does not rebuild it (an extension
+change rebuilds both: the app serves the extension's zip). Dokploy did not honour `**` with
+`!services/call-worker/**` (29 Oct 2026): the app rebuilt for a worker-only change.
 
 Only one worker may run a given number: a laptop worker pointed at a dev server that shares the
 production database claims the same calls.
