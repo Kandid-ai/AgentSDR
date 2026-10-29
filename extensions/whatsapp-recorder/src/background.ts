@@ -984,10 +984,14 @@ async function readInboundBuffer(): Promise<InboundBuffer> {
 
 function bufferInbound(messages: unknown): Promise<void> {
   return serializedInbound(async () => {
-    if (!Array.isArray(messages) || !messages.length || !(await messagingEnabled())) return;
+    if (!Array.isArray(messages) || !messages.length) return;
+    if (!(await messagingEnabled())) {
+      msgLog(`inbound: ${messages.length} message(s) dropped — messaging is not enabled in this browser`);
+      return;
+    }
     const merged = mergeInbound(await readInboundBuffer(), messages.filter((message) => message && typeof message === "object"));
     await chrome.storage.session.set({ [INBOUND_BUFFER_KEY]: { messages: merged.messages, seen: merged.seen } satisfies InboundBuffer });
-    if (merged.added) msgLog(`inbound: ${merged.added} new message(s) waiting (${merged.messages.length} in all)`);
+    msgLog(`inbound: ${merged.added} new message(s) waiting (${merged.messages.length} in all${merged.added < messages.length ? `, ${messages.length - merged.added} already seen` : ""})`);
   });
 }
 

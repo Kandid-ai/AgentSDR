@@ -1103,7 +1103,7 @@ type WaCollection<T> = {
   getModelsArray?: () => T[];
   models?: T[];
 };
-type WaChat = { id?: WaWid | string; unreadCount?: number; msgs?: WaCollection<WaMsg> };
+type WaChat = { id?: WaWid | string; t?: number; unreadCount?: number; msgs?: WaCollection<WaMsg> };
 type WaContact = { name?: string; pushname?: string; verifiedName?: string };
 type WaCollections = { Msg?: WaCollection<WaMsg>; Chat?: WaCollection<WaChat>; Contact?: WaCollection<WaContact> };
 
@@ -1115,12 +1115,30 @@ const MESSAGING_ATTACH_SLOW_POLL_MS = 30_000;
 const MESSAGING_DECRYPT_WAIT_MS = 15_000;
 /** At most this many unread messages per chat are read when the listener attaches. */
 const MESSAGING_BACKFILL_PER_CHAT = 50;
+/**
+ * Besides the "add" event, the store is swept this often for messages newer
+ * than the listener (less a margin): an incoming message the event missed, or
+ * one WhatsApp did not flag isNewMsg, is still read. Duplicates are dropped
+ * here (`emitted`) and again by the service worker and the server.
+ */
+const MESSAGING_SWEEP_MS = 5_000;
+const MESSAGING_SWEEP_MARGIN_MS = 2 * 60_000;
+/** Chats swept: those active since then, and their last messages only. */
+const MESSAGING_SWEEP_PER_CHAT = 20;
+const MESSAGING_EMITTED_MAX = 5_000;
 
 const messaging = {
   enabled: false,
   enabledAt: 0,
   attached: false,
+  attachedAt: 0,
   timer: 0,
+  sweepTimer: 0,
+  /** Message ids already passed on (or skipped), oldest first. */
+  emitted: new Set<string>(),
+  /** "add" events since the last status line: all of them, and those flagged new. */
+  adds: 0,
+  newAdds: 0,
 };
 
 const messagingScope = window as unknown as { __agentsdrMessaging?: boolean };
@@ -1178,10 +1196,12 @@ function tryAttachMessaging(): void {
     if (collections?.Msg?.on && socket?.hasSynced === true) {
       collections.Msg.on("add", onMsgAdded);
       messaging.attached = true;
+      messaging.attachedAt = Date.now();
       const version = (window as unknown as { Debug?: { VERSION?: string } }).Debug?.VERSION ?? "unknown";
       messagingLog(`listening to WhatsApp's message store (WhatsApp Web ${version})`);
       postMessagingSource();
       backfillUnread(collections);
+      messaging.sweepTimer = window.setInterval(sweepStore, MESSAGING_SWEEP_MS);
       return;
     }
   } catch (error) {
@@ -1219,9 +1239,13 @@ function modelsOf<T>(collection: WaCollection<T> | null | undefined): T[] {
 
 function onMsgAdded(msg: WaMsg): void {
   try {
-    if (!msg?.isNewMsg) return;
+    messaging.adds++;
+    if (msg?.isNewMsg) messaging.newAdds++;
+    // Older messages are added too when a chat loads its history; a recent one counts even unflagged.
+    const recent = typeof msg?.t === "number" && msg.t * 1000 >= messaging.attachedAt - MESSAGING_SWEEP_MARGIN_MS;
+    if (!msg?.isNewMsg && !recent) return;
     if (msg.type !== "ciphertext") {
-      emitMessages([msg]);
+      emitMessages([msg], "event");
       return;
     }
     // Still being decrypted: it is read once its real type arrives.
@@ -1230,7 +1254,7 @@ function onMsgAdded(msg: WaMsg): void {
       if (done) return;
       done = true;
       try {
-        emitMessages([msg]);
+        emitMessages([msg], "event");
       } catch {
         // never into WhatsApp's code
       }
@@ -1261,24 +1285,73 @@ function backfillUnread(collections: WaCollections): void {
     }
     if (found.length) {
       messagingLog(`read ${found.length} unread message(s) already in the store`);
-      emitMessages(found);
+      emitMessages(found, "backfill");
     }
   } catch (error) {
     messagingLog(`could not read unread chats: ${describe(error)}`);
   }
 }
 
-function emitMessages(msgs: WaMsg[]): void {
+/** Messages newer than the listener (less the margin), from the global store and recently active chats. */
+function sweepStore(): void {
+  try {
+    const collections = waCollections();
+    if (!collections) return;
+    const since = (messaging.attachedAt - MESSAGING_SWEEP_MARGIN_MS) / 1000;
+    const isRecent = (msg: WaMsg | undefined) => typeof msg?.t === "number" && msg.t >= since;
+    const found = modelsOf(collections.Msg).filter(isRecent);
+    for (const chat of modelsOf(collections.Chat)) {
+      if (typeof chat?.t === "number" && chat.t < since) continue;
+      found.push(...modelsOf(chat?.msgs).slice(-MESSAGING_SWEEP_PER_CHAT).filter(isRecent));
+    }
+    // Still encrypted: left for a later sweep, once it has its real type.
+    emitMessages(found.filter((msg) => msg?.type !== "ciphertext"), "sweep");
+    if (messaging.adds) {
+      messagingLog(`store: ${messaging.adds} message event(s), ${messaging.newAdds} flagged new`);
+      messaging.adds = 0;
+      messaging.newAdds = 0;
+    }
+  } catch (error) {
+    messagingLog(`sweep failed: ${describe(error)}`);
+  }
+}
+
+/** Passes each message on once (by id), and says why one is not kept. */
+function emitMessages(msgs: WaMsg[], via: "event" | "sweep" | "backfill"): void {
   const messages: StationInboundMessage[] = [];
   for (const msg of msgs) {
     try {
+      const id = msg?.id?._serialized;
+      if (!id) {
+        messagingLog(`${via}: a ${msg?.type ?? "?"} message has no id; skipped`);
+        continue;
+      }
+      if (messaging.emitted.has(id)) continue;
+      messaging.emitted.add(id);
+      if (messaging.emitted.size > MESSAGING_EMITTED_MAX) {
+        const oldest = messaging.emitted.values().next().value;
+        if (oldest !== undefined) messaging.emitted.delete(oldest);
+      }
       const message = readStoreMessage(msg);
       if (message) messages.push(message);
-    } catch {
-      // one unreadable message never stops the rest
+      else messagingLog(`${via}: skipped a ${msg.type ?? "?"} message in a ${jidKind(widString(msg.id?.remote))} chat`);
+    } catch (error) {
+      messagingLog(`${via}: a message could not be read: ${describe(error)}`);
     }
   }
-  if (messages.length) postMessaging({ source: HOOK_MESSAGING_SOURCE, type: "messages", messages });
+  if (!messages.length) return;
+  const unknownNumber = messages.filter((message) => !message.chatPhone).length;
+  messagingLog(
+    `${via}: passing on ${messages.length} message(s) (${messages.filter((m) => m.direction === "inbound").length} received` +
+      `${unknownNumber ? `, ${unknownNumber} without a known number` : ""})`,
+  );
+  postMessaging({ source: HOOK_MESSAGING_SOURCE, type: "messages", messages });
+}
+
+/** The kind of chat, for logs only (never the number). */
+function jidKind(jid: string | null): string {
+  const server = jid?.split("@")[1];
+  return server ? `@${server}` : "unknown";
 }
 
 function readStoreMessage(msg: WaMsg): StationInboundMessage | null {
