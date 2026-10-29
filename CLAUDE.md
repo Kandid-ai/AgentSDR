@@ -491,7 +491,8 @@ and only in station mode — a rep's own WhatsApp Web is never read. They land
 through `ingestStationMessages` exactly like Unipile's (Messages tab, CRM,
 sequences stop). A claimed job with no report in 2 minutes fails as
 "delivery uncertain" and is never requeued. See `src/lib/whatsapp/stationMessaging.ts`
-and `services/call-worker/README.md`.
+and `services/call-worker/README.md`. So the Calling pages (`src/app/calling/layout.tsx`)
+are not gated on Unipile; only syncing Unipile numbers and `/whatsapp/campaigns` need it.
 
 ## WhatsApp messaging (Unipile)
 
