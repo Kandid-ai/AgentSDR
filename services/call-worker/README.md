@@ -104,6 +104,14 @@ On Dokploy: an Application on this repo, build type Dockerfile, path
 and `/root/.gologin`; no domain or port (it only calls out). The app needs `CALL_WORKER_SECRET`
 and, for the AI agent, `GEMINI_API_KEY`.
 
+Redeploy only when the worker's own inputs change: every redeploy hangs up the calls in progress.
+On Dokploy, auto-deploy with these Watch Paths (everything the image is built from; add a file
+here when the worker or extension starts importing another one from `src/lib/calls/`):
+`services/call-worker/**`, `extensions/whatsapp-recorder/**`, `src/lib/calls/contract.ts`,
+`src/lib/calls/stationContract.ts`, `src/lib/calls/digits.ts`, `src/lib/calls/whatsappContact.ts`.
+The app's own service watches `**` and `!services/call-worker/**`, so a worker-only change does
+not rebuild the app (an extension change rebuilds both: the app serves the extension's zip).
+
 Only one worker may run a given number: a laptop worker pointed at a dev server that shares the
 production database claims the same calls.
 Run with `-e AGENTSDR_URL=… -e CALL_WORKER_SECRET=… -v profiles:/data`. The entrypoint starts
