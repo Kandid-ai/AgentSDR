@@ -105,7 +105,7 @@ export function LiveCallStrip({
             </p>
             {cloud && (
               <span className="shrink-0 text-paragraph-xs text-text-soft-400">
-                AI agent{cloud.stationName ? ` · ${cloud.stationName}` : ""}
+                {cloud.remoteRep ? "Rep" : "AI agent"}{cloud.stationName ? ` · ${cloud.stationName}` : ""}
               </span>
             )}
           </div>

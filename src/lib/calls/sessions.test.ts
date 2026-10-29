@@ -90,6 +90,7 @@ describe("toCallSummary", () => {
       mode: "rep",
       livePhase: null,
       agentOutcome: null,
+      remoteRep: false,
     });
   });
 

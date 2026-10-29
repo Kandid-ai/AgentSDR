@@ -3,7 +3,7 @@ import type { WorkerJob, WorkerStation } from "../../../src/lib/calls/stationCon
 import { MAX_TIMELINE_ENTRIES, type CallTimelineEntry } from "../../../src/lib/calls/stationContract";
 import { getCallStatus, releaseCall, reportStationState, saveTimeline } from "./api";
 import { config } from "./config";
-import { stationWorker, type StationResult, type StationWorker } from "./extension";
+import { REP_CALL_MIN_VERSION, stationCallRequest, stationWorker, type StationResult, type StationWorker } from "./extension";
 import { firstLine, openStationBrowser, type StationBrowser } from "./launchers";
 import { log } from "./log";
 import {
@@ -214,31 +214,33 @@ export async function runCall(job: CallJob, open: ReadyWhatsApp | null = null, a
       return;
     }
     running.set(call.id, worker);
-    const request = {
-      callId: call.id,
-      phone: call.phone,
-      recorderToken: call.recorderToken,
-      apiBase: new URL(cfg.agentsdrUrl).origin,
-      lead: call.lead,
-      agent: { brief: call.brief, name: call.agentName, voice: call.agentVoice },
-      clickedAt: Date.now(),
-    };
+    const request = stationCallRequest(call, new URL(cfg.agentsdrUrl).origin, Date.now());
+    // A rep call: the rep talks from their AgentSDR tab, linked to this
+    // browser by WebRTC; the extension dials once that link is up.
+    const kind = call.remoteRep ? "rep call" : "agent call";
     let started: StationResult;
     if (answer) {
       step(`answering the incoming call (extension ${worker.version})`);
-      started = worker.supportsIncoming
-        ? await worker.answerCall({ ...request, waCallId: answer.waCallId })
-        : { ok: false, error: `The recorder extension ${worker.version} cannot answer calls (needs 0.22.0+)` };
+      started = call.remoteRep
+        ? { ok: false, error: "A rep call is placed, never answered" }
+        : worker.supportsIncoming
+          ? await worker.answerCall({ ...request, waCallId: answer.waCallId })
+          : { ok: false, error: `The recorder extension ${worker.version} cannot answer calls (needs 0.22.0+)` };
+    } else if (call.remoteRep && !worker.supportsRepCalls) {
+      started = {
+        ok: false,
+        error: `The recorder extension on ${station.name} is ${worker.version}; talking through a calling number needs ${REP_CALL_MIN_VERSION} or newer — update it`,
+      };
     } else {
-      step(`starting call (extension ${worker.version})`);
+      step(`starting ${kind} (extension ${worker.version})`);
       started = await worker.startCall(request);
     }
     if (!started.ok) {
-      step(`${answer ? "answer" : "start"} refused: ${started.error}`);
+      step(`${answer ? "answer" : `${kind} start`} refused: ${started.error}`);
       await release(started.error);
       return;
     }
-    step("call running");
+    step(`${kind} running`);
     // The extension's own log of the call (dialing, the AI's steps, the
     // transcript), fetched — CloakBrowser hides console messages.
     let drained = 0;

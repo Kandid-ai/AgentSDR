@@ -1076,6 +1076,7 @@ CREATE TABLE public.call_sessions (
     agent_voice text,
     agent_outcome jsonb,
     direction text DEFAULT 'outbound'::text NOT NULL,
+    remote_rep jsonb,
     CONSTRAINT call_sessions_direction_chk CHECK ((direction = ANY (ARRAY['outbound'::text, 'inbound'::text]))),
     CONSTRAINT call_sessions_duration_chk CHECK (((duration_ms IS NULL) OR (duration_ms >= 0))),
     CONSTRAINT call_sessions_mode_chk CHECK ((mode = ANY (ARRAY['rep'::text, 'agent'::text, 'agent_cloud'::text]))),

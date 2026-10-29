@@ -18,8 +18,8 @@ function terminalPhase(call: CallDetail): CloudCallPhase | null {
 
 export type LiveCallState = {
   phase: CloudCallPhase | null;
-  /** Set for a call placed by the AI agent from a cloud calling station. */
-  cloud: { stationName: string | null } | null;
+  /** Set for a call placed from a cloud calling station — by the AI agent, or a rep talking from AgentSDR (`remoteRep`). */
+  cloud: { stationName: string | null; remoteRep: boolean } | null;
 };
 
 /**
@@ -53,7 +53,7 @@ export function useLiveCallState(callId: string | null): LiveCallState {
       }
       if (cancelled) return;
       if (call?.mode === "agent_cloud") {
-        setCloud({ stationName: call.stationName ?? null });
+        setCloud({ stationName: call.stationName ?? null, remoteRep: !!call.remoteRep });
         const next = terminalPhase(call);
         if (next) setPhase(next);
         // Over once the call has ended and its transcript has settled (see the server's settledLivePhase).

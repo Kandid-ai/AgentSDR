@@ -15,6 +15,7 @@ import type {
   RecorderBridgeRequest,
   RecorderCallPhase,
   RecorderLead,
+  RecorderRemoteRep,
 } from "../../../src/lib/calls/contract";
 import type {
   StationIncomingCall,
@@ -42,6 +43,8 @@ export type ActiveCall = {
   appTabId?: number;
   /** Set: the AI voice agent talks in this call instead of the rep. */
   agent?: RecorderAgent | null;
+  /** Set (station mode only): the rep talks from their AgentSDR tab, linked by WebRTC — see wa-hook. */
+  remoteRep?: RecorderRemoteRep | null;
   /**
    * Started by AgentSDR's call worker in a cloud browser (station mode), not
    * by a rep: there is no AgentSDR tab to return to or report phases to, so
@@ -59,8 +62,15 @@ export type ActiveCall = {
 export type RecentCall = Pick<ActiveCall, "callId" | "recorderToken" | "apiBase" | "appTabId" | "station"> & { endedAt: number };
 
 /** What wa-agent is told about the call to place in its tab — never the token. */
-/** `station`: a cloud calling station's call — no rep at this machine. */
-export type WaCall = { callId: string; phone: string; lead: RecorderLead | null; agent: boolean; station: boolean };
+/** `station`: a cloud calling station's call — no rep at this machine. `remoteRep`: the rep talks from AgentSDR instead. */
+export type WaCall = {
+  callId: string;
+  phone: string;
+  lead: RecorderLead | null;
+  agent: boolean;
+  station: boolean;
+  remoteRep: RecorderRemoteRep | null;
+};
 
 /** The service worker's answer to wa:agent-token. */
 export type AgentTokenResult = ({ ok: true } & AgentTokenResponse) | { ok: false; error: string };
@@ -148,6 +158,10 @@ export type BackgroundMessage =
   | { target: "background"; type: "wa:agent-token"; callId: string }
   /** The AI agent called record_outcome; answered with a BridgeResult. */
   | { target: "background"; type: "wa:agent-outcome"; callId: string; outcome: AgentOutcomeReport }
+  /** A rep call: wa-hook's WebRTC answer, for POST .../rtc; answered with a BridgeResult. */
+  | { target: "background"; type: "wa:rtc-answer"; callId: string; answer: string }
+  /** The call could not be placed (a rep call whose link never came up): finished as failed, undialed. */
+  | { target: "background"; type: "wa:start-failed"; callId: string; error: string }
   // Station messaging, from wa-agent:
   /** On load: should this tab read its messages? Answered with { enabled: boolean }. */
   | { target: "background"; type: "wa:messaging-hello" }

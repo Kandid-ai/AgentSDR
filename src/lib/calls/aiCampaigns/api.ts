@@ -6,7 +6,7 @@
  */
 
 import type { WeeklyHours } from "@/lib/channels/rules";
-import type { AgentOutcomeKind, CallCampaignStatus, CallStatus } from "../contract";
+import type { AgentOutcomeKind, CallCampaignStatus, CallStatus, RecorderRemoteRep } from "../contract";
 import type { StationStatus } from "../stationContract";
 import {
   AI_CAMPAIGN_MAX_CALLBACKS,
@@ -122,7 +122,12 @@ export type AiLeadAction = "stop" | "requeue";
 export type UpdateAiLeadRequest = { action: AiLeadAction } | { instructions: string | null };
 export const AI_LEAD_MAX_INSTRUCTIONS = 2_000;
 
-/** POST …/leads/:contactId/call — a trial call to this lead now, outside the sequence. */
+/**
+ * POST …/leads/:contactId/call — a call to this lead now, outside the
+ * sequence: the AI agent's (no body), or with `remoteRep` the rep's own,
+ * talking from their tab through the campaign's number.
+ */
+export type CallAiLeadRequest = { remoteRep?: RecorderRemoteRep | null };
 export type CallAiLeadResponse = { callId: string; numberName: string | null };
 
 export type AddAiCampaignPeopleResponse = { requested: number; added: number; skippedDuplicate: number; skippedMissingPhone: number };
@@ -149,6 +154,8 @@ export type AiLeadActivity = {
     status: CallStatus;
     /** rep: a rep's own call; agent: the AI agent in a rep's browser; agent_cloud: the AI agent on a calling number. */
     mode: "rep" | "agent" | "agent_cloud";
+    /** A cloud call a rep talked on from AgentSDR, through the calling number (no agent). */
+    remoteRep: boolean;
     /** inbound: they called the number back and the AI agent answered. */
     direction: "outbound" | "inbound";
     /** The calling number it went out from (cloud calls). */

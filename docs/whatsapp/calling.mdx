@@ -87,6 +87,18 @@ You may see these notices:
 - **Not answered — nothing was recorded.**
 - The chat has no call button, as with a business number run through Meta's API. The strip reports the number as not on WhatsApp.
 
+## Talk through a calling number
+
+You can also call a lead from a cloud calling number and do the talking yourself, with no extension and no WhatsApp in your own browser. Open a lead in an AI calling campaign and click **Call now**. **AI call** has the AI agent make the same call instead.
+
+AgentSDR asks for your microphone, then queues the call on the campaign's number. Your browser connects to that number's WhatsApp Web directly: your voice goes to the lead, and theirs plays in your browser. The number dials only once your audio is connected. A call bar at the bottom of the page shows the stages, **Waiting for the number to be free…**, **Connecting your audio…**, **Calling…**, **Ringing…** and **On call**, with **Mute** and **Hang up**. It stays while you move around AgentSDR.
+
+- Keep the tab open. Closing or reloading it ends the call a few seconds later.
+- If you block the microphone, nothing is queued. Allow it for the site and try again.
+- Your browser connects straight to the number, without a relay. A network that blocks this, such as some office VPNs, fails before the number dials.
+
+The call is recorded and transcribed like any other, with you as the rep.
+
 ## What is recorded, and when
 
 The recording is stereo: your microphone on the left, the lead on the right. It starts when the call opens your microphone, so the lead's first words are not lost. The pickup is the moment the call timer appears. It stops when the timer disappears, **End call** goes away or the microphone is released. A call that nobody picks up is discarded. If no timer shows within a minute, the extension records anyway and the strip says **Call timer not detected — recording started as a fallback**.

@@ -61,6 +61,7 @@ import {
   type ListAiLeadsResponse,
   type UpdateAiCampaignRequest,
   type UpdateAiLeadRequest,
+  type CallAiLeadRequest,
   type CallAiLeadResponse,
   AI_CAMPAIGN_MAX_KNOWLEDGE,
   AI_LEAD_MAX_INSTRUCTIONS,
@@ -1065,8 +1066,10 @@ export async function getAiCampaignStats(campaignId: string): Promise<AiCampaign
  * goal and agent. Outside the sequence: no step is used up and the lead's
  * position is unchanged (the engine waits while it is open). Works on a draft
  * campaign too, so a campaign can be tried on yourself before launch.
+ * With `remoteRep` it is the rep's own call from that number, talking from
+ * their tab (contract.ts, RecorderRemoteRep): no agent, brief or persona.
  */
-export async function callAiLeadNow(campaignId: string, contactId: string): Promise<CallAiLeadResponse> {
+export async function callAiLeadNow(campaignId: string, contactId: string, request: CallAiLeadRequest = {}): Promise<CallAiLeadResponse> {
   const campaign = await loadCampaignRow(campaignId);
   const { contact } = await loadContact(campaignId, contactId);
   const [open] = await db
@@ -1083,6 +1086,16 @@ export async function callAiLeadNow(campaignId: string, contactId: string): Prom
     .orderBy(asc(callingStations.name));
   const station = stations.find((candidate) => candidate.id === contact.aiStationId) ?? stations[0];
   if (!station) throw new CallApiError(409, "Choose an active calling number for this campaign first");
+  if (request.remoteRep) {
+    const started = await startCall({
+      personId: contact.personId,
+      campaignContactId: contact.id,
+      mode: "agent_cloud",
+      stationId: station.id,
+      remoteRep: request.remoteRep,
+    });
+    return { callId: started.call.id, numberName: station.name };
+  }
   const firstCall = campaign.aiSteps.find((step) => step.kind === "call");
   const started = await startCall({
     personId: contact.personId,

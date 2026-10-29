@@ -19,7 +19,7 @@ export const AGENT_SOURCE = "agentsdr-wa-agent";
 export type AgentToHook =
   /** Record the next call in this tab; nothing is recorded unless armed. */
   /** `agent`: the AI voice agent talks in this call — WhatsApp gets its voice as the microphone. */
-  | { source: typeof AGENT_SOURCE; type: "arm"; callId: string; agent?: boolean; monitor?: boolean }
+  | { source: typeof AGENT_SOURCE; type: "arm"; callId: string; agent?: boolean; monitor?: boolean; remoteRep?: { offer: string } }
   | { source: typeof AGENT_SOURCE; type: "disarm" }
   /** The rep clicked the "turn on call audio" prompt — resume suspended audio. */
   | { source: typeof AGENT_SOURCE; type: "resume-audio" }
@@ -68,6 +68,10 @@ export type HookToAgent =
   | { source: typeof HOOK_SOURCE; type: "call-ui"; callId: string }
   /** The lead's side of an agent call, from the pick-up on: mono 16-bit PCM at 16 kHz. */
   | { source: typeof HOOK_SOURCE; type: "agent-audio"; callId: string; pcm: ArrayBuffer }
+  /** A rep call (armed with remoteRep): the station's WebRTC answer to the rep's offer, for AgentSDR. */
+  | { source: typeof HOOK_SOURCE; type: "rtc-answer"; callId: string; answer: string }
+  /** A rep call: the link to the rep's tab is up (dial now) or could not be made (do not dial). */
+  | { source: typeof HOOK_SOURCE; type: "rtc-state"; callId: string; state: "connected" | "failed"; detail: string }
   /** Whether Accept was pressed on the incoming call; `labels`: the call's buttons seen (digits masked), for diagnosis. */
   | { source: typeof HOOK_SOURCE; type: "accept-result"; callId: string; clicked: boolean; labels: string };
 

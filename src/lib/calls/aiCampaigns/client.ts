@@ -10,6 +10,7 @@ import type {
   AiCampaignStats,
   AiLeadDetail,
   AiLeadsQuery,
+  CallAiLeadRequest,
   CallAiLeadResponse,
   CreateAiCampaignRequest,
   ListAiCampaignsResponse,
@@ -55,9 +56,9 @@ export const addPeopleToAiCampaign = (id: string, personIds: string[]) => aiApi<
 export const getAiLead = (id: string, contactId: string) => aiApi<AiLeadDetail>(`${BASE}/${id}/leads/${contactId}`);
 export const updateAiLead = (id: string, contactId: string, request: UpdateAiLeadRequest) =>
   aiApi<{ lead: AiCampaignLead }>(`${BASE}/${id}/leads/${contactId}`, json("PATCH", request));
-/** A trial call to this lead now (a real WhatsApp call, outside the sequence). */
-export const callAiLead = (id: string, contactId: string) =>
-  aiApi<CallAiLeadResponse>(`${BASE}/${id}/leads/${contactId}/call`, { method: "POST" });
+/** A call to this lead now (a real WhatsApp call, outside the sequence): the AI agent's, or with `remoteRep` the rep's. */
+export const callAiLead = (id: string, contactId: string, request: CallAiLeadRequest = {}) =>
+  aiApi<CallAiLeadResponse>(`${BASE}/${id}/leads/${contactId}/call`, json("POST", request));
 
 /** Where the shared People picker and the spreadsheet mapping dialog post to. */
 export const aiLeadsEndpoint = (id: string) => `${BASE}/${id}/leads`;

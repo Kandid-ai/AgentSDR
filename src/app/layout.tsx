@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Instrument_Serif, Inter as FontSans } from "next/font/google";
 import AppShell from "@/components/AppShell";
 import DialogProvider from "@/components/DialogProvider";
+import { RemoteRepCallBar } from "@/components/calls/RemoteRepCallBar";
 import { DemoProvider } from "@/components/demo/DemoProvider";
 import { brandDisplay } from "@/components/brand/font";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/components/theme/ThemeProvider";
@@ -68,6 +69,8 @@ export default async function RootLayout({
             <DemoProvider enabled={demo}>
               <AppShell>{children}</AppShell>
               {modal}
+              {/* A call the rep talks on through a calling number: survives navigation. */}
+              <RemoteRepCallBar />
             </DemoProvider>
           </DialogProvider>
         </ThemeProvider>

@@ -323,10 +323,15 @@ export async function cancelLink(id: string): Promise<CallingStation> {
  * The station a cloud call goes out from: the one asked for, or the active
  * station that has gone longest without a call. Checked here, in the rep's
  * request, so a misconfigured number fails at the click rather than later.
+ * A call the rep talks on (`remoteRep`) has no agent, so no brief: it is null.
  */
-export async function stationForCloudCall(stationId: string | null | undefined, brief: string | null | undefined): Promise<{ station: StationRow; brief: string }> {
-  const trimmed = brief?.trim() ?? "";
-  if (!trimmed) throw new CallApiError(400, "The AI agent needs a brief");
+export async function stationForCloudCall(
+  stationId: string | null | undefined,
+  brief: string | null | undefined,
+  { remoteRep = false }: { remoteRep?: boolean } = {},
+): Promise<{ station: StationRow; brief: string | null }> {
+  const trimmed = remoteRep ? "" : (brief?.trim() ?? "");
+  if (!remoteRep && !trimmed) throw new CallApiError(400, "The AI agent needs a brief");
   if (trimmed.length > MAX_AGENT_BRIEF_CHARS) throw new CallApiError(400, `The brief is over ${MAX_AGENT_BRIEF_CHARS} characters`);
 
   let station: StationRow | undefined;
@@ -353,7 +358,7 @@ export async function stationForCloudCall(stationId: string | null | undefined, 
   if (usesGoLogin(station.launcher) && !(await getPlatformCredentials("gologin"))) {
     throw new CallApiError(409, "Connect GoLogin in Settings → WhatsApp → Integrations to call from this number");
   }
-  return { station, brief: trimmed };
+  return { station, brief: remoteRep ? null : trimmed };
 }
 
 export const QUEUED_PHASE: CloudCallPhase = { kind: "queued" };
@@ -563,7 +568,17 @@ async function claimCall({ workerId, launchers, stations }: WorkerClaimRequest):
   return {
     kind: "call",
     station: await workerStation(station),
-    call: { id: call.id, phone: call.phone, recorderToken: token, lead, brief: call.agentBrief ?? "", agentName: call.agentName ?? null, agentVoice: call.agentVoice ?? null },
+    call: {
+      id: call.id,
+      phone: call.phone,
+      recorderToken: token,
+      lead,
+      brief: call.agentBrief ?? "",
+      agentName: call.agentName ?? null,
+      agentVoice: call.agentVoice ?? null,
+      // Only the offer: the answer is the station's to make.
+      remoteRep: call.remoteRep ? { offer: call.remoteRep.offer } : null,
+    },
   };
 }
 

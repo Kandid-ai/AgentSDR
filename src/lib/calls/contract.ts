@@ -244,6 +244,11 @@ export type StartCallRequest = {
   agentVoice?: string | null;
   /** The station to call from; null or absent = any free active station. */
   stationId?: string | null;
+  /**
+   * With "agent_cloud": the rep talks instead of the AI agent, from this tab,
+   * through the station (see RecorderRemoteRep). `agentBrief` is then not needed.
+   */
+  remoteRep?: RecorderRemoteRep | null;
 };
 
 export type StartCallResponse = {
@@ -293,6 +298,10 @@ export type CallSummary = {
   stationName?: string | null;
   /** What the AI agent reported with record_outcome, once it has. */
   agentOutcome?: AgentOutcome | null;
+  /** A cloud call the rep talks on from AgentSDR (no agent). */
+  remoteRep?: boolean;
+  /** For such a call: the station's WebRTC answer to the rep's offer, once it has made one. */
+  rtcAnswer?: string | null;
 };
 
 /** GET /api/calls/:id — a call with its transcript. */
@@ -581,7 +590,53 @@ export type RecorderCallRequest = {
   clickedAt?: number;
   /** Set: the AI voice agent talks to the lead instead of the rep (trial). */
   agent?: RecorderAgent | null;
+  /** Set (station mode only): the rep talks from their AgentSDR tab, through this station. */
+  remoteRep?: RecorderRemoteRep | null;
 };
+
+// --- a rep talking through a calling station ---------------------------------
+
+/**
+ * A rep's call placed from a cloud calling station's WhatsApp, with the rep
+ * at their own AgentSDR tab. The two browsers are joined by WebRTC: the rep's
+ * tab makes `offer` (ICE gathered, no trickle) with one audio track (their
+ * microphone) and a data channel (REP_LINK_CHANNEL); the station's wa-hook
+ * answers it — the answer reaches the rep's tab through POST
+ * /api/call-recorder/calls/:id/rtc and the call's `rtcAnswer` — sends the
+ * lead's side back on that track, and gives WhatsApp the rep's voice as its
+ * microphone, as it does the agent's. WhatsApp dials only once the link is up.
+ */
+export type RecorderRemoteRep = {
+  /** SDP of the rep's browser's offer. */
+  offer: string;
+};
+
+/** POST /api/call-recorder/calls/:id/rtc — the station's answer, once. */
+export type RecorderRtcAnswerRequest = { answer: string };
+
+/** Longest SDP accepted for an offer or answer. */
+export const MAX_RTC_SDP_CHARS = 20_000;
+
+/** STUN only for now: a network that blocks direct UDP fails the link before WhatsApp dials. */
+export const REP_LINK_ICE_SERVERS: { urls: string }[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun.cloudflare.com:3478" },
+];
+
+/** How long either side waits for ICE gathering before sending its description with what it has. */
+export const REP_LINK_GATHER_MS = 3_000;
+
+/** From arming, how long the station waits for the rep's tab to connect before giving up without dialing. */
+export const REP_LINK_CONNECT_TIMEOUT_MS = 30_000;
+
+/** The link went down mid-call: hang up after this long if it has not come back. */
+export const REP_LINK_LOST_HANGUP_MS = 8_000;
+
+/** The data channel's label. Messages are RepLinkControl, as JSON. */
+export const REP_LINK_CHANNEL = "agentsdr-control";
+
+/** From the rep's tab: hang up. */
+export type RepLinkControl = { type: "hangup" };
 
 // --- AI voice agent (trial) --------------------------------------------------
 

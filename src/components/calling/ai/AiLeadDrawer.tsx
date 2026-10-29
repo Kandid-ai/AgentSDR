@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
   RiArrowDownSLine,
   RiChat1Line,
@@ -8,6 +8,7 @@ import {
   RiLoader4Line,
   RiPhoneLine,
   RiPlayCircleLine,
+  RiRobot2Line,
   RiStopCircleLine,
   RiVoiceprintLine,
 } from "@remixicon/react";
@@ -19,6 +20,7 @@ import { useDialogs } from "@/components/DialogProvider";
 import { AgentOutcomeLine } from "@/components/calls/AgentOutcomeLine";
 import { AgentVoiceRehearsal } from "@/components/calls/AgentVoiceRehearsal";
 import { RecordingPlayer } from "@/components/calls/RecordingPlayer";
+import { isRemoteRepCallActive, startRemoteRepCall, subscribeRemoteRepCall } from "@/components/calls/remoteRepCall";
 import { formatOffset } from "@/components/calls/formatElapsed";
 import { Skeleton } from "@/components/page/Skeletons";
 import { AI_LEAD_MAX_INSTRUCTIONS, type AiActivityCallResult, type AiLeadActivity, type AiLeadDetail } from "@/lib/calls/aiCampaigns/api";
@@ -41,6 +43,12 @@ const CALL_RESULT: Record<AiActivityCallResult, { label: string; color: "green" 
 };
 
 const CALL_MODE = { rep: "Call by a rep", agent: "AI agent call (from a laptop)", agent_cloud: "AI agent call" } as const;
+
+function callTitle(call: NonNullable<AiLeadActivity["call"]>): string {
+  if (call.direction === "inbound") return "They called · AI agent answered";
+  if (call.remoteRep) return call.numberName ? `Call by a rep (from ${call.numberName})` : "Call by a rep (from the calling number)";
+  return CALL_MODE[call.mode];
+}
 
 const MESSAGE_ORIGIN = {
   lead: "They wrote on WhatsApp",
@@ -76,7 +84,9 @@ export function AiLeadDrawer({
   const [detail, setDetail] = useState<AiLeadDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"stop" | "requeue" | "call" | "instructions" | null>(null);
+  const [busy, setBusy] = useState<"stop" | "requeue" | "call" | "ai-call" | "instructions" | null>(null);
+  // The rep's own call through a number (remoteRepCall.ts) — any lead's: there is one microphone.
+  const repCallOn = useSyncExternalStore(subscribeRemoteRepCall, isRemoteRepCallActive, () => false);
   const [rehearsing, setRehearsing] = useState(false);
   const [instructions, setInstructions] = useState<string | null>(null);
 
@@ -119,16 +129,48 @@ export function AiLeadDrawer({
     }
   }
 
+  /** The rep's own call: they talk from this tab, through the campaign's number. */
   async function callNow() {
     const lead = detail?.lead;
     if (!lead) return;
+    const who = lead.name || lead.phone;
     const confirmed = await dialogs.confirm({
-      title: `Call ${lead.name || lead.phone} now?`,
-      description: `The AI agent places a real WhatsApp call to ${lead.phone} from this campaign's number, with the campaign's instructions${lead.instructions ? " and this lead's own" : ""}. It does not use up a step of the sequence.`,
+      title: `Call ${who} now?`,
+      description: `You talk to ${who} from this campaign's number (${lead.numberName ?? "its first active number"}) using your microphone. Keep this tab open. It does not use up a step of the sequence.`,
       confirmLabel: "Call now",
     });
     if (!confirmed) return;
     setBusy("call");
+    setError(null);
+    setNotice(null);
+    try {
+      // How it goes (or why it did not) shows in the call bar.
+      const callId = await startRemoteRepCall({
+        leadName: who,
+        numberName: lead.numberName,
+        place: (offer) => callAiLead(campaignId, contactId, { remoteRep: { offer } }),
+      });
+      if (callId) {
+        await load();
+        onChanged();
+      }
+    } catch (cause) {
+      setError(errorText(cause, "Could not place the call"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function aiCall() {
+    const lead = detail?.lead;
+    if (!lead) return;
+    const confirmed = await dialogs.confirm({
+      title: `AI call to ${lead.name || lead.phone}?`,
+      description: `The AI agent places a real WhatsApp call to ${lead.phone} from this campaign's number, with the campaign's instructions${lead.instructions ? " and this lead's own" : ""}. It does not use up a step of the sequence.`,
+      confirmLabel: "AI call",
+    });
+    if (!confirmed) return;
+    setBusy("ai-call");
     setError(null);
     setNotice(null);
     try {
@@ -228,16 +270,20 @@ export function AiLeadDrawer({
               <section className="space-y-2">
                 <h3 className="text-label-sm text-text-strong-950">Try a call</h3>
                 <p className="text-paragraph-xs text-text-sub-600">
-                  Rehearse talks to the agent in your browser as if you were {firstName}: their name, company, history and the instructions below. Call now places a real WhatsApp call to them from the campaign&apos;s number.
+                  Rehearse talks to the agent in your browser as if you were {firstName}: their name, company, history and the instructions below. Call now places a real WhatsApp call to them from the campaign&apos;s number with you on the line, through your microphone; AI call has the agent make it instead. Both are recorded and transcribed.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button.Root variant="neutral" mode="stroke" size="xsmall" aria-expanded={rehearsing} onClick={() => setRehearsing((current) => !current)}>
                     <Button.Icon as={RiVoiceprintLine} />
                     {rehearsing ? "Close rehearsal" : "Rehearse with this lead"}
                   </Button.Root>
-                  <Button.Root variant="primary" mode="filled" size="xsmall" disabled={busy !== null || live} onClick={() => void callNow()}>
+                  <Button.Root variant="primary" mode="filled" size="xsmall" disabled={busy !== null || live || repCallOn} onClick={() => void callNow()}>
                     <Button.Icon as={busy === "call" ? RiLoader4Line : RiPhoneLine} className={cn(busy === "call" && "animate-spin")} />
-                    {live ? "A call is on" : `Call ${firstName} now`}
+                    {live || repCallOn ? "A call is on" : "Call now"}
+                  </Button.Root>
+                  <Button.Root variant="neutral" mode="stroke" size="xsmall" disabled={busy !== null || live} onClick={() => void aiCall()}>
+                    <Button.Icon as={busy === "ai-call" ? RiLoader4Line : RiRobot2Line} className={cn(busy === "ai-call" && "animate-spin")} />
+                    AI call
                   </Button.Root>
                 </div>
                 {rehearsing && (
@@ -310,7 +356,7 @@ function ActivityEntry({ entry }: { entry: AiLeadActivity }) {
   const call = entry.call;
   const message = entry.message;
   const title = call
-    ? call.direction === "inbound" ? "They called · AI agent answered" : CALL_MODE[call.mode]
+    ? callTitle(call)
     : message ? MESSAGE_ORIGIN[message.origin] : "Step did not start";
   const length = call?.result === "connected" ? formatCallLength(call.durationMs) : null;
   const where = call?.numberName ?? message?.numberName ?? null;
@@ -389,7 +435,7 @@ function Transcript({ callId }: { callId: string }) {
             <div key={index} className="flex gap-2 text-paragraph-xs">
               <span className="w-12 shrink-0 text-text-soft-400">{formatOffset(utterance.startSeconds)}</span>
               <span className={utterance.speaker === "rep" ? "w-10 shrink-0 font-medium text-information-base" : "w-10 shrink-0 font-medium text-text-sub-600"}>
-                {utterance.speaker === "rep" ? "Agent" : "Lead"}
+                {utterance.speaker === "rep" ? (call.mode === "rep" || call.remoteRep ? "Rep" : "Agent") : "Lead"}
               </span>
               <span className="text-text-strong-950">{utterance.text}</span>
             </div>

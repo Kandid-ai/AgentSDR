@@ -494,6 +494,20 @@ sequences stop). A claimed job with no report in 2 minutes fails as
 and `services/call-worker/README.md`. So the Calling pages (`src/app/calling/layout.tsx`)
 are not gated on Unipile; only syncing Unipile numbers and `/whatsapp/campaigns` need it.
 
+### A rep talking through a station ("Call now")
+
+The AI lead drawer's "Call now" is a cloud call (`mode = 'agent_cloud'`)
+with `call_sessions.remote_rep` set (`scripts/add-call-session-remote-rep.ts`):
+the rep talks from their own AgentSDR tab, no agent. The tab
+(`src/components/calls/remoteRepCall.ts`, its bar mounted in the root layout)
+sends a WebRTC offer with the call; the station's wa-hook answers it at
+arming (`POST /api/call-recorder/calls/:id/rtc`, the tab polls `rtcAnswer`),
+plays the rep's voice into WhatsApp's microphone the way it does the agent's,
+and sends the lead's side back. WhatsApp dials only once the link is up; a
+lost link or the rep's hang-up (data channel) ends the call. STUN only, no
+TURN: a network that blocks UDP fails before dialing. Contract: contract.ts,
+"a rep talking through a calling station". Extension 0.23.0+.
+
 ### Incoming calls: the AI answers a lead who calls back
 
 A station's extension (0.22.0+, station mode only — a rep's WhatsApp Web

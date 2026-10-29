@@ -35,6 +35,8 @@ import type { CallTimelineEntry, CloudCallPhase, ProxyProtocol, StationLauncher,
 export type CallMode = "rep" | "agent" | "agent_cloud";
 /** Who placed the call: AgentSDR, or the lead calling a station back (the AI agent answered). */
 export type CallDirection = "outbound" | "inbound";
+/** A rep's link to a cloud call: their tab's offer and the station's answer (null until it answers). */
+export type CallRemoteRep = { offer: string; answer: string | null };
 
 /**
  * An outbound IP (static ISP / residential proxy) a calling number's browser
@@ -432,6 +434,13 @@ export const callSessions = pgTable(
     timeline: jsonb("timeline").$type<CallTimelineEntry[]>(),
     /** Who placed it: AgentSDR ('outbound') or the lead, calling a station back ('inbound'). scripts/add-call-session-direction.ts. */
     direction: text("direction").notNull().default("outbound").$type<CallDirection>(),
+    /**
+     * Set: a cloud call the rep talks on from their AgentSDR tab instead of the
+     * agent (contract.ts, RecorderRemoteRep) — the tab's WebRTC offer and, once
+     * the station has made it, its answer. SDPs carry IP addresses: only the
+     * call's own organization reads them. scripts/add-call-session-remote-rep.ts.
+     */
+    remoteRep: jsonb("remote_rep").$type<CallRemoteRep>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -17,9 +17,13 @@
  * The call's progress — dialing, ringing, recording, upload, transcript — is
  * shown in AgentSDR, not here: each phase goes to the service worker, which
  * relays it to the AgentSDR tab that placed the call (its live call strip).
+ *
+ * A rep call on a calling station (`remoteRep`) is dialed only once wa-hook's
+ * WebRTC link to the rep's AgentSDR tab is up; its answer goes to AgentSDR
+ * through the service worker. No link, no dial: the call fails undialed.
  */
 
-import type { RecorderCallPhase, RecorderCallStatus } from "../../../src/lib/calls/contract";
+import { REP_LINK_CONNECT_TIMEOUT_MS, type RecorderCallPhase, type RecorderCallStatus } from "../../../src/lib/calls/contract";
 import { digitsOnly } from "../../../src/lib/calls/digits";
 import { whatsappContactName, type WhatsappContactName } from "../../../src/lib/calls/whatsappContact";
 import { LiveAgent } from "./live-agent";
@@ -81,6 +85,10 @@ let call: WaCall | null = null;
 /** The AI voice agent's session on the current call, when it is an agent call. */
 let agent: LiveAgent | null = null;
 let agentCallId: string | null = null;
+/** A rep call waiting for its link to the rep's AgentSDR tab, settled by wa-hook's rtc-state (or a failure here). */
+let repLinkWait: { callId: string; settle: (result: BridgeResult) => void } | null = null;
+/** A call that ended before Voice call was pressed (wa-hook reported it not answered): never dial it. */
+let endedBeforeDial: string | null = null;
 /** Calls whose recording is on its way to the service worker. */
 const shipping = new Set<string>();
 /**
@@ -187,15 +195,32 @@ chrome.runtime.onMessage.addListener((message: AgentCommand, _sender, sendRespon
 
 async function placeCall(next: WaCall): Promise<void> {
   call = next;
-  trace(next.callId, `WhatsApp tab: placing the call (agent ${next.agent}, station ${next.station}, speakers ${!next.station})`);
-  trace(next.callId, "WhatsApp tab: looking for the Voice call button");
-  toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent, monitor: !next.station });
+  const rep = next.station ? next.remoteRep : null;
+  trace(
+    next.callId,
+    `WhatsApp tab: placing the call (${rep ? "rep call" : `agent ${next.agent}`}, station ${next.station}, speakers ${!next.station})`,
+  );
+  // Waited on from the arming, so the link's timeout counts from there.
+  const linked = rep ? waitForRepLink(next.callId) : null;
+  toHook({ source: AGENT_SOURCE, type: "arm", callId: next.callId, agent: next.agent, monitor: !next.station, ...(rep ? { remoteRep: rep } : {}) });
   // The AI's session opens now, not when WhatsApp's call session starts: that
   // came 4 s after Voice call on the call worker, and a lead who picked up at
   // once found the AI not ready, so its greeting could not be prepared while
   // WhatsApp connected (27 Oct 2026).
   if (next.agent) startAgent(next.callId);
   phase({ kind: "opening" });
+  if (linked) {
+    // A rep call is dialed only once the rep can hear and be heard.
+    trace(next.callId, "WhatsApp tab: waiting for the rep's browser to connect");
+    const link = await linked;
+    if (!link.ok) {
+      // Already reported, when it ended as not answered.
+      if (endedBeforeDial !== next.callId) failUndialed(next, link.error);
+      return;
+    }
+    trace(next.callId, "WhatsApp tab: the rep's browser is connected");
+  }
+  trace(next.callId, "WhatsApp tab: looking for the Voice call button");
 
   const savedName = whatsappContactName(next.lead)?.display ?? null;
   const outcome = await dial(next, savedName, () => saveContactIfNew(next));
@@ -209,6 +234,8 @@ async function placeCall(next: WaCall): Promise<void> {
   } else if (outcome === "no-call-button") {
     stopAgent();
     reportNotOnWhatsApp(next, true);
+  } else if (outcome === "ended") {
+    trace(next.callId, "WhatsApp tab: the call ended before Voice call was pressed — not dialing");
   } else {
     // Counted as dialed so a later reload of this tab never dials on its own;
     // still armed, so if the rep places the call by hand it is recorded anyway.
@@ -232,6 +259,39 @@ function answerCall(next: WaCall): BridgeResult {
   phase({ kind: "ringing" });
   toHook({ source: AGENT_SOURCE, type: "accept-call", callId: next.callId });
   return { ok: true };
+}
+
+/**
+ * Resolves once the rep call's link to the rep's tab is up, or with why it
+ * could not be made: wa-hook could not make it, AgentSDR refused its answer,
+ * or REP_LINK_CONNECT_TIMEOUT_MS passed.
+ */
+function waitForRepLink(callId: string): Promise<BridgeResult> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(
+      () => finish({ ok: false, error: `Your browser did not connect to the calling number within ${REP_LINK_CONNECT_TIMEOUT_MS / 1000} s` }),
+      REP_LINK_CONNECT_TIMEOUT_MS,
+    );
+    function finish(result: BridgeResult) {
+      clearTimeout(timer);
+      if (repLinkWait?.callId === callId) repLinkWait = null;
+      resolve(result);
+    }
+    repLinkWait?.settle({ ok: false, error: "Another call took over this WhatsApp tab" });
+    repLinkWait = { callId, settle: finish };
+  });
+}
+
+function settleRepLink(callId: string, result: BridgeResult): void {
+  if (repLinkWait?.callId === callId) repLinkWait.settle(result);
+}
+
+/** A call that could not be placed and was never dialed: disarmed, and finished as failed. */
+function failUndialed(target: WaCall, error: string): void {
+  trace(target.callId, `WhatsApp tab: not dialing — ${error}`);
+  toHook({ source: AGENT_SOURCE, type: "disarm" });
+  phase({ kind: "error", message: error, savedLocally: false });
+  void send({ target: "background", type: "wa:start-failed", callId: target.callId, error });
 }
 
 /** `noCallButton`: the chat opened, but WhatsApp offers no way to call it. */
@@ -282,13 +342,14 @@ async function dial(
   target: WaCall,
   savedName: string | null,
   beforePress: () => Promise<void>,
-): Promise<"dialed" | "not-on-whatsapp" | "no-call-button" | "timeout"> {
+): Promise<"dialed" | "not-on-whatsapp" | "no-call-button" | "ended" | "timeout"> {
   const deadline = Date.now() + DIAL_TIMEOUT_MS;
   const digits = digitsOnly(target.phone);
   let leadTitle: string | null = null;
   let chatSeenAt = 0;
   let prepared = false;
   while (Date.now() < deadline) {
+    if (endedBeforeDial === target.callId) return "ended";
     if (invalidNumberShown()) return "not-on-whatsapp";
     const title = chatTitle();
     if (title && !leadTitle) {
@@ -701,6 +762,23 @@ function onHookMessage(event: MessageEvent): void {
     case "agent-audio":
       agent?.sendAudio(data.pcm);
       break;
+    case "rtc-answer":
+      trace(callId, "WhatsApp tab: answered the rep's link offer; sending it to AgentSDR");
+      void send<BridgeResult>({ target: "background", type: "wa:rtc-answer", callId, answer: data.answer })
+        .then((result) => {
+          if (!result?.ok) settleRepLink(callId, { ok: false, error: `AgentSDR did not take the call's link: ${result?.error ?? "no answer"}` });
+        })
+        .catch((error: unknown) => settleRepLink(callId, { ok: false, error: `AgentSDR did not take the call's link: ${describeError(error)}` }));
+      break;
+    case "rtc-state":
+      trace(callId, `link to the rep's browser: ${data.state}${data.detail ? ` (${data.detail})` : ""}`);
+      settleRepLink(
+        callId,
+        data.state === "connected"
+          ? { ok: true }
+          : { ok: false, error: `Your browser did not connect to the calling number${data.detail ? ` (${data.detail})` : ""}` },
+      );
+      break;
     case "call-status":
       trace(callId, `WhatsApp shows "${data.text}"`);
       // They accepted; the audio link is still being set up.
@@ -741,6 +819,8 @@ function onHookMessage(event: MessageEvent): void {
       break;
     case "not-answered":
       stopAgent();
+      endedBeforeDial = callId;
+      settleRepLink(callId, { ok: false, error: "The call ended before it was placed" });
       void send({ target: "background", type: "wa:not-answered", callId, dialedAt: data.dialedAt, endedAt: data.endedAt });
       phase({ kind: "not-answered" });
       returnToApp(callId, RETURN_DELAY_MS);

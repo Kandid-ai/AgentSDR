@@ -15,6 +15,7 @@ import type {
   RecorderBridgeRequest,
   RecorderCallPhase,
   RecorderCallRequest,
+  RecorderRtcAnswerRequest,
 } from "../../../src/lib/calls/contract";
 import { digitsOnly } from "../../../src/lib/calls/digits";
 import {
@@ -39,6 +40,7 @@ import type { StationIncomingCall, StationInboundSource, StationInboundTake, Sta
 import { addIncoming, asIncomingCall, endIncoming, takeIncoming, type IncomingEntry } from "./incoming";
 import { mergeInbound, type InboundBuffer } from "./inbound";
 import { allowedOrigins, customOrigins, isCustomOriginsChange, originPattern } from "./origins";
+import { requestRemoteRep } from "./rep-link";
 import { callApi, getCallStatus, uploadRecording } from "./upload";
 
 const ACTIVE_CALL_KEY = "activeCall";
@@ -251,6 +253,12 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
     case "wa:agent-outcome":
       void agentOutcome(message.callId, message.outcome).then(sendResponse);
       return true;
+    case "wa:rtc-answer":
+      void rtcAnswer(message.callId, message.answer).then(sendResponse);
+      return true;
+    case "wa:start-failed":
+      void finishActiveCall(message.callId, { outcome: "failed", error: message.error });
+      break;
     case "wa:trace":
       trace(message.callId, message.step);
       if (/^WhatsApp shows "Ringing/i.test(message.step)) {
@@ -332,6 +340,9 @@ async function startCall(
   const refused = await settlePreviousCall();
   if (refused) return refused;
 
+  // A rep talking through the station is station mode only, and has no agent.
+  const remoteRep = station ? requestRemoteRep(request.remoteRep) : null;
+  if (remoteRep === "invalid") return { ok: false, error: "The rep's call link offer is missing or too long" };
   const call: ActiveCall = {
     callId: request.callId,
     recorderToken: request.recorderToken,
@@ -340,7 +351,8 @@ async function startCall(
     requestedAt: Date.now(),
     lead: request.lead,
     appTabId,
-    agent: requestAgent(request),
+    agent: remoteRep ? null : requestAgent(request),
+    remoteRep,
     station,
   };
   await rememberCall(call);
@@ -514,7 +526,14 @@ async function openInPlace(tabId: number, digits: string, options: { call?: WaCa
 /** wa-agent's hello: the call to place in its tab, if one was just opened there. */
 /** What wa-agent is told about a call — never its token or the agent's brief. */
 function waCall(call: ActiveCall): WaCall {
-  return { callId: call.callId, phone: call.phone, lead: call.lead ?? null, agent: Boolean(call.agent), station: Boolean(call.station) };
+  return {
+    callId: call.callId,
+    phone: call.phone,
+    lead: call.lead ?? null,
+    agent: Boolean(call.agent),
+    station: Boolean(call.station),
+    remoteRep: call.remoteRep ?? null,
+  };
 }
 
 /** Asks AgentSDR for the AI agent's Gemini Live token, with the call's own bearer token. */
@@ -543,6 +562,19 @@ async function agentOutcome(callId: string, outcome: AgentOutcomeReport): Promis
   if (!call) return { ok: false, error: "This call is no longer known to the extension" };
   try {
     await callApi(call, "outcome", outcome);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** A rep call: hands wa-hook's WebRTC answer to AgentSDR, where the rep's tab picks it up. */
+async function rtcAnswer(callId: string, answer: string): Promise<BridgeResult> {
+  const call = await getActiveCall();
+  if (!call || call.callId !== callId || !call.remoteRep) return { ok: false, error: "This call has no rep to link to" };
+  try {
+    await callApi(call, "rtc", { answer } satisfies RecorderRtcAnswerRequest);
+    trace(callId, "Extension: link answer sent to AgentSDR");
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -794,6 +826,7 @@ type StationCallRequest = Omit<RecorderCallRequest, "source" | "type" | "request
  * still authorizes everything it reports.
  */
 const station = {
+  /** With `remoteRep` (0.23.0+), the rep talks from their AgentSDR tab instead of the agent — see wa-hook. */
   async startCall(request: StationCallRequest): Promise<BridgeResult> {
     const digits = digitsOnly(request.phone);
     if (digits.length < 7) return { ok: false, error: `"${request.phone}" is not a dialable number` };

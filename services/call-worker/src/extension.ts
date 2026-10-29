@@ -1,12 +1,15 @@
 import type { BrowserContext, Worker } from "playwright-core";
 import type { RecorderCallRequest } from "../../../src/lib/calls/contract";
-import type { StationIncomingCall, StationInboundTake, StationSendResult } from "../../../src/lib/calls/stationContract";
+import type { StationIncomingCall, StationInboundTake, StationSendResult, WorkerCall } from "../../../src/lib/calls/stationContract";
 
 /**
  * Station mode for calls. Messaging needs 0.21.0+ and answering incoming
- * calls 0.22.0+, each detected by its functions (supportsMessaging, supportsIncoming).
+ * calls 0.22.0+, each detected by its functions (supportsMessaging,
+ * supportsIncoming); a rep talking through the station needs 0.23.0+, by
+ * version (supportsRepCalls), since it adds no function of its own.
  */
 export const MIN_EXTENSION_VERSION = "0.17.0";
+export const REP_CALL_MIN_VERSION = "0.23.0";
 
 export type StationCallRequest = Omit<RecorderCallRequest, "source" | "type" | "requestId">;
 export type StationResult = { ok: true } | { ok: false; error: string };
@@ -31,7 +34,27 @@ export type StationWorker = {
   takeIncomingCalls(): Promise<StationIncomingCall[]>;
   /** Answers the ringing call `waCallId` as AgentSDR's call `callId` (0.22.0+). */
   answerCall(req: StationCallRequest & { waCallId: string }): Promise<StationResult>;
+  /** The extension can place a call the rep talks on from AgentSDR (`remoteRep`, 0.23.0+). */
+  supportsRepCalls: boolean;
 };
+
+/**
+ * What startCall / answerCall are given for a claimed call: the AI agent, or
+ * — for a rep call — the rep's WebRTC offer and no agent.
+ */
+export function stationCallRequest(call: WorkerCall, apiBase: string, clickedAt: number): StationCallRequest {
+  return {
+    callId: call.id,
+    phone: call.phone,
+    recorderToken: call.recorderToken,
+    apiBase,
+    lead: call.lead,
+    ...(call.remoteRep
+      ? { agent: null, remoteRep: call.remoteRep }
+      : { agent: { brief: call.brief, name: call.agentName, voice: call.agentVoice } }),
+    clickedAt,
+  };
+}
 
 function versionAtLeast(version: string, min: string): boolean {
   const a = version.split(".").map((n) => parseInt(n, 10) || 0);
@@ -158,5 +181,6 @@ export async function stationWorker(context: BrowserContext): Promise<StationWor
       if (!found.incoming) throw new Error(`The recorder extension ${version} cannot answer calls (needs 0.22.0+)`);
       return (await live()).evaluate((r) => (globalThis as unknown as { agentsdrStation: Station }).agentsdrStation.answerCall(r), req) as Promise<StationResult>;
     },
+    supportsRepCalls: versionAtLeast(version, REP_CALL_MIN_VERSION),
   };
 }

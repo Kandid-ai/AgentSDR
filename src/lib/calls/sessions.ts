@@ -106,6 +106,7 @@ export function toCallSummary(row: CallSessionRow): CallSummary {
     mode: row.mode,
     livePhase: settledLivePhase(row),
     agentOutcome: row.agentOutcome ?? null,
+    remoteRep: row.remoteRep != null,
   };
 }
 
@@ -146,7 +147,16 @@ export async function getCall(callId: string): Promise<CallDetail> {
     .where(and(inOrg(callSessions), eq(callSessions.id, callId)))
     .limit(1);
   if (!found) throw new CallApiError(404, "Call not found");
-  return { ...toCallDetail(found.row), stationName: found.stationName };
+  return { ...toCallDetail(found.row), stationName: found.stationName, rtcAnswer: rtcAnswerFor(found.row) };
+}
+
+/**
+ * The station's WebRTC answer, for the rep's tab to finish its link with —
+ * only in GET /api/calls/:id (never a list), and only while the call is
+ * open: an SDP carries the station's IP addresses.
+ */
+export function rtcAnswerFor(row: Pick<CallSessionRow, "remoteRep" | "status">): string | null {
+  return row.remoteRep && !isTerminalStatus(row.status) ? row.remoteRep.answer : null;
 }
 
 // --- startCall ---------------------------------------------------------------
@@ -221,7 +231,9 @@ export async function startCall(input: StartCallRequest): Promise<StartCallRespo
 
   const { phone, changed } = resolveStartPhone(person.phone, input.phone);
   // A cloud call waits in the queue for a call worker; see stations.ts.
-  const cloud = input.mode === "agent_cloud" ? await stationForCloudCall(input.stationId, input.agentBrief) : null;
+  // With `remoteRep` the rep talks from their tab instead of the agent: no brief, name or voice.
+  const remoteRep = input.mode === "agent_cloud" && input.remoteRep ? { offer: input.remoteRep.offer, answer: null } : null;
+  const cloud = input.mode === "agent_cloud" ? await stationForCloudCall(input.stationId, input.agentBrief, { remoteRep: !!remoteRep }) : null;
   const { token, hash } = createRecorderToken();
   const now = new Date();
   const [[row]] = await Promise.all([
@@ -237,7 +249,15 @@ export async function startCall(input: StartCallRequest): Promise<StartCallRespo
         uploadTokenHash: hash,
         tokenExpiresAt: new Date(now.getTime() + TOKEN_TTL_MS),
         ...(cloud
-          ? { mode: "agent_cloud" as const, stationId: cloud.station.id, agentBrief: cloud.brief, agentName: input.agentName ?? null, agentVoice: input.agentVoice ?? null, livePhase: QUEUED_PHASE }
+          ? {
+              mode: "agent_cloud" as const,
+              stationId: cloud.station.id,
+              agentBrief: cloud.brief,
+              agentName: remoteRep ? null : (input.agentName ?? null),
+              agentVoice: remoteRep ? null : (input.agentVoice ?? null),
+              livePhase: QUEUED_PHASE,
+              remoteRep,
+            }
           : {}),
       })
       .returning(),

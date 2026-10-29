@@ -5,7 +5,7 @@ import { readCrmJson } from "@/lib/crm/categories";
 import { setPersonDoNotContactInTransaction } from "@/lib/crm/policies";
 import { withCrmTransaction } from "@/lib/crm/repository";
 import { parseAgentOutcome } from "@/lib/calls/liveAgent";
-import { callApiErrorResponse, withRecorderScope } from "@/lib/calls/sessions";
+import { CallApiError, callApiErrorResponse, withRecorderScope } from "@/lib/calls/sessions";
 import { callSessions } from "@/lib/calls/schema";
 import { inOrg } from "@/lib/tenancy/scope";
 
@@ -17,6 +17,7 @@ import { inOrg } from "@/lib/tenancy/scope";
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     return await withRecorderScope(request, (await params).id, async (row) => {
+      if (row.remoteRep) throw new CallApiError(409, "A rep talks on this call, not the AI agent");
       const outcome = parseAgentOutcome(await readCrmJson(request));
       await db
         .update(callSessions)

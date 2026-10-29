@@ -3,14 +3,17 @@ import { assertExactKeys, assertObject, parseOptionalText, parseUuid, readCrmJso
 import { requireCrmMutationContext } from "@/lib/crm/http";
 import { CallApiError, callApiErrorResponse, listCalls, startCall } from "@/lib/calls/sessions";
 import { parseAgentName, parseAgentVoice } from "@/lib/calls/liveAgent";
+import { parseRemoteRep } from "@/lib/calls/remoteRep";
 import type { StartCallRequest } from "@/lib/calls/contract";
 import { runInOrganization } from "@/lib/tenancy/scope";
 import { withOrgContext } from "@/lib/auth/context";
 
 function parseStartCallRequest(value: unknown): StartCallRequest {
   assertObject(value);
-  assertExactKeys(value, ["personId", "crmRecordId", "campaignContactId", "phone", "mode", "agentBrief", "agentName", "agentVoice", "stationId"]);
+  assertExactKeys(value, ["personId", "crmRecordId", "campaignContactId", "phone", "mode", "agentBrief", "agentName", "agentVoice", "stationId", "remoteRep"]);
   if (value.mode != null && value.mode !== "agent_cloud") throw new CallApiError(400, "mode must be agent_cloud");
+  const remoteRep = parseRemoteRep(value.remoteRep);
+  if (remoteRep && value.mode !== "agent_cloud") throw new CallApiError(400, "remoteRep needs mode agent_cloud");
   return {
     personId: parseUuid(value.personId, "personId"),
     crmRecordId: value.crmRecordId == null ? null : parseUuid(value.crmRecordId, "crmRecordId"),
@@ -21,6 +24,7 @@ function parseStartCallRequest(value: unknown): StartCallRequest {
     agentName: parseAgentName(value.agentName),
     agentVoice: parseAgentVoice(value.agentVoice),
     stationId: value.stationId == null ? null : parseUuid(value.stationId, "stationId"),
+    remoteRep,
   };
 }
 
