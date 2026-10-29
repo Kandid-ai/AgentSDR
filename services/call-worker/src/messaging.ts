@@ -283,13 +283,13 @@ export class Messaging {
     let body: WorkerMessageResultRequest;
     try {
       const result = await withTimeout(target.extension.sendMessage({ phone: job.phone, text: job.body }), this.options.sendTimeoutMs ?? SEND_TIMEOUT_MS);
-      if (result === TIMED_OUT) body = { ok: false, retryable: false, error: "timed out — may have been sent" };
+      if (result === TIMED_OUT) body = { ok: false, retryable: false, uncertain: true, error: "timed out — may have been sent" };
       else if (!result || typeof result !== "object" || typeof result.ok !== "boolean") body = { ok: false, retryable: false, error: "the extension gave no answer" };
       else if (result.ok) body = { ok: true, providerMessageId: result.providerMessageId ?? null, sentAt: this.deps.now() };
-      else body = { ok: false, retryable: result.retryable === true, error: result.error || "send failed" };
+      else body = { ok: false, retryable: result.retryable === true, uncertain: result.uncertain === true, error: result.error || "send failed" };
     } catch (e) {
       // It may have failed after WhatsApp took the message: never retried.
-      body = { ok: false, retryable: false, error: `extension: ${errorText(e)}` };
+      body = { ok: false, retryable: false, uncertain: true, error: `extension: ${errorText(e)}` };
     } finally {
       await hold.done();
     }

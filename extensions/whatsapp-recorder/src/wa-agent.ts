@@ -917,6 +917,8 @@ const SEND_CONFIRM_MS = 10_000;
 /** Send pressed and nothing happened this long: try Enter in the message box. */
 const SEND_ENTER_FALLBACK_MS = 1_500;
 const FIND_SENT_WAIT_MS = 1_500;
+/** After Send, the store is asked about the message from this long on (the page's row usually shows first). */
+const SEND_STORE_CHECK_AFTER_MS = 1_000;
 /** A DOM scan opens at most this many unread chats, and reads at most this many messages from each. */
 const SCAN_MAX_CHATS = 10;
 const SCAN_MAX_MESSAGES_PER_CHAT = 50;
@@ -1050,12 +1052,22 @@ async function sendWhatsappMessageNow(digits: string, text: string, afterReload:
     pressEnter(box);
   }
 
+  // Confirmed by its row in the open chat, or — where WhatsApp Web's rows no
+  // longer carry "true_…" data-ids (2.3000.105) — by WhatsApp's own store,
+  // asked about once a second once the text has left the message box.
   let row: HTMLElement | null = null;
+  let storeId: string | null = null;
+  let nextStoreCheck = pressedAt + SEND_STORE_CHECK_AFTER_MS;
   let enterTried = !button;
   while (Date.now() - pressedAt < SEND_CONFIRM_MS) {
     await sleep(250);
     row = newOutgoingRow(before);
     if (row) break;
+    if (!composerHasText() && Date.now() >= nextStoreCheck) {
+      storeId = await findSentViaHook(digits, text, pressedAt - 5_000, null);
+      if (storeId) break;
+      nextStoreCheck = Date.now() + 1_000;
+    }
     if (!enterTried && composerHasText() && Date.now() - pressedAt > SEND_ENTER_FALLBACK_MS) {
       enterTried = true;
       msgLog("send: Send did not take; pressing Enter");
@@ -1063,6 +1075,10 @@ async function sendWhatsappMessageNow(digits: string, text: string, afterReload:
     }
   }
 
+  if (!row && storeId) {
+    msgLog(`send: sent (${storeId}, from the store)`);
+    return { ok: true, providerMessageId: storeId };
+  }
   if (!row) {
     if (composerHasText()) {
       // Still in the box and nothing in the chat: it did not go.
@@ -1074,15 +1090,16 @@ async function sendWhatsappMessageNow(digits: string, text: string, afterReload:
     return {
       ok: false,
       retryable: false,
+      uncertain: true,
       error: `The message box emptied but the sent message did not show within ${SEND_CONFIRM_MS / 1000} s — it may have been sent`,
     };
   }
 
   const domId = row.getAttribute("data-id");
   const keyId = parseMessageId(domId)?.keyId ?? null;
-  const storeId = await findSentViaHook(digits, text, pressedAt - 5_000, keyId);
-  const providerMessageId = storeId ?? (parseMessageId(domId) ? domId : null);
-  msgLog(`send: sent (${providerMessageId ?? "no id"}${storeId ? ", from the store" : domId ? ", from the page" : ""})`);
+  const storeFound = await findSentViaHook(digits, text, pressedAt - 5_000, keyId);
+  const providerMessageId = storeFound ?? (parseMessageId(domId) ? domId : null);
+  msgLog(`send: sent (${providerMessageId ?? "no id"}${storeFound ? ", from the store" : domId ? ", from the page" : ""})`);
   return { ok: true, providerMessageId };
 }
 

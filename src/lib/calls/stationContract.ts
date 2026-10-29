@@ -346,7 +346,8 @@ export type WorkerMessageClaimResponse = { job: WorkerMessageJob | null };
  */
 export type WorkerMessageResultRequest =
   | { ok: true; providerMessageId: string | null; sentAt: number }
-  | { ok: false; error: string; retryable?: boolean };
+  /** `uncertain`: it may have gone out (Send was pressed, nothing confirmed it): never resent, kept as "uncertain". */
+  | { ok: false; error: string; retryable?: boolean; uncertain?: boolean };
 
 /**
  * A claimed message job whose worker went quiet this long is failed as
@@ -395,7 +396,7 @@ export const MAX_INBOUND_BATCH = 100;
 /** agentsdrStation.sendMessage — the extension's answer. */
 export type StationSendResult =
   | { ok: true; providerMessageId: string | null }
-  | { ok: false; error: string; retryable: boolean };
+  | { ok: false; error: string; retryable: boolean; uncertain?: boolean };
 
 /** agentsdrStation.takeInbound — what arrived since the last take. */
 export type StationInboundTake = { source: StationInboundSource; messages: StationInboundMessage[] };

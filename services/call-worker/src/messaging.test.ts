@@ -185,7 +185,7 @@ describe("Messaging", () => {
     const h = await harness({ a });
     h.jobs.push(job("m1", "a"));
     await h.messaging.messageOnce();
-    expect(h.reports[0].body).toEqual({ ok: false, retryable: false, error: "timed out — may have been sent" });
+    expect(h.reports[0].body).toEqual({ ok: false, retryable: false, uncertain: true, error: "timed out — may have been sent" });
     expect(h.stations.acquireIdle("a")).not.toBeNull();
   });
 
@@ -202,8 +202,8 @@ describe("Messaging", () => {
     await h.messaging.messageOnce();
     await h.messaging.messageOnce();
     expect(h.reports.map((r) => r.body)).toEqual([
-      { ok: false, error: "WhatsApp Web not ready", retryable: true },
-      { ok: false, retryable: false, error: "extension: Execution context was destroyed" },
+      { ok: false, error: "WhatsApp Web not ready", retryable: true, uncertain: false },
+      { ok: false, retryable: false, uncertain: true, error: "extension: Execution context was destroyed" },
     ]);
   });
 

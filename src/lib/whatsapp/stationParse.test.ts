@@ -109,6 +109,12 @@ describe("message job transitions", () => {
     const second = jobOutcomeForResult({ status: "claimed", error: (first as { error: string }).error }, { ok: false, error: "call active", retryable: true });
     expect(second).toEqual({ action: "fail", error: "call active" });
   });
+  test("a send that may have gone out fails as uncertain, never requeued", () => {
+    const text = "The message box emptied but the sent message did not show within 10 s — it may have been sent";
+    expect(jobOutcomeForResult(claimed, { ok: false, error: "x", retryable: true, uncertain: true })).toEqual({ action: "fail", error: "x", uncertain: true });
+    // Workers before the flag said so only in the text.
+    expect(jobOutcomeForResult(claimed, { ok: false, error: text })).toEqual({ action: "fail", error: text, uncertain: true });
+  });
   test("a stale claim is never requeued: it fails as uncertain, keeping the message", () => {
     expect(jobOutcomeWhenStale(claimed)).toEqual({ action: "fail", error: UNCERTAIN_DELIVERY_ERROR, uncertain: true });
     expect(jobOutcomeWhenStale({ status: "claimed", error: `${RETRY_MARK}x` })).toEqual({ action: "fail", error: UNCERTAIN_DELIVERY_ERROR, uncertain: true });
@@ -130,8 +136,9 @@ describe("worker reports", () => {
 
   test("result", () => {
     expect(parseMessageResult({ ok: true, providerMessageId: " true_1@c.us_AB12 ", sentAt: 5 })).toEqual({ ok: true, providerMessageId: "true_1@c.us_AB12", sentAt: 5 });
-    expect(parseMessageResult({ ok: false, error: "x", retryable: true })).toEqual({ ok: false, error: "x", retryable: true });
-    expect(parseMessageResult({ ok: false })).toEqual({ ok: false, error: "The call worker could not send the message", retryable: false });
+    expect(parseMessageResult({ ok: false, error: "x", retryable: true })).toEqual({ ok: false, error: "x", retryable: true, uncertain: false });
+    expect(parseMessageResult({ ok: false, error: "x", uncertain: true })).toEqual({ ok: false, error: "x", retryable: false, uncertain: true });
+    expect(parseMessageResult({ ok: false })).toEqual({ ok: false, error: "The call worker could not send the message", retryable: false, uncertain: false });
     expect(() => parseMessageResult({})).toThrow(StationReportError);
   });
 

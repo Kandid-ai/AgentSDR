@@ -127,6 +127,9 @@ export function jobOutcomeForResult(job: JobState, result: WorkerMessageResultRe
   if (result.ok) return { action: "sent" };
   if (job.status !== "claimed") return { action: "ignore" };
   const error = result.error.trim().slice(0, 500) || "The call worker could not send the message";
+  // It may have gone out: kept as uncertain (its echo, if it comes, makes it sent), never requeued.
+  // Workers before the flag said so only in the text.
+  if (result.uncertain || /may have been sent/i.test(error)) return { action: "fail", error, uncertain: true };
   if (result.retryable && !job.error?.startsWith(RETRY_MARK)) return { action: "requeue", error: `${RETRY_MARK}${error}` };
   return { action: "fail", error };
 }
@@ -174,7 +177,7 @@ export function parseMessageResult(value: unknown): WorkerMessageResultRequest {
   }
   if (body.ok === false) {
     const error = typeof body.error === "string" ? body.error.slice(0, 500) : "The call worker could not send the message";
-    return { ok: false, error, retryable: body.retryable === true };
+    return { ok: false, error, retryable: body.retryable === true, uncertain: body.uncertain === true };
   }
   throw new StationReportError("ok must be true or false");
 }

@@ -553,8 +553,16 @@ async function ingestStationMessage(account: WhatsappAccountRow, stationId: stri
   const raw: Record<string, unknown> = { source: "station", stationId, providerMessageId: event.providerMessageId, chatJid: event.chatJid, ...(event.kind ? { kind: event.kind } : {}) };
 
   if (event.direction === "outbound") {
+    // Our own sends still waiting for WhatsApp's id — including one that failed
+    // as uncertain (it may have gone out): its echo proves it did.
     const pending = await db
-      .select({ id: whatsappMessages.id, body: whatsappMessages.body, sentAt: whatsappMessages.sentAt })
+      .select({
+        id: whatsappMessages.id,
+        body: whatsappMessages.body,
+        sentAt: whatsappMessages.sentAt,
+        jobId: stationMessageJobs.id,
+        jobStatus: stationMessageJobs.status,
+      })
       .from(whatsappMessages)
       .innerJoin(stationMessageJobs, eq(stationMessageJobs.whatsappMessageId, whatsappMessages.id))
       .where(and(
@@ -562,16 +570,29 @@ async function ingestStationMessage(account: WhatsappAccountRow, stationId: stri
         eq(whatsappMessages.chatId, chat.id),
         eq(whatsappMessages.origin, "agentsdr"),
         isNull(whatsappMessages.unipileMessageId),
-        inArray(stationMessageJobs.status, ["claimed", "sent"]),
+        or(
+          inArray(stationMessageJobs.status, ["claimed", "sent"]),
+          and(eq(stationMessageJobs.status, "failed"), sql`${whatsappMessages.raw}->>'status' = 'uncertain'`),
+        ),
       ));
     const echo = pickStationEcho(pending, event.text);
     if (echo) {
       try {
+        const uncertain = echo.jobStatus === "failed";
         const [attached] = await db
           .update(whatsappMessages)
-          .set({ unipileMessageId: key })
+          .set({
+            unipileMessageId: key,
+            ...(uncertain ? { sentAt, raw: sql`coalesce(${whatsappMessages.raw}, '{}'::jsonb) || '{"status":"sent"}'::jsonb` } : {}),
+          })
           .where(and(messageInOrg(), eq(whatsappMessages.id, echo.id), isNull(whatsappMessages.unipileMessageId)))
           .returning({ id: whatsappMessages.id });
+        if (attached && uncertain) {
+          await db
+            .update(stationMessageJobs)
+            .set({ status: "sent", sentAt, error: null })
+            .where(and(inOrg(stationMessageJobs), eq(stationMessageJobs.id, echo.jobId), eq(stationMessageJobs.status, "failed")));
+        }
         return Boolean(attached);
       } catch (error) {
         if (!isUniqueViolation(error)) throw error;
