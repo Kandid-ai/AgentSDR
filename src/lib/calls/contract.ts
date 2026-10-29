@@ -247,8 +247,9 @@ export type StartCallRequest = {
   /**
    * With "agent_cloud": the rep talks instead of the AI agent, from this tab,
    * through the station (see RecorderRemoteRep). `agentBrief` is then not needed.
+   * Refused (409) while the organization has not connected Cloudflare TURN.
    */
-  remoteRep?: RecorderRemoteRep | null;
+  remoteRep?: RepCallOffer | null;
 };
 
 export type StartCallResponse = {
@@ -605,11 +606,33 @@ export type RecorderCallRequest = {
  * /api/call-recorder/calls/:id/rtc and the call's `rtcAnswer` — sends the
  * lead's side back on that track, and gives WhatsApp the rep's voice as its
  * microphone, as it does the agent's. WhatsApp dials only once the link is up.
+ *
+ * Both sides go through a TURN relay (the organization's Cloudflare TURN
+ * integration): a station's browser may reach the internet only over TCP
+ * through its number's proxy, so a direct or STUN-only path does not exist.
+ * Each side gets its own short-lived credentials — the rep's tab from GET
+ * /api/calls/rep-link/ice-servers, the station with the claimed call
+ * (`iceServers`, minted at the claim and never stored).
  */
-export type RecorderRemoteRep = {
+export type RecorderRemoteRep = RepCallOffer & {
+  /** The station side's ICE servers (STUN and TURN, with credentials). */
+  iceServers: RepLinkIceServer[];
+};
+
+/** What the rep's tab sends with the call (StartCallRequest.remoteRep): its offer, nothing else. */
+export type RepCallOffer = {
   /** SDP of the rep's browser's offer. */
   offer: string;
 };
+
+/** One ICE server, as RTCPeerConnection takes it. */
+export type RepLinkIceServer = { urls: string | string[]; username?: string; credential?: string };
+
+/** GET /api/calls/rep-link/ice-servers — the rep's tab's ICE servers for one call. */
+export type RepLinkIceServersResponse = { iceServers: RepLinkIceServer[] };
+
+/** At most this many ICE servers (and URLs per server) are accepted from anywhere. */
+export const MAX_REP_LINK_ICE_SERVERS = 10;
 
 /** POST /api/call-recorder/calls/:id/rtc — the station's answer, once. */
 export type RecorderRtcAnswerRequest = { answer: string };
@@ -617,14 +640,13 @@ export type RecorderRtcAnswerRequest = { answer: string };
 /** Longest SDP accepted for an offer or answer. */
 export const MAX_RTC_SDP_CHARS = 20_000;
 
-/** STUN only for now: a network that blocks direct UDP fails the link before WhatsApp dials. */
-export const REP_LINK_ICE_SERVERS: { urls: string }[] = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun.cloudflare.com:3478" },
-];
-
-/** How long either side waits for ICE gathering before sending its description with what it has. */
-export const REP_LINK_GATHER_MS = 3_000;
+/**
+ * How long either side waits for ICE gathering before sending its description
+ * with what it has. Long enough for a TURN allocation over TLS through a
+ * station's proxy; a browser whose UDP is blocked never "completes" gathering
+ * and always waits this long.
+ */
+export const REP_LINK_GATHER_MS = 5_000;
 
 /** From arming, how long the station waits for the rep's tab to connect before giving up without dialing. */
 export const REP_LINK_CONNECT_TIMEOUT_MS = 30_000;

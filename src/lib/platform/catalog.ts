@@ -1,7 +1,7 @@
 /**
  * Platform integrations: the services AgentSDR itself runs on — Unipile for
  * LinkedIn and WhatsApp, Google Workspace for Gmail, Cloudflare R2 for call
- * recordings. Each is connected once per organization from the Connection
+ * recordings, Cloudflare TURN for a rep's calls through a calling number. Each is connected once per organization from the Connection
  * page of the channel it powers (PLATFORM_SETTINGS_HREF), and a feature works
  * only while its integration is connected. None of them is read from env.
  *
@@ -16,7 +16,7 @@
 
 import { docsPageUrl } from "@/lib/support";
 
-export type PlatformKey = "unipile" | "google" | "r2" | "gologin" | "calcom";
+export type PlatformKey = "unipile" | "google" | "r2" | "gologin" | "calcom" | "turn";
 
 /** The decrypted credential object stored for each platform. */
 export type PlatformCredentials = {
@@ -56,6 +56,12 @@ export type PlatformCredentials = {
     webhookSecret: string;
     /** Optional Cal.com API key (cal_live_…); empty when not given. */
     apiKey: string;
+  };
+  turn: {
+    /** The TURN key's ID (32 hex characters), from Cloudflare Realtime → TURN Server. */
+    keyId: string;
+    /** The TURN key's API token: mints short-lived TURN credentials (src/lib/calls/repLinkIce.server.ts). */
+    apiToken: string;
   };
 };
 
@@ -328,6 +334,40 @@ export const PLATFORM_INTEGRATIONS: readonly PlatformIntegration[] = [
       },
     ],
   },
+  {
+    key: "turn",
+    name: "Cloudflare TURN",
+    description: "Relays the audio between a rep's AgentSDR tab and a cloud calling number, so Call now works through the number's proxy and through firewalls.",
+    enables: ["Call now (a rep talking through a calling number)"],
+    websiteUrl: "https://developers.cloudflare.com/realtime/turn/",
+    iconUrl: "/Integrations - Icon/cloudflare.svg",
+    guideUrl: docsPageUrl("integrations/cloudflare-turn"),
+    docsUrl: "https://developers.cloudflare.com/realtime/turn/generate-credentials/",
+    setupSteps: [
+      "In the Cloudflare dashboard, open Realtime → TURN Server and create a TURN key (any name).",
+      "Copy the key's Turn Token ID and its API Token. Copy the token right away; it may not be shown again.",
+      "Paste both below and save. AgentSDR mints short-lived credentials for each call from them; the token never leaves the server.",
+    ],
+    fields: [
+      {
+        key: "keyId",
+        label: "TURN key ID",
+        placeholder: "2a95132c15732412d22c1476fa83f27a",
+        help: "Cloudflare dashboard → Realtime → TURN Server, on the key you created (Turn Token ID): 32 letters and digits.",
+        inputType: "text",
+        required: true,
+        secret: false,
+      },
+      {
+        key: "apiToken",
+        label: "API token",
+        help: "Shown with the key when you create it. This is the TURN key's own token, not an account API token.",
+        inputType: "password",
+        required: true,
+        secret: true,
+      },
+    ],
+  },
 ];
 
 /** OpenRouter is connected on the AI provider page; the Integrations page only shows its card. */
@@ -344,6 +384,7 @@ export const PLATFORM_SETTINGS_HREF: Record<PlatformKey, string> = {
   r2: "/settings/whatsapp-connection",
   gologin: "/settings/whatsapp-connection",
   calcom: "/settings/whatsapp-connection",
+  turn: "/settings/whatsapp-connection",
 };
 
 /** Where that page sits in the Settings sidebar, for messages. */
@@ -353,6 +394,7 @@ export const PLATFORM_SETTINGS_LABEL: Record<PlatformKey, string> = {
   r2: "Settings → WhatsApp → Integrations",
   gologin: "Settings → WhatsApp → Integrations",
   calcom: "Settings → WhatsApp → Integrations",
+  turn: "Settings → WhatsApp → Integrations",
 };
 
 export function getPlatformIntegration(key: string): PlatformIntegration | null {

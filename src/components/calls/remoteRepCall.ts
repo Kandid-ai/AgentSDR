@@ -10,17 +10,17 @@
  * RemoteRepCallBar (mounted once in the root layout) shows it. A full page
  * load or a closed tab ends it — the station hangs up when the link drops.
  *
- *   mic → offer (ICE gathered, no trickle) → queued with the offer → the
- *   station answers (GET /api/calls/:id `rtcAnswer`, polled) → link up →
+ *   relay (TURN credentials) → mic → offer (ICE gathered, no trickle) →
+ *   queued with the offer → the station answers (GET /api/calls/:id `rtcAnswer`, polled) → link up →
  *   the station dials → on call → ended
  */
 
-import { cancelCall, getCall } from "@/lib/calls/client";
+import { cancelCall, getCall, getRepLinkIceServers, RepLinkIceError } from "@/lib/calls/client";
 import {
   REP_LINK_CHANNEL,
   REP_LINK_GATHER_MS,
-  REP_LINK_ICE_SERVERS,
   type CallDetail,
+  type RepLinkIceServer,
   type RepLinkControl,
 } from "@/lib/calls/contract";
 import { isRemoteRepOver, microphoneErrorText, remoteRepView, type RemoteRepStage } from "./remoteRepStage";
@@ -104,9 +104,10 @@ export type StartRemoteRepCall = {
 };
 
 /**
- * Gets the microphone, makes the offer and queues the call. Resolves with the
- * call id once queued, or null if it was not (the reason is in the state, so
- * the call bar shows it). Nothing is queued without a microphone.
+ * Gets a relay and the microphone, makes the offer and queues the call.
+ * Resolves with the call id once queued, or null if it was not (the reason is
+ * in the state, so the call bar shows it). Nothing is queued without a relay
+ * (Cloudflare TURN) or a microphone.
  */
 export async function startRemoteRepCall({ leadName, numberName, place }: StartRemoteRepCall): Promise<string | null> {
   if (isRemoteRepCallActive()) throw new Error("You are already on a call");
@@ -119,6 +120,15 @@ export async function startRemoteRepCall({ leadName, numberName, place }: StartR
     emit({ ...state!, stage: "error", message: "This browser can't place calls — use a recent Chrome, Edge or Firefox." });
     return null;
   }
+  // The station reaches the internet only through its number's proxy, over
+  // TCP: the link needs a TURN relay (contract.ts, RecorderRemoteRep).
+  let iceServers: RepLinkIceServer[];
+  try {
+    iceServers = await getRepLinkIceServers();
+  } catch (error) {
+    emit({ ...state!, stage: "error", message: relayErrorText(error) });
+    return null;
+  }
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -129,7 +139,7 @@ export async function startRemoteRepCall({ leadName, numberName, place }: StartR
     return null;
   }
 
-  const pc = new RTCPeerConnection({ iceServers: REP_LINK_ICE_SERVERS });
+  const pc = new RTCPeerConnection({ iceServers });
   for (const track of stream.getAudioTracks()) pc.addTrack(track, stream);
   const channel = pc.createDataChannel(REP_LINK_CHANNEL);
   const audio = document.createElement("audio");
@@ -273,7 +283,7 @@ function onConnectionState(s: Session) {
         // The station never dials without the link, so there is nothing to keep.
         void finish(s, {
           stage: "error",
-          message: "Couldn't connect your audio to the number — this network may block direct calls (UDP). Try another network.",
+          message: "Couldn't connect your audio to the number, even through the relay. Check your network, or try again.",
         }).then(() => (s.callId ? cancelCall(s.callId).catch(() => {}) : undefined));
       }
       return;
@@ -314,6 +324,13 @@ async function settleEnding(s: Session, callId: string, until: number) {
     // Keep the ending already shown.
   }
   s.timer = setTimeout(() => void settleEnding(s, callId, until), POLL_LIVE_MS);
+}
+
+function relayErrorText(error: unknown): string {
+  if (error instanceof RepLinkIceError && error.notConnected) {
+    return "Calls through a number need Cloudflare TURN. An owner or admin connects it in Settings → WhatsApp → Integrations.";
+  }
+  return `Couldn't get a relay for the call audio: ${error instanceof Error ? error.message : "unknown error"}`;
 }
 
 function playRemoteAudio(s: Session) {

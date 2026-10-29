@@ -300,6 +300,12 @@ function normalize<K extends PlatformKey>(key: K, raw: Record<string, string>): 
     const value: PlatformCredentials["calcom"] = { webhookSecret: text("webhookSecret"), apiKey: text("apiKey") };
     return value as PlatformCredentials[K];
   }
+  if (key === "turn") {
+    const keyId = text("keyId");
+    if (keyId && !/^[A-Za-z0-9_-]{8,128}$/.test(keyId)) throw new Error("TURN key ID must be the key's ID from Cloudflare (letters and digits)");
+    const value: PlatformCredentials["turn"] = { keyId, apiToken: text("apiToken") };
+    return value as PlatformCredentials[K];
+  }
   const value: PlatformCredentials["r2"] = {
     accountId: text("accountId"),
     accessKeyId: text("accessKeyId"),

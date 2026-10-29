@@ -25,6 +25,8 @@ import type {
   RecorderEndCallRequest,
   RecorderUpdateRequest,
   RecorderMessageRequest,
+  RepLinkIceServer,
+  RepLinkIceServersResponse,
   SetLeadStageRequest,
   StartCallRequest,
   StartCallResponse,
@@ -85,6 +87,34 @@ export function listCalls(personId: string): Promise<ListCallsResponse> {
 /** GET /api/calls/:id — a call with its transcript. */
 export function getCall(callId: string): Promise<CallDetail> {
   return callsFetch<CallDetail>(`/${encodeURIComponent(callId)}`);
+}
+
+/** Why the rep's tab got no ICE servers; `notConnected` when the organization has no Cloudflare TURN (409). */
+export class RepLinkIceError extends Error {
+  constructor(
+    message: string,
+    readonly notConnected: boolean,
+  ) {
+    super(message);
+    this.name = "RepLinkIceError";
+  }
+}
+
+/** GET /api/calls/rep-link/ice-servers — fresh TURN credentials for a call the rep talks on. Throws RepLinkIceError. */
+export async function getRepLinkIceServers(): Promise<RepLinkIceServer[]> {
+  let response: Response;
+  try {
+    response = await fetch("/api/calls/rep-link/ice-servers", { cache: "no-store" });
+  } catch {
+    throw new RepLinkIceError("Couldn't reach AgentSDR", false);
+  }
+  const body = (await response.json().catch(() => ({}))) as Partial<RepLinkIceServersResponse> & { error?: unknown };
+  if (!response.ok) {
+    const message = typeof body.error === "string" ? body.error : `Request failed (${response.status})`;
+    throw new RepLinkIceError(message, response.status === 409);
+  }
+  if (!Array.isArray(body.iceServers) || !body.iceServers.length) throw new RepLinkIceError("No relay came back for the call audio", false);
+  return body.iceServers;
 }
 
 /** POST /api/calls/:id/transcribe — (re)runs transcription. */

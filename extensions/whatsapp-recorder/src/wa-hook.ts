@@ -53,12 +53,18 @@
  */
 
 import { createDownsampler } from "./downsample";
-import { parseRepLinkControl, waitForIceGathering } from "./rep-link";
+import {
+  parseRepLinkControl,
+  requestRemoteRep,
+  summarizeLocalCandidates,
+  summarizeSdpCandidates,
+  waitForIceGathering,
+} from "./rep-link";
 import {
   REP_LINK_CHANNEL,
   REP_LINK_GATHER_MS,
-  REP_LINK_ICE_SERVERS,
   REP_LINK_LOST_HANGUP_MS,
+  type RecorderRemoteRep,
 } from "../../../src/lib/calls/contract";
 import { INCOMING_CALL_MAX_AGE_MS, type StationInboundMessage } from "../../../src/lib/calls/stationContract";
 import { isAcceptLabel, maskDigits, phoneFromScreenText } from "./incoming";
@@ -427,8 +433,9 @@ function install(): void {
     const data = event.data as Partial<AgentToHook> | null;
     if (data?.source !== AGENT_SOURCE) return;
     if (data.type === "arm" && data.callId) {
-      const remoteRep = typeof data.remoteRep?.offer === "string" ? data.remoteRep : null;
-      arm(data.callId, data.agent === true, data.monitor !== false, remoteRep);
+      const remoteRep = requestRemoteRep(data.remoteRep);
+      if (remoteRep === "invalid") repLog("the rep call's offer or ICE servers are unusable; arming without the link");
+      arm(data.callId, data.agent === true, data.monitor !== false, remoteRep === "invalid" ? null : remoteRep);
     }
     else if (data.type === "disarm") {
       armedCallId = null;
@@ -467,7 +474,7 @@ function install(): void {
   let armSawCallUi = false;
   let armCallUiMissing = 0;
 
-  function arm(callId: string, agent: boolean, monitor: boolean, remoteRep: { offer: string } | null): void {
+  function arm(callId: string, agent: boolean, monitor: boolean, remoteRep: RecorderRemoteRep | null): void {
     // A session whose call ended unseen would block this call's session.
     if (session && !readCallUi().present) end();
     if (!session) dropAgentRig();
@@ -479,7 +486,7 @@ function install(): void {
     armCallUiMissing = 0;
     window.clearInterval(armWatch);
     armWatch = window.setInterval(watchArmed, WATCH_INTERVAL_MS);
-    if (remoteRep) void openRepLink(callId, remoteRep.offer);
+    if (remoteRep) void openRepLink(callId, remoteRep);
   }
 
   function watchArmed(): void {
@@ -971,14 +978,15 @@ function install(): void {
    * the call session is built in the rig's context (begin). Posts the answer
    * once ICE gathering is done, then rtc-state as the link comes up or fails.
    */
-  async function openRepLink(callId: string, offer: string): Promise<void> {
+  async function openRepLink(callId: string, { offer, iceServers }: RecorderRemoteRep): Promise<void> {
     closeRepLink();
     const rig = ensureAgentRig(callId);
     const sink = new Audio();
     sink.muted = true;
     let pc: RTCPeerConnection;
     try {
-      pc = new RTCPeerConnection({ iceServers: REP_LINK_ICE_SERVERS });
+      // The call's own TURN credentials (minted at the claim): through the number's proxy, only a relay connects.
+      pc = new RTCPeerConnection({ iceServers });
     } catch (error) {
       post({ source: HOOK_SOURCE, type: "rtc-state", callId, state: "failed", detail: `no WebRTC here: ${describe(error)}` });
       return;
@@ -1018,6 +1026,15 @@ function install(): void {
       if (!answer) throw new Error("no answer was made");
       repLog(`answer ready (ICE gathering ${pc.iceGatheringState})`);
       post({ source: HOOK_SOURCE, type: "rtc-answer", callId, answer });
+      // Candidate kinds only, never addresses: what each side can be reached
+      // by, and how ours reach the relay (relay/tls is the one through a proxy).
+      const relays = await pc
+        .getStats()
+        .then((stats) => summarizeLocalCandidates(stats.values() as Iterable<{ type?: string }>))
+        .catch(() => "unknown");
+      repLog(
+        `candidates — ours: ${summarizeSdpCandidates(answer)} (gathered, relays by how we reach them: ${relays}); the rep's: ${summarizeSdpCandidates(offer)}`,
+      );
     } catch (error) {
       if (repLink !== rep) return;
       repLog(`could not answer the rep's offer: ${describe(error)}`);
@@ -1044,7 +1061,7 @@ function install(): void {
         type: "rtc-state",
         callId: rep.callId,
         state: "failed",
-        detail: "no network route between the two browsers",
+        detail: "no network route between the two browsers, even through the TURN relay",
       });
     } else if (state === "failed" || state === "disconnected") {
       repLinkDown(rep, `the link to the rep's browser is ${state}`);

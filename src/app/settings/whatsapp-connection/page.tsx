@@ -12,6 +12,7 @@ export default function Page() {
         { platform: "r2" },
         { platform: "gologin", note: "Only needed for cloud calling numbers (Settings → WhatsApp → Calling numbers)." },
         { platform: "calcom", note: "Only needed for AI calling campaigns that book meetings: tells them when a lead books.", webhookUrl: true },
+        { platform: "turn", note: "Only needed for Call now: a rep talking to a lead through a calling number from their AgentSDR tab." },
       ]}
       title="WhatsApp integrations"
       description="Unipile connects your WhatsApp numbers for messaging and calling. Calls placed from AgentSDR are recorded by the Call Recorder extension and stored in your Cloudflare R2 bucket, along with contact photos. Transcription uses the model chosen in AI provider."

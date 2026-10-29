@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { assertExactKeys, assertObject } from "@/lib/crm/categories";
 import { inOrg } from "@/lib/tenancy/scope";
 import type { CallAiLeadRequest } from "./aiCampaigns/api";
-import { MAX_RTC_SDP_CHARS, type RecorderRemoteRep } from "./contract";
+import { MAX_RTC_SDP_CHARS, type RepCallOffer } from "./contract";
 import { callSessions } from "./schema";
 import { CallApiError, isTerminalStatus } from "./sessions";
 
@@ -27,7 +27,7 @@ export function parseSdp(value: unknown, label: string): string {
 }
 
 /** StartCallRequest.remoteRep: null/absent = not a rep call. */
-export function parseRemoteRep(value: unknown): RecorderRemoteRep | null {
+export function parseRemoteRep(value: unknown): RepCallOffer | null {
   if (value == null) return null;
   assertObject(value, "remoteRep");
   assertExactKeys(value, ["offer"]);

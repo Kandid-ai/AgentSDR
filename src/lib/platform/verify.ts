@@ -4,6 +4,7 @@ import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { google } from "googleapis";
 import type { PlatformCredentials, PlatformKey } from "./catalog";
 import { googleServiceAccount, r2Client } from "./clients";
+import { generateTurnIceServers, TurnCredentialsError } from "./cloudflareTurn";
 
 /**
  * One cheap authenticated call per platform, run before credentials are
@@ -19,6 +20,7 @@ export async function verifyPlatformCredentials<K extends PlatformKey>(
   if (key === "r2") return verifyR2(credentials as PlatformCredentials["r2"]);
   if (key === "gologin") return verifyGoLogin(credentials as PlatformCredentials["gologin"]);
   if (key === "calcom") return verifyCalcom(credentials as PlatformCredentials["calcom"]);
+  if (key === "turn") return verifyTurn(credentials as PlatformCredentials["turn"]);
   throw new Error("Unknown integration");
 }
 
@@ -69,6 +71,15 @@ async function verifyCalcom({ webhookSecret, apiKey }: PlatformCredentials["calc
   }
   if (response.status === 401 || response.status === 403) throw new Error("Cal.com didn't accept this API key");
   if (!response.ok) throw new Error(`Cal.com answered ${response.status}`);
+}
+
+/** Mints one set of credentials that lapse in a minute: proves the key and token, and that a relay comes back. */
+async function verifyTurn(credentials: PlatformCredentials["turn"]): Promise<void> {
+  try {
+    await generateTurnIceServers(credentials, 60);
+  } catch (error) {
+    throw new Error(error instanceof TurnCredentialsError ? error.message : "Could not reach Cloudflare TURN");
+  }
 }
 
 async function verifyGoogle(credentials: PlatformCredentials["google"]): Promise<void> {

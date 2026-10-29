@@ -109,8 +109,9 @@ first name.
 
 ## Platform integrations, not env
 
-Unipile, Google Workspace (Gmail service account) and Cloudflare R2 are
-connected **per organization** from the Connection page of the channel each
+Unipile, Google Workspace (Gmail service account), Cloudflare R2 and, for
+calling, GoLogin, Cal.com and Cloudflare TURN are connected **per
+organization** from the Connection page of the channel each
 powers (Settings → Email / LinkedIn / WhatsApp), never from env —
 there is no env fallback. `src/lib/platform/` owns them: `catalog.ts` (client-safe fields),
 `credentials.ts` (`getPlatformCredentials` / `requirePlatformCredentials` /
@@ -504,9 +505,16 @@ sends a WebRTC offer with the call; the station's wa-hook answers it at
 arming (`POST /api/call-recorder/calls/:id/rtc`, the tab polls `rtcAnswer`),
 plays the rep's voice into WhatsApp's microphone the way it does the agent's,
 and sends the lead's side back. WhatsApp dials only once the link is up; a
-lost link or the rep's hang-up (data channel) ends the call. STUN only, no
-TURN: a network that blocks UDP fails before dialing. Contract: contract.ts,
-"a rep talking through a calling station". Extension 0.23.0+.
+lost link or the rep's hang-up (data channel) ends the call. The link runs
+through a TURN relay, the **Cloudflare TURN** platform integration (`turn`,
+Settings → WhatsApp → Integrations; `src/lib/platform/cloudflareTurn.ts`):
+a GoLogin station's WebRTC goes only over TCP through its number's proxy, so
+STUN alone never connected. Each side gets its own short-lived credentials,
+never stored: the rep's tab from `GET /api/calls/rep-link/ice-servers`
+before it makes the offer, the station in the claimed call
+(`remoteRep.iceServers`, minted in `claimCall`; a failed mint fails the
+call). Not connected: the tab says so and nothing is queued. Contract:
+contract.ts, "a rep talking through a calling station". Extension 0.23.1+.
 
 ### Incoming calls: the AI answers a lead who calls back
 

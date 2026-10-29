@@ -69,18 +69,24 @@ A lead who calls a station's number back is answered by the AI agent (`src/incom
   `incoming: not answering (<reason>)`. Extensions before 0.22.0 are said once per number and
   their calls ring out.
 
-## Rep calls (extension 0.23.0+)
+## Rep calls (extension 0.23.1+)
 
 A call can also be one a rep talks on from their own AgentSDR tab, through a station's number
-(`WorkerCall.remoteRep` set: the rep's WebRTC offer). The worker hands it to
-`agentsdrStation.startCall` with `remoteRep` and no agent; the extension's wa-hook answers the
-offer (posted to `POST /api/call-recorder/calls/:id/rtc` with the call's token), gives WhatsApp
-the rep's voice as its microphone and sends the lead's side back to the rep. WhatsApp dials only
-once the link to the rep's tab is up; no link within 30 s fails the call undialed ("Your browser
-did not connect to the calling number"). The link lost for 8 s mid-call, or the rep's own hang-up,
-presses End call. Recording, upload and transcript are as for an agent call. Rep calls are
-outbound only. Extensions before 0.23.0 refuse them with a message to update; logs say
-`starting rep call` vs `starting agent call`.
+(`WorkerCall.remoteRep` set: the rep's WebRTC offer and the station's own `iceServers`, Cloudflare
+TURN credentials the app mints at the claim from the organization's Cloudflare TURN integration
+and never stores; with TURN not connected, or Cloudflare failing, the claim fails the call instead
+of handing it out). The worker hands `remoteRep` whole to `agentsdrStation.startCall`, with no
+agent; the extension's wa-hook answers the offer (posted to `POST /api/call-recorder/calls/:id/rtc`
+with the call's token), gives WhatsApp the rep's voice as its microphone and sends the lead's side
+back to the rep. The link needs the relay: a GoLogin profile keeps WebRTC on TCP through the
+number's proxy (see "Call audio goes over TCP through the proxy" below), so only a TURN candidate
+over TCP/TLS (`turns:…:443`) gets out — wa-hook logs the candidate kinds it gathered (`rep link:
+candidates — ours: …`, no addresses) to show which. WhatsApp dials only once the link to the
+rep's tab is up; no link within 30 s fails the call undialed ("Your browser did not connect to the
+calling number"). The link lost for 8 s mid-call, or the rep's own hang-up, presses End call.
+Recording, upload and transcript are as for an agent call. Rep calls are outbound only.
+Extensions before 0.23.1 refuse them with a message to update (0.23.0 ignored the TURN servers);
+logs say `starting rep call` vs `starting agent call`.
 
 ## Environment
 

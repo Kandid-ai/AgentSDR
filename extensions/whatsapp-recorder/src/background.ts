@@ -342,7 +342,7 @@ async function startCall(
 
   // A rep talking through the station is station mode only, and has no agent.
   const remoteRep = station ? requestRemoteRep(request.remoteRep) : null;
-  if (remoteRep === "invalid") return { ok: false, error: "The rep's call link offer is missing or too long" };
+  if (remoteRep === "invalid") return { ok: false, error: "The rep's call link offer or ICE servers are missing or unusable" };
   const call: ActiveCall = {
     callId: request.callId,
     recorderToken: request.recorderToken,
@@ -826,7 +826,7 @@ type StationCallRequest = Omit<RecorderCallRequest, "source" | "type" | "request
  * still authorizes everything it reports.
  */
 const station = {
-  /** With `remoteRep` (0.23.0+), the rep talks from their AgentSDR tab instead of the agent — see wa-hook. */
+  /** With `remoteRep` (0.23.0+; its `iceServers` 0.23.1+), the rep talks from their AgentSDR tab instead of the agent — see wa-hook. */
   async startCall(request: StationCallRequest): Promise<BridgeResult> {
     const digits = digitsOnly(request.phone);
     if (digits.length < 7) return { ok: false, error: `"${request.phone}" is not a dialable number` };

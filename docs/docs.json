@@ -148,6 +148,7 @@
               "integrations/gmail-reply-sync",
               "integrations/unipile",
               "integrations/cloudflare-r2",
+              "integrations/cloudflare-turn",
               "integrations/openrouter",
               "integrations/enrichment-providers",
               "integrations/resend",
