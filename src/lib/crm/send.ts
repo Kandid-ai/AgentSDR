@@ -517,7 +517,10 @@ async function finishSuccessfulSend(
         if (next && stillCurrent) {
           nextActionAt = new Date(now.getTime() + next.step.delayMinutes * 60_000);
           workflowState = "waiting";
-          await tx.update(crmSequenceStepRuns).set({ dueAt: nextActionAt, updatedAt: now })
+          // The run moves on in the record's current context (stillCurrent),
+          // so the next step is drafted in it — whatever version it was
+          // given when the run started.
+          await tx.update(crmSequenceStepRuns).set({ dueAt: nextActionAt, expectedContextVersion: record.contextVersion, updatedAt: now })
             .where(eq(crmSequenceStepRuns.id, next.stepRun.id));
           await tx.update(crmSequenceRuns).set({ currentStepPosition: next.step.position, updatedAt: now })
             .where(eq(crmSequenceRuns.id, scope.run.id));

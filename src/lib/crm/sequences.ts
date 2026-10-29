@@ -570,6 +570,28 @@ export async function resumeSequence(input: { recordId: string; actorRef?: strin
   });
 }
 
+/**
+ * After an action that bumps the record's context version but keeps its run
+ * (skip, snooze), every step still to come must carry the new version: a
+ * step is drafted only when its version matches the record's
+ * (loadDraftContext). Updating only the next step left the ones after it on
+ * the old version, so once the next step was sent the run advanced onto a
+ * step that could never be drafted, and the record waited forever with
+ * nothing on anyone's desk.
+ */
+export async function refreshPendingStepContextInTransaction(
+  tx: CrmTransaction,
+  runId: string,
+  contextVersion: number,
+  now: Date = new Date(),
+): Promise<void> {
+  await tx.update(crmSequenceStepRuns).set({ expectedContextVersion: contextVersion, updatedAt: now })
+    .where(and(
+      eq(crmSequenceStepRuns.sequenceRunId, runId),
+      inArray(crmSequenceStepRuns.status, ["scheduled", "awaiting_review", "failed"]),
+    ));
+}
+
 export async function snoozeSequence(input: { recordId: string; until: Date; actorRef?: string | null }) {
   if (!(input.until instanceof Date) || Number.isNaN(input.until.getTime()) || input.until <= new Date()) {
     throw new Error("Snooze time must be a valid future date");
@@ -587,7 +609,8 @@ export async function snoozeSequence(input: { recordId: string; until: Date; act
     assertWorkflowTransition(record.workflowState, "waiting");
     const nextContextVersion = record.contextVersion + 1;
     const now = new Date();
-    await tx.update(crmSequenceStepRuns).set({ dueAt: input.until, expectedContextVersion: nextContextVersion, updatedAt: now })
+    await refreshPendingStepContextInTransaction(tx, run.id, nextContextVersion, now);
+    await tx.update(crmSequenceStepRuns).set({ dueAt: input.until, updatedAt: now })
       .where(eq(crmSequenceStepRuns.id, step.id));
     const [updated] = await tx.update(crmRecords)
       .set({ workflowState: "waiting", nextActionAt: input.until, contextVersion: nextContextVersion, updatedAt: now })
@@ -625,12 +648,13 @@ export async function skipCurrentSequenceStep(input: { recordId: string; actorRe
       .where(eq(crmSequenceStepRuns.id, current.stepRun.id));
     const next = candidates[1];
     const nextContextVersion = record.contextVersion + 1;
+    await refreshPendingStepContextInTransaction(tx, run.id, nextContextVersion, now);
     if (next) {
       // Skipping means "this step is handled", so the next one waits its own
       // delay from now — the same clock a send starts — rather than coming
       // due at once and drafting a follow-up on the heels of the skip.
       const dueAt = new Date(now.getTime() + next.step.delayMinutes * 60_000);
-      await tx.update(crmSequenceStepRuns).set({ dueAt, expectedContextVersion: nextContextVersion, updatedAt: now })
+      await tx.update(crmSequenceStepRuns).set({ dueAt, updatedAt: now })
         .where(eq(crmSequenceStepRuns.id, next.stepRun.id));
       await tx.update(crmSequenceRuns).set({ currentStepPosition: next.step.position, updatedAt: now })
         .where(eq(crmSequenceRuns.id, run.id));

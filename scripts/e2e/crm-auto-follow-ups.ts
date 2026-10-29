@@ -34,7 +34,7 @@ const { handleClassificationJob } = await import("@/lib/crm/handlers");
 const { generateDraftForStep } = await import("@/lib/crm/drafts");
 const { sendDraft } = await import("@/lib/crm/send");
 const { applyHumanClassification, createManualDraft } = await import("@/lib/crm/operations");
-const { createSequence, publishSequence, assignSubcategorySequence, updateSequence, skipCurrentSequenceStep } = await import("@/lib/crm/sequences");
+const { createSequence, publishSequence, assignSubcategorySequence, updateSequence, skipCurrentSequenceStep, snoozeSequence } = await import("@/lib/crm/sequences");
 const { runCrmAutoFollowUps, takeOverAutoFollowUp, mailboxHasAutoFollowUpWaiting, queueAutoFollowUpInTransaction } = await import("@/lib/crm/autoFollowUps");
 const { setPersonDoNotContactInTransaction } = await import("@/lib/crm/policies");
 const { withCrmTransaction } = await import("@/lib/crm/repository");
@@ -559,6 +559,29 @@ async function main() {
     }));
     assert.equal(queued, false);
     assert.equal((await draft(followUp.id)).autoSendAt, null);
+  });
+
+  console.log("Skip and snooze keep later steps draftable");
+  await check("after a skipped step and a send, the step after is still drafted", async () => {
+    // The live bug: skip refreshed only the next step's context version, so the
+    // step after it could never be drafted once the next one was sent.
+    const person = await newPerson("email", "skipsend");
+    const reply = await inbound(person.id, "email", MAILBOX_B, `thread-skipsend-${token}`, "Info please");
+    await classify(reply.message.id, classifyAs("interested", info.key, 0.95));
+    await draftStep(reply.record.id, 1);
+    await skipCurrentSequenceStep({ recordId: reply.record.id });
+    const second = await draftStep(reply.record.id, 2);
+    await operatorSend(second.id);
+    const third = await draftStep(reply.record.id, 3);
+    assert.equal(third.status, "awaiting_review");
+  });
+  await check("after a snooze and a send, the step after is still drafted", async () => {
+    const lead = await repliedLead("email", MAILBOX_B, "snoozesend", info.key);
+    await snoozeSequence({ recordId: lead.recordId, until: minutesFromNow(5) });
+    const second = await draftStep(lead.recordId, 2);
+    await operatorSend(second.id);
+    const third = await draftStep(lead.recordId, 3);
+    assert.equal(third.status, "awaiting_review");
   });
 
   console.log(`\n${passed} checks passed. Fake provider received ${sentDrafts.length} sends; nothing left this machine.`);
