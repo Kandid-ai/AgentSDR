@@ -11,6 +11,16 @@ Each release lists the database migrations it needs; see
 
 ### Added
 
+- **AI assistants (MCP), 2026-11-13.** AgentSDR is an MCP server at
+  `/api/mcp`. Connect Claude (web and desktop), Claude Code, Cursor or any
+  MCP client and work **CRM, Action required** from a chat: read the queue and
+  records, review, edit and send drafts, correct classifications, move
+  stages, snooze, close and set Do Not Contact. Each connection carries its
+  own permissions (`crm:read`, `crm:write`, `crm:send`), actions are recorded
+  as "name via AI assistant", and **Settings, AI assistants** shows the server
+  URL, setup steps and each person's connections with Disconnect. API keys now
+  have permissions too (`campaigns:read`, `campaigns:write`, and the CRM
+  ones); keys created earlier keep full access. See `docs/mcp.mdx`.
 - **Public API with API keys.** Owners and admins create keys in Settings,
   API keys; another application uses one to list email campaigns
   (`GET /api/v1/campaigns`), add leads to a campaign
@@ -21,6 +31,9 @@ Each release lists the database migrations it needs; see
 ### Migrations
 
 - `bun run scripts/create-api-keys.ts` creates the `api_keys` table.
+- `bun run scripts/create-oauth-provider-tables.ts` creates `jwks` and the
+  `oauth_*` tables for AI assistants (MCP).
+- `bun run scripts/add-api-key-scopes.ts` adds `api_keys.scopes`.
 
 ## [0.3.1] - 2026-10-08
 

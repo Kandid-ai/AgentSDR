@@ -56,6 +56,10 @@ bearer token (read from an environment variable whose name the user chooses; see
 [configuration.md](configuration.md#user-named-variables-tables-http-column)),
 and the prospecting master `APOLLO_API_KEY`.
 
+AI assistants (Claude, Claude Code, any MCP client) are not an integration you
+connect: they connect to AgentSDR, per person, at `/api/mcp`. See
+[AI assistants (MCP)](mcp.mdx).
+
 Google sign-in is unrelated to the Google Workspace integration, which is the
 Gmail service account.
 

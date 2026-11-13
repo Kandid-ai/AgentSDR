@@ -189,6 +189,8 @@ Upgrading an existing install is **not** done with `db:setup`, and the app's sta
    ```
 
    The entrypoint supplies `DATABASE_URL` for the bundled database.
+
+   To use [AI assistants (MCP)](/mcp) on an existing install, run `bun run scripts/create-oauth-provider-tables.ts` and `bun run scripts/add-api-key-scopes.ts` from a checkout. `BETTER_AUTH_URL` must be your public address, and deployments that share a database must share `BETTER_AUTH_SECRET`.
 5. Rebuild and restart: `bun run build && bun run start`, or `docker compose up -d --build` (or `docker compose pull && docker compose up -d` if you use a prebuilt image).
 6. Optionally verify: `bun run db:check` audits the database against the tenancy registry.
 

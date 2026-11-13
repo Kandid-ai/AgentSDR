@@ -57,6 +57,23 @@ The bug form asks for each of these:
 A report someone else can reproduce in five minutes gets fixed first. If you can, try it on a fresh install with the demo data (`bun run db:seed:demo`, see [Development](/development)).
 </Tip>
 
+## Using AgentSDR from an AI assistant
+
+<AccordionGroup>
+  <Accordion title="Can I use AgentSDR from Claude?">
+    Yes. AgentSDR is an MCP server, so Claude (web and desktop), Claude Code, Cursor and other MCP clients can connect and work the **Action required** queue. Setup is in [AI assistants (MCP)](/mcp), and **Settings, AI assistants** shows your server URL.
+  </Accordion>
+  <Accordion title="Can the assistant send without asking me?">
+    Only if you allow it twice over. Sending needs the **Send messages** permission (`crm:send`) when you connect, and even then the server tells the assistant to show you the exact text and wait for a yes unless you told it to send without asking. Untick **Send messages** if you never want it to send.
+  </Accordion>
+  <Accordion title="How do I disconnect an assistant?">
+    Open **Settings, AI assistants, Your connections** and choose **Disconnect**. It stops at once, including tokens it already holds.
+  </Accordion>
+  <Accordion title="Claude says it couldn't determine how the server signs in">
+    See [Troubleshooting](/mcp#troubleshooting) on the AI assistants page.
+  </Accordion>
+</AccordionGroup>
+
 ## Security problems
 
 Don't describe a vulnerability in an issue, a discussion or a pull request. Report it privately through [GitHub private vulnerability reporting](https://github.com/Kandid-ai/AgentSDR/security/advisories/new). Only the maintainers can see the report. Include the affected version, the component, and the steps to reproduce. The full policy is in [SECURITY.md](https://github.com/Kandid-ai/AgentSDR/blob/main/SECURITY.md).

@@ -108,6 +108,15 @@ email, pipeline name, `grid_providers.key`, and so on). The migration scripts,
 table that nobody classified fails `db:check`. The rules for queries are in
 [multi-tenancy/conventions.md](multi-tenancy/conventions.md).
 
+## OAuth tables (AI assistants)
+
+The MCP server's sign-in adds `jwks`, `oauth_clients`, `oauth_resources`,
+`oauth_client_resources`, `oauth_refresh_tokens`, `oauth_access_tokens`,
+`oauth_consents` and `oauth_client_assertions`, created by
+`bun run scripts/create-oauth-provider-tables.ts`. `api_keys.scopes` is added
+by `bun run scripts/add-api-key-scopes.ts`. The signing key in `jwks` is
+encrypted with `BETTER_AUTH_SECRET`. See [mcp.mdx](mcp.mdx).
+
 ## Connection pool
 
 `max_connections` on the server is shared by everything that points at it. The

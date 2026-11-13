@@ -254,6 +254,7 @@ clicking. That is a compliance problem. See
 | **What it does** | The app's public origin, no trailing slash. It is read at **runtime** and used for Better Auth's links and trusted origin (sign-in from any other origin is refused), the unsubscribe links in sent email, and the Unipile hosted-auth redirect and webhook URLs. If it is wrong, links in email point to the wrong place and webhooks never arrive. |
 | **How to get it** | The address you open AgentSDR at, including `https://`. It must be reachable from the internet if you use Gmail push, Unipile or the call recorder. |
 | **Example** | `BETTER_AUTH_URL=https://agentsdr.example.com` |
+| **Also used for** | The AI assistants (MCP) server: OAuth tokens are issued for, and only accepted at, `<BETTER_AUTH_URL>/api/mcp`, so it must be the public address. See [AI assistants](/mcp). |
 | **Read in** | `src/lib/auth/server.ts`, `src/lib/http/publicAppUrl.ts`, `src/lib/outreach/render.ts`, `src/lib/linkedin/hostedAuthUrls.ts` |
 
 ### `NEXT_PUBLIC_APP_URL`

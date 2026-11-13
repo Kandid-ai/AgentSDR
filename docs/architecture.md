@@ -154,6 +154,17 @@ or legacy, and `bun run db:check` fails if a table is unclassified. See
 [multi-tenancy/conventions.md](multi-tenancy/conventions.md) and
 [multi-tenancy/plan.md](https://github.com/Kandid-ai/AgentSDR/blob/main/docs/multi-tenancy/plan.md).
 
+## AI assistants (MCP)
+
+`/api/mcp` is a Model Context Protocol server over Streamable HTTP, so an AI
+assistant can work the CRM Action required queue. Sign-in is OAuth served by
+Better Auth's MCP plugin (`@better-auth/mcp`), with dynamic client
+registration. Each connection carries scopes (`crm:read`, `crm:write`,
+`crm:send`) and each tool is offered only if the scope allows it. API keys
+carry scopes too and can be sent as a Bearer header instead. Every call runs
+inside the organization the person chose when connecting, and what it does is
+recorded in the CRM timeline. See [mcp.mdx](mcp.mdx).
+
 ## Integrations store
 
 Platform integrations (Unipile, Google Workspace, R2) are one row each per

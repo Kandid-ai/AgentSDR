@@ -46,6 +46,7 @@ Outbound usually means stitching together a lead database, an enrichment tool, a
 
 - **One workspace instead of six tools.** One record per person and company, so a reply on LinkedIn shows up in the same queue and pipeline as an email reply.
 - **The AI does the tracking.** Every reply, on every channel, is read, classified and given a drafted answer. You approve what goes out.
+- **Work it from a chat.** Connect Claude, Claude Code or any MCP client and work the Action required queue from there ([AI assistants](https://docs.agentsdr.ai/mcp)).
 - **You own it.** A single Next.js app and one PostgreSQL database on your own server. Your leads, conversations and recordings never leave infrastructure you control.
 - **Your keys, no seats.** Connect your own Google Workspace, Unipile, storage and any AI model on OpenRouter. No per-seat or per-contact fees: you pay your server and your providers.
 

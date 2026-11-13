@@ -77,6 +77,20 @@ When you connect, the consent screen lists what the app asked for. Untick **Work
 
 **Settings, AI assistants, Your connections** lists every assistant connected as you, with when it was last active. **Disconnect** stops it at once, including tokens it already holds. Removing someone from the organization cuts their connections too.
 
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Claude says &quot;Couldn't determine how this server signs in&quot;">
+    Claude's connector check could not reach or read the server. Try again, and check that the URL ends in `/api/mcp`. On a self-hosted instance, make sure it is reachable over public HTTPS and that a firewall, WAF or bot filter is not blocking Claude's requests.
+  </Accordion>
+  <Accordion title="A tool fails with 403 &quot;insufficient scope&quot;">
+    The connection was not given that permission. Disconnect it, connect again and leave the permission ticked on the consent screen. See [Permissions](#permissions-scopes).
+  </Accordion>
+  <Accordion title="&quot;The connection was disconnected&quot;">
+    The connection was disconnected in **Settings, AI assistants**, or the person was removed from the organization. Connect again.
+  </Accordion>
+</AccordionGroup>
+
 ## Example prompts
 
 - *Summarise my Action required queue by group.*
