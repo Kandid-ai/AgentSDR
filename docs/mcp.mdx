@@ -36,6 +36,8 @@ https://<your AgentSDR address>/api/mcp
   <Tab title="Other clients">
     Any client that supports remote MCP servers over **Streamable HTTP** with OAuth works with the same URL. It registers itself automatically (Dynamic Client Registration, or a Client ID Metadata Document) and opens the AgentSDR sign-in.
 
+    **ChatGPT** works this way too: add AgentSDR as a custom app (connector) in ChatGPT's settings with the server URL, then sign in and allow access. Cursor, Windsurf and other editors take the same URL in their MCP settings.
+
     For a setup with no browser (a script, a server-side agent), an owner or admin can create an **API key** in **Settings, API keys** with the CRM permissions ticked, and send it as a header:
 
     ```json

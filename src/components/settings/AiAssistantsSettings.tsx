@@ -189,7 +189,7 @@ export function AiAssistantsSettings({ serverUrl }: { serverUrl: string }) {
       </Frame>
 
       <Frame>
-        <FrameHeader title="Server URL" description="Paste this into Claude (or any MCP client) to connect." />
+        <FrameHeader title="Server URL" description="Paste this into Claude, ChatGPT or any MCP client to connect." />
         <FramePanel>
           <div className="flex items-center gap-2">
             <Input.Root size="small" className="flex-1">
@@ -260,7 +260,8 @@ export function AiAssistantsSettings({ serverUrl }: { serverUrl: string }) {
           {tab === "other" && (
             <div className="flex flex-col gap-4 text-paragraph-sm text-text-sub-600">
               <p>
-                Any client that supports remote MCP over Streamable HTTP with OAuth works with the same server URL.
+                Any client that supports remote MCP over Streamable HTTP with OAuth works with the same server URL, including
+                ChatGPT (add AgentSDR as a custom app in its settings), Cursor and other editors.
               </p>
               <p>
                 For a setup with no browser, an owner or admin can create an API key under <b>Settings → API keys</b> and
