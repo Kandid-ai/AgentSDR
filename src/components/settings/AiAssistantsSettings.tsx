@@ -229,9 +229,9 @@ export function AiAssistantsSettings({ serverUrl }: { serverUrl: string }) {
             <div className="flex flex-col gap-4">
               <Steps
                 items={[
-                  <>Open Claude and go to <b>Settings → Connectors</b>.</>,
-                  <>Choose <b>Add custom connector</b>. Name it <b>AgentSDR</b> and paste the server URL above.</>,
-                  <>Click <b>Add</b>, then <b>Connect</b>.</>,
+                  <>Open Claude and go to <b>Customize → Connectors</b> (also reachable from Settings).</>,
+                  <>Choose <b>Add → Add custom connector</b>. Name it <b>AgentSDR</b>, paste the server URL above, and choose <b>Continue</b>.</>,
+                  <>Once Claude has checked the server, choose <b>Add</b>, then <b>Connect</b>.</>,
                   <>Sign in to AgentSDR if asked, check the organization, and choose <b>Allow</b>.</>,
                   <>In a chat, switch AgentSDR on from the tools menu and ask, for example, &ldquo;What&apos;s in my Action required queue?&rdquo;</>,
                 ]}
