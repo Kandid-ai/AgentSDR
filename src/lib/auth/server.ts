@@ -4,13 +4,24 @@ import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
-import { organization } from "better-auth/plugins";
+import { jwt, organization } from "better-auth/plugins";
+import { cimd } from "@better-auth/cimd";
+import { fetchClientMetadataResource } from "@better-auth/cimd/node";
+import { mcp } from "@better-auth/mcp";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { authEmail, sendAuthEmail } from "./email";
 import { ac, roles } from "./permissions";
 import { authSchema, members } from "./schema";
 import { mayCreateAccount, mayCreateOrganization } from "./signup";
+import { MCP_SCOPES } from "@/lib/publicApi/scopes";
+import {
+  ORGANIZATION_CLAIM,
+  ORGANIZATION_PICKER_PAGE,
+  connectionOrganizationId,
+  mcpResourceUrl,
+  needsOrganizationChoice,
+} from "@/lib/mcp/oauth";
 
 /**
  * The Better Auth instance: email + password (verified), Google when
@@ -25,6 +36,9 @@ import { mayCreateAccount, mayCreateOrganization } from "./signup";
  */
 
 const baseURL = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+
+/** Identity scopes plus what an MCP client may do (src/lib/publicApi/scopes.ts). */
+const OAUTH_SCOPES = ["openid", "profile", "email", "offline_access", ...MCP_SCOPES];
 
 const googleConfigured = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 
@@ -48,6 +62,10 @@ export const auth = betterAuth({
   advanced: {
     database: { generateId: "uuid" },
   },
+
+  // The JWT plugin's own session-to-JWT endpoint is not wanted: access
+  // tokens come only from the OAuth flow below.
+  disabledPaths: ["/token"],
 
   emailAndPassword: {
     enabled: true,
@@ -155,6 +173,35 @@ export const auth = betterAuth({
         ).catch((error) => console.error("[auth] invitation email failed:", error));
       },
     }),
+    // OAuth 2.1 for MCP clients (Claude, Claude Desktop, Claude Code): /api/mcp
+    // is the protected resource, this app the authorization server. Signing
+    // keys live in `jwks`; tokens, clients and consents in the oauth_* tables.
+    jwt({ disableSettingJwtHeader: true, schema: { jwks: { modelName: "jwk" } } }),
+    mcp({
+      resource: mcpResourceUrl(),
+      loginPage: "/sign-in",
+      consentPage: "/oauth/consent",
+      // crm:read / crm:write / crm:send — the person can grant fewer on the
+      // consent screen; a client that registers without naming scopes may
+      // ask for any of them.
+      scopes: OAUTH_SCOPES,
+      clientRegistrationDefaultScopes: OAUTH_SCOPES,
+      // Claude Code registers itself (RFC 7591); claude.ai prefers a Client ID
+      // Metadata Document (cimd below) and falls back to registration.
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      // Claude Code, Cursor and other desktop clients register a loopback
+      // callback (http://localhost:<port>/callback) without saying they are
+      // native apps; under the default ("web") that registration is refused.
+      clientRegistrationDefaultApplicationType: "infer",
+      postLogin: {
+        page: ORGANIZATION_PICKER_PAGE,
+        shouldRedirect: needsOrganizationChoice,
+        consentReferenceId: connectionOrganizationId,
+      },
+      customAccessTokenClaims: ({ referenceId }) => (referenceId ? { [ORGANIZATION_CLAIM]: referenceId } : {}),
+    }),
+    cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
     // Must stay last: lets server actions set Better Auth's cookies.
     nextCookies(),
   ],

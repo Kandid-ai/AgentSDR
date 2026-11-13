@@ -24,14 +24,16 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST /api/settings/api-keys: body { name }; returns { key, apiKey }. `key` is shown once.
+// POST /api/settings/api-keys: body { name, scopes? }; returns { key, apiKey }. `key` is shown once.
+// `scopes` (src/lib/publicApi/scopes.ts) defaults to all of them.
 export async function POST(req: NextRequest) {
   const body: unknown = await req.json().catch(() => null);
   const name = body && typeof body === "object" && "name" in body && typeof body.name === "string" ? body.name : "";
+  const scopes = body && typeof body === "object" && "scopes" in body && Array.isArray(body.scopes) ? body.scopes : undefined;
   try {
     return await withOrgContext(req, async (ctx) => {
       requirePermission(ctx, { integrations: ["manage"] });
-      return NextResponse.json(await createApiKey(name, ctx.userId), { status: 201 });
+      return NextResponse.json(await createApiKey(name, ctx.userId, scopes), { status: 201 });
     });
   } catch (error) {
     return failure(error, "Could not create the API key");

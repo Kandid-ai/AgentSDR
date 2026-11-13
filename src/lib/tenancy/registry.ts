@@ -184,4 +184,13 @@ export const AUTH_TABLES: readonly string[] = [
   "invitations",
   "teams",
   "team_members",
+  // OAuth provider for MCP clients (scripts/create-oauth-provider-tables.ts)
+  "jwks",
+  "oauth_clients",
+  "oauth_resources",
+  "oauth_client_resources",
+  "oauth_refresh_tokens",
+  "oauth_access_tokens",
+  "oauth_consents",
+  "oauth_client_assertions",
 ];

@@ -166,6 +166,44 @@ functions rather than its own copy of the rules: leads go through
 checks), a stop through `stopCampaignLeads` (`sequence_completed`, not
 suppression). Keep request parsing pure in `requests.ts`, with tests.
 
+## The MCP server: AI assistants work the app
+
+`/api/mcp` (public in `proxy.ts`) is an MCP server (Streamable HTTP,
+stateless, `@modelcontextprotocol/server` v2) so Claude, Claude Code or any
+MCP client can do a rep's work; `docs/mcp.mdx` is the user guide, Settings →
+AI assistants the connect page. Two ways in, both resolving ONE organization
+(`src/lib/mcp/caller.ts`):
+
+- **OAuth** — this app is the authorization server (`@better-auth/mcp` +
+  `cimd` + `jwt` in `src/lib/auth/server.ts`; tables `jwks`, `oauth_*`,
+  `scripts/create-oauth-provider-tables.ts`). The organization is chosen at
+  sign-in (`/oauth/organization`), stored as the consent's `referenceId` and
+  carried in the token's `organization_id` claim. Every request re-checks the
+  membership AND that the consent still exists, so Disconnect is immediate.
+  Discovery lives at root `/.well-known/*` routes because Better Auth is
+  mounted under `/api/auth`.
+- **API key** (`Bearer asdr_…`) for headless clients; acts as the organization.
+
+Both carry **scopes** (`src/lib/publicApi/scopes.ts`, one registry for MCP
+and `/api/v1`): `crm:read` / `crm:write` / `crm:send` (+ `campaigns:*` for
+the REST API). The person can withhold scopes on the consent screen; API keys
+store theirs in `api_keys.scopes` (NULL = all, for old keys). Each tool names
+its scope (`CRM_TOOL_SCOPES`); the per-request server lists only the tools
+the caller may use and `run()` re-checks.
+
+Tools live in `src/lib/mcp/tools/<area>.ts`, named `<area>_<verb>`, and call
+the same lib functions the app's routes call inside `runInOrganization`,
+never their own copy of the rules. Each returns compact JSON (ids needed for
+the next call beside what they act on; long text cut with a stated limit)
+and turns failures into `isError` results the model can act on. Actions are
+attributed via `actorRef` = "<name> via AI assistant". Sending must stay its
+own scope and tool, annotated destructive/open-world.
+
+The JWT signing key in `jwks` is encrypted with `BETTER_AUTH_SECRET`. The
+local dev server has its own secret but the production database, so OAuth
+tested locally leaves a key production cannot read: delete the `jwks` and
+`oauth_*` rows a local test created before production issues tokens.
+
 ## Prompts live in Langfuse, and every AI call is traced
 
 Langfuse is an optional platform integration **per organization**

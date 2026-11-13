@@ -47,9 +47,11 @@ export function SignInForm({
     setUnverified(false);
     setResent(false);
     setLoading(true);
-    const { error: err } = await authClient.signIn.email({ email, password, callbackURL: target });
+    const { data, error: err } = await authClient.signIn.email({ email, password, callbackURL: target });
     if (!err) {
-      window.location.href = target;
+      // An AI assistant (OAuth) sign-in answers with the next step of that flow.
+      const next = data as { redirect?: boolean; url?: unknown } | null;
+      window.location.href = next?.redirect === true && typeof next.url === "string" ? next.url : target;
       return;
     }
     if (err.code === "EMAIL_NOT_VERIFIED") setUnverified(true);

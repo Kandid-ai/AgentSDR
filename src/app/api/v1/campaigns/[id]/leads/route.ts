@@ -8,7 +8,7 @@ import { PublicApiError, parseLeadsRequest } from "@/lib/publicApi/requests";
 // campaign are skipped, extra fields become merge fields. Returns
 // { total, imported, skippedSuppressed, skippedDuplicate, failed: [{ index, email, error }] }.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  return withApiKey(req, async () => {
+  return withApiKey(req, "campaigns:write", async () => {
     const campaignId = campaignIdParam((await params).id);
     const rows = parseLeadsRequest(await jsonBody(req));
     const result = await importRowsForCampaign(campaignId, rows, {

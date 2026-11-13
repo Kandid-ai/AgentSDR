@@ -2,11 +2,13 @@
 
 import { useState, type FormEvent } from "react";
 import * as Button from "@/components/alignui/button";
+import * as Checkbox from "@/components/alignui/checkbox";
 import * as Input from "@/components/alignui/input";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
 import { useDialogs } from "@/components/DialogProvider";
 import { Callout } from "@/components/settings/SettingsKit";
 import type { ApiKeySummary } from "@/lib/publicApi/keys";
+import { ALL_API_SCOPES, API_SCOPES, type ApiScope } from "@/lib/publicApi/scopes";
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
@@ -23,6 +25,7 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
   const dialogs = useDialogs();
   const [keys, setKeys] = useState(initialKeys);
   const [name, setName] = useState("");
+  const [scopes, setScopes] = useState<Set<ApiScope>>(() => new Set(ALL_API_SCOPES));
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<{ key: string; name: string } | null>(null);
@@ -37,7 +40,7 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
       const res = await fetch("/api/settings/api-keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: name.trim(), scopes: ALL_API_SCOPES.filter((scope) => scopes.has(scope)) }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) return setError(data?.error || "Could not create the key.");
@@ -88,8 +91,9 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
   return (
     <div className="flex flex-col gap-6">
       <Callout tone="info">
-        A key acts for the whole organization: it can list email campaigns, add leads to them and stop a
-        lead&apos;s sequence. Send it as <code>Authorization: Bearer &lt;key&gt;</code> to <code>/api/v1/</code>.
+        A key acts for the whole organization, limited to what you tick when you create it. Send it as{" "}
+        <code>Authorization: Bearer &lt;key&gt;</code> to <code>/api/v1/</code>, or use it to connect an AI assistant
+        to <code>/api/mcp</code> without signing in (Settings → AI assistants).
       </Callout>
       {error && <Callout tone="error">{error}</Callout>}
 
@@ -118,7 +122,8 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
       <Frame>
         <FrameHeader title="Create a key" description="Name it after what will use it, for example the app's name." />
         <FramePanel>
-          <form onSubmit={create} className="flex flex-col gap-3 sm:flex-row">
+          <form onSubmit={create} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row">
             <Input.Root size="small" className="flex-1">
               <Input.Wrapper>
                 <Input.Input
@@ -130,9 +135,33 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
                 />
               </Input.Wrapper>
             </Input.Root>
-            <Button.Root type="submit" variant="primary" mode="filled" size="small" disabled={busy === "create" || !name.trim()}>
+            <Button.Root type="submit" variant="primary" mode="filled" size="small" disabled={busy === "create" || !name.trim() || scopes.size === 0}>
               {busy === "create" ? "Creating…" : "Create key"}
             </Button.Root>
+            </div>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-1 text-label-xs text-text-sub-600">What the key may do</legend>
+              {ALL_API_SCOPES.map((scope) => (
+                <label key={scope} className="flex cursor-pointer items-start gap-2.5">
+                  <Checkbox.Root
+                    className="mt-0.5"
+                    checked={scopes.has(scope)}
+                    onCheckedChange={(checked) => setScopes((current) => {
+                      const next = new Set(current);
+                      if (checked === true) next.add(scope);
+                      else next.delete(scope);
+                      return next;
+                    })}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-label-sm text-text-strong-950">
+                      {API_SCOPES[scope].label} <code className="text-paragraph-xs text-text-soft-400">{scope}</code>
+                    </span>
+                    <span className="block text-paragraph-xs text-text-sub-600">{API_SCOPES[scope].description}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
           </form>
         </FramePanel>
       </Frame>
@@ -153,6 +182,11 @@ export function ApiKeysSettings({ initialKeys }: { initialKeys: ApiKeySummary[] 
                     </p>
                     <p className="text-paragraph-xs text-text-sub-600">
                       <code>{key.keyPrefix}…</code> · Created {when(key.createdAt)} · Last used {when(key.lastUsedAt)}
+                    </p>
+                    <p className="text-paragraph-xs text-text-soft-400">
+                      {key.scopes.length === ALL_API_SCOPES.length
+                        ? "Full access"
+                        : key.scopes.map((scope) => API_SCOPES[scope].label).join(" · ") || "No access"}
                     </p>
                   </div>
                   {!key.revokedAt && (

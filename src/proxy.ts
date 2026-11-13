@@ -52,6 +52,13 @@ const PUBLIC = [
   // session. Every route under this prefix starts with withApiKey()
   // (src/lib/publicApi/http.ts); never add one that doesn't.
   "/api/v1/",
+  // The MCP server for AI assistants (Claude, Claude Code, …), called with an
+  // OAuth access token or an API key, never the site cookie. The route checks
+  // either itself (src/app/api/mcp/route.ts); keep it the only thing here.
+  "/api/mcp",
+  // OAuth discovery for MCP clients (RFC 9728 / RFC 8414): public metadata only.
+  "/.well-known/oauth-",
+  "/.well-known/openid-configuration",
 ];
 
 /**

@@ -30,7 +30,7 @@ import { CrmNotFoundError } from "./repository";
 import { crmDueState } from "./stateMachine";
 import type { CrmActionGroup } from "./actionGroups";
 import { crmActionableSql, crmActionGroupSql } from "./actionGroups.server";
-import { inOrg } from "@/lib/tenancy/scope";
+import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 
 /**
  * LinkedIn outreach predates the CRM: the invitation note, the acceptance
@@ -127,6 +127,8 @@ export type CrmActionFilters = {
   sequenceId?: string;
   /** One of the queue's action groups; filtered in SQL, so the total stays exact. */
   actionGroup?: CrmActionGroup;
+  /** Case-insensitive match on the person's name or email, or their company's name. */
+  search?: string;
   error?: boolean;
   overdue?: boolean;
   dueAfter?: Date;
@@ -134,6 +136,35 @@ export type CrmActionFilters = {
   limit?: number;
   offset?: number;
 };
+
+/** A LIKE pattern matching `text` literally anywhere (its own % and _ escaped). */
+function containsPattern(text: string): string {
+  return `%${text.trim().replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
+}
+
+/** The `search` filter: person name/email or company name. The query must join `people`. */
+function personSearchCondition(search: string) {
+  const pattern = containsPattern(search);
+  return sql`(${people.fullName} ilike ${pattern}
+    or ${people.email} ilike ${pattern}
+    or concat_ws(' ', ${people.firstName}, ${people.lastName}) ilike ${pattern}
+    or exists (select 1 from companies search_company
+      where search_company.id = ${people.companyId} and search_company.name ilike ${pattern}))`;
+}
+
+/** How many records the Action required queue holds in each action group. */
+export async function countCrmActionGroups(): Promise<Record<CrmActionGroup, number>> {
+  // Over an aliased subquery: grouping by the CASE itself fails, because
+  // Drizzle prints its columns unqualified in SELECT and qualified in GROUP BY.
+  const r = { id: sql`r.id`, workflowState: sql`r.workflow_state`, nextActionAt: sql`r.next_action_at` };
+  const rows = (await db.execute(sql`select grp, count(*)::int as total from (
+      select ${crmActionGroupSql(r)} as grp from crm_records r
+       where r.organization_id = ${currentOrganizationId()} and ${crmActionableSql(r)}
+    ) grouped group by grp`)) as unknown as { grp: CrmActionGroup | null; total: number }[];
+  const counts = { reply: 0, follow_up: 0, classification: 0, next_step: 0, problem: 0 } satisfies Record<CrmActionGroup, number>;
+  for (const row of rows) if (row.grp) counts[row.grp] = Number(row.total);
+  return counts;
+}
 
 export async function listCrmActions(input: CrmActionFilters = {}) {
   const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 50)));
@@ -156,6 +187,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
     input.subcategoryId ? eq(crmRecords.subcategoryId, input.subcategoryId) : undefined,
     input.channel ? eq(crmRecords.activeChannel, input.channel) : undefined,
     input.actionGroup ? sql`${actionGroup} = ${input.actionGroup}` : undefined,
+    input.search?.trim() ? personSearchCondition(input.search) : undefined,
     input.overdue ? sql`${crmRecords.nextActionAt} <= now()` : undefined,
     input.dueAfter ? sql`${crmRecords.nextActionAt} >= ${input.dueAfter}` : undefined,
     input.dueBefore ? sql`${crmRecords.nextActionAt} <= ${input.dueBefore}` : undefined,
@@ -201,7 +233,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       .where(where)
       .orderBy(...orderBy)
       .limit(limit).offset(offset),
-    db.select({ total: count() }).from(crmRecords).where(where),
+    // Joined like the page read: the search filter reads people's columns.
+    db.select({ total: count() }).from(crmRecords).innerJoin(people, eq(people.id, crmRecords.personId)).where(where),
     db.selectDistinctOn([crmConversations.crmRecordId], { recordId: crmConversations.crmRecordId, message: messageListColumns })
       .from(crmConversationMessages)
       .innerJoin(crmConversations, eq(crmConversations.id, crmConversationMessages.conversationId))

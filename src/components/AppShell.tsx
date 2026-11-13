@@ -20,6 +20,9 @@ const CHROMELESS_ROUTES = [
   "/reset-password",
   "/onboarding",
   "/accept-invitation",
+  // Connecting an AI assistant (OAuth consent, organization picker): a
+  // sign-in step, not a page of the app. Each checks the session itself.
+  "/oauth",
   // First-run setup: no session exists yet, so SessionGate would send the
   // visitor to /sign-in, which sends a fresh instance straight back here.
   "/setup",

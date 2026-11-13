@@ -8,7 +8,7 @@ import { inOrg } from "@/lib/tenancy/scope";
 // GET /api/v1/campaigns: the organization's email campaigns, newest first:
 // { campaigns: [{ id, name, status, createdAt }] }. Authorized by API key.
 export async function GET(req: NextRequest) {
-  return withApiKey(req, async () => {
+  return withApiKey(req, "campaigns:read", async () => {
     const rows = await db
       .select({ id: outreachCampaigns.id, name: outreachCampaigns.name, status: outreachCampaigns.status, createdAt: outreachCampaigns.createdAt })
       .from(outreachCampaigns)

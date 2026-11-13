@@ -4,20 +4,28 @@ import { NextResponse } from "next/server";
 import { runInOrganization } from "@/lib/tenancy/scope";
 import { organizationForApiKey } from "./keys";
 import { PublicApiError } from "./requests";
+import { API_SCOPES, type ApiScope } from "./scopes";
 
 /**
  * The first line of every public API route (/api/v1/*, public in proxy.ts,
  * so this is the only gate). Resolves the organization from the request's
  * API key and runs `fn` inside its scope, so every query keeps its inOrg
- * filter and a key never reaches another organization's data.
+ * filter and a key never reaches another organization's data. `scope` is
+ * what the route does (src/lib/publicApi/scopes.ts); a key without it gets 403.
  */
-export async function withApiKey(request: Request, fn: () => Promise<Response>): Promise<Response> {
+export async function withApiKey(request: Request, scope: ApiScope, fn: () => Promise<Response>): Promise<Response> {
   try {
     const caller = await organizationForApiKey(request.headers.get("authorization"));
     if (!caller) {
       return NextResponse.json(
         { error: "Missing or invalid API key. Send it as Authorization: Bearer <key> (Settings, API keys)." },
         { status: 401, headers: { "WWW-Authenticate": "Bearer" } },
+      );
+    }
+    if (!caller.scopes.includes(scope)) {
+      return NextResponse.json(
+        { error: `This API key may not ${API_SCOPES[scope].label.toLowerCase()} (scope ${scope}). Create a key with that permission in Settings, API keys.` },
+        { status: 403, headers: { "WWW-Authenticate": `Bearer error="insufficient_scope", scope="${scope}"` } },
       );
     }
     return await runInOrganization(caller.organizationId, fn);

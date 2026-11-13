@@ -12,6 +12,7 @@ Owners and admins create keys in **Settings, API keys**. Give each key the name 
 
 - The key is shown **once**, when you create it. Copy it into the other application's settings. AgentSDR stores only a hash of it, so a lost key cannot be shown again: revoke it and create a new one.
 - A key acts for the **whole organization** that created it, and only that organization.
+- A key does only what was ticked when it was created: **Read campaigns** (`campaigns:read`) lists campaigns, **Manage campaign leads** (`campaigns:write`) adds and stops leads. The CRM permissions (`crm:read`, `crm:write`, `crm:send`) let the key connect an AI assistant instead; see [AI assistants (MCP)](/mcp). Keys created before permissions existed can do everything.
 - **Revoke** stops a key at once. Settings keeps showing when each key was last used.
 
 Send the key in the `Authorization` header of every request:
@@ -21,7 +22,7 @@ curl https://agentsdr.example.com/api/v1/campaigns \
   -H "Authorization: Bearer asdr_..."
 ```
 
-A missing, unknown or revoked key gets `401`. Errors are JSON: `{ "error": "..." }`, with a message that names the field at fault.
+A missing, unknown or revoked key gets `401`; a key without the permission a route needs gets `403`. Errors are JSON: `{ "error": "..." }`, with a message that names the field at fault.
 
 ## List email campaigns
 

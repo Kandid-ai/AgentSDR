@@ -7,7 +7,7 @@ import { PublicApiError, parseStopRequest } from "@/lib/publicApi/requests";
 // sequence for those leads without suppressing them (src/lib/outreach/stopLeads.ts).
 // Idempotent. Returns { stopped, alreadyEnded, notFound: [email] }.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  return withApiKey(req, async () => {
+  return withApiKey(req, "campaigns:write", async () => {
     const campaignId = campaignIdParam((await params).id);
     const result = await stopCampaignLeads(campaignId, parseStopRequest(await jsonBody(req)));
     if (!result) throw new PublicApiError(404, "Campaign not found");

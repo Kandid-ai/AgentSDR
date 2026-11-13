@@ -4,6 +4,7 @@ import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import { apiKeys } from "./schema";
+import { ALL_API_SCOPES, normalizeScopes, type ApiScope } from "./scopes";
 import { apiKeyFromAuthorization, createApiKeySecret, hashApiKey } from "./token";
 
 /** What Settings shows for a key; never the key or its hash. */
@@ -14,6 +15,8 @@ export type ApiKeySummary = {
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
+  /** What the key may do. Keys made before scopes existed have them all. */
+  scopes: ApiScope[];
 };
 
 const MAX_NAME_LENGTH = 100;
@@ -29,7 +32,13 @@ function summary(row: typeof apiKeys.$inferSelect): ApiKeySummary {
     createdAt: row.createdAt.toISOString(),
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
     revokedAt: row.revokedAt?.toISOString() ?? null,
+    scopes: keyScopes(row.scopes),
   };
+}
+
+/** A stored scope list; NULL (a key from before scopes) means all of them. */
+function keyScopes(stored: string[] | null): ApiScope[] {
+  return stored === null ? [...ALL_API_SCOPES] : normalizeScopes(stored);
 }
 
 /** The organization's keys, newest first. Runs inside an organization scope. */
@@ -39,14 +48,20 @@ export async function listApiKeys(): Promise<ApiKeySummary[]> {
 }
 
 /** Creates a key; the returned `key` is the only time it exists in clear. */
-export async function createApiKey(name: string, createdBy: string): Promise<{ key: string; apiKey: ApiKeySummary }> {
+export async function createApiKey(
+  name: string,
+  createdBy: string,
+  scopes: readonly unknown[] = ALL_API_SCOPES,
+): Promise<{ key: string; apiKey: ApiKeySummary }> {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Give the key a name");
   if (trimmed.length > MAX_NAME_LENGTH) throw new Error(`Keep the name under ${MAX_NAME_LENGTH} characters`);
+  const granted = normalizeScopes(scopes);
+  if (!granted.length) throw new Error("Choose at least one thing the key may do");
   const { key, hash, prefix } = createApiKeySecret();
   const [row] = await db
     .insert(apiKeys)
-    .values({ organizationId: currentOrganizationId(), name: trimmed, keyPrefix: prefix, keyHash: hash, createdBy })
+    .values({ organizationId: currentOrganizationId(), name: trimmed, keyPrefix: prefix, keyHash: hash, createdBy, scopes: granted })
     .returning();
   return { key, apiKey: summary(row) };
 }
@@ -69,11 +84,13 @@ export async function revokeApiKey(id: string): Promise<boolean> {
  * webhook, the request finds its organization through the data (the key's
  * hash, unique across organizations).
  */
-export async function organizationForApiKey(authorization: string | null): Promise<{ organizationId: string; keyId: string } | null> {
+export async function organizationForApiKey(
+  authorization: string | null,
+): Promise<{ organizationId: string; keyId: string; name: string; scopes: ApiScope[] } | null> {
   const key = apiKeyFromAuthorization(authorization);
   if (!key) return null;
   const [row] = await db
-    .select({ id: apiKeys.id, organizationId: apiKeys.organizationId })
+    .select({ id: apiKeys.id, organizationId: apiKeys.organizationId, name: apiKeys.name, scopes: apiKeys.scopes })
     .from(apiKeys)
     .where(and(eq(apiKeys.keyHash, hashApiKey(key)), isNull(apiKeys.revokedAt)))
     .limit(1);
@@ -87,5 +104,5 @@ export async function organizationForApiKey(authorization: string | null): Promi
       eq(apiKeys.id, row.id),
       or(isNull(apiKeys.lastUsedAt), lt(apiKeys.lastUsedAt, new Date(now.getTime() - LAST_USED_RESOLUTION_MS))),
     ));
-  return { organizationId: row.organizationId, keyId: row.id };
+  return { organizationId: row.organizationId, keyId: row.id, name: row.name, scopes: keyScopes(row.scopes) };
 }

@@ -1,0 +1,93 @@
+---
+title: "AI assistants (MCP)"
+description: "Connect Claude, Claude Code or any MCP client to AgentSDR and work the Action required queue from a chat."
+icon: "robot"
+---
+
+AgentSDR is an [MCP](https://modelcontextprotocol.io) server. Connect an AI assistant (Claude on the web or desktop, Claude Code, Cursor, or any client that supports remote MCP servers) and it can do what a rep does in **CRM, Action required**: read the queue, open a lead with its whole conversation, review and send the AI's drafts or write its own, confirm or correct how a reply was classified, move stages, snooze, close and mark people Do Not Contact.
+
+Nobody needs database access or the API for this. Each person signs in with their own AgentSDR account, and everything the assistant does is recorded in the CRM timeline as *"&lt;their name&gt; via AI assistant"*.
+
+## The server URL
+
+```
+https://<your AgentSDR address>/api/mcp
+```
+
+**Settings, AI assistants** shows it with a Copy button, step-by-step setup for each app, and the assistants you have connected.
+
+## Connect
+
+<Tabs>
+  <Tab title="Claude (web and desktop)">
+    1. In Claude, open **Settings, Connectors** and choose **Add custom connector**.
+    2. Name it **AgentSDR** and paste the server URL. Choose **Add**.
+    3. Choose **Connect**. A browser window opens: sign in to AgentSDR, pick the organization if you belong to several, and choose **Allow**.
+    4. In a chat, turn AgentSDR on from the tools menu and ask, for example, *"What's in my Action required queue?"*
+
+    On Claude Team and Enterprise plans, an owner first adds the connector in the organization's settings; members then connect their own account.
+  </Tab>
+  <Tab title="Claude Code">
+    ```sh
+    claude mcp add --transport http agentsdr https://<your AgentSDR address>/api/mcp
+    ```
+    Then run `/mcp` in Claude Code, select **agentsdr**, choose **Authenticate**, and allow access in the browser that opens.
+  </Tab>
+  <Tab title="Other clients">
+    Any client that supports remote MCP servers over **Streamable HTTP** with OAuth works with the same URL. It registers itself automatically (Dynamic Client Registration, or a Client ID Metadata Document) and opens the AgentSDR sign-in.
+
+    For a setup with no browser (a script, a server-side agent), an owner or admin can create an **API key** in **Settings, API keys** with the CRM permissions ticked, and send it as a header:
+
+    ```json
+    {
+      "mcpServers": {
+        "agentsdr": {
+          "type": "http",
+          "url": "https://<your AgentSDR address>/api/mcp",
+          "headers": { "Authorization": "Bearer ${AGENTSDR_API_KEY}" }
+        }
+      }
+    }
+    ```
+
+    An API key acts as the organization, not a person: its actions are recorded under the key's name.
+  </Tab>
+</Tabs>
+
+## Permissions (scopes)
+
+Every connection carries scopes, and the assistant only sees the tools those allow.
+
+| Scope | Lets the assistant | Tools |
+|---|---|---|
+| `crm:read` (always) | See the Action required queue and lead records: conversations, details, calls | `crm_list_action_required`, `crm_get_record`, `crm_get_call`, `crm_list_stages` |
+| `crm:write` | Edit and rewrite drafts, write new ones, confirm or correct classifications, move stages, snooze, close or reopen, set Do Not Contact | `crm_update_draft`, `crm_regenerate_draft`, `crm_write_draft`, `crm_discard_draft`, `crm_review_classification`, `crm_move_stage`, `crm_snooze`, `crm_close_record`, `crm_set_do_not_contact` |
+| `crm:send` | Send messages to leads by email, LinkedIn or WhatsApp | `crm_send_draft` |
+
+When you connect, the consent screen lists what the app asked for. Untick **Work the CRM** or **Send messages** to give it less. For example, a read-only assistant can summarise and draft in the chat but cannot change or send anything. API keys get the same choice when they are created.
+
+## What the assistant can and cannot do
+
+- It works in **one organization**: the one you chose when connecting.
+- It follows every rule the app follows: Do Not Contact, sending limits and hours, and the stage sequences. Sending a reply or moving a stage starts that stage's follow-ups, exactly as it does in the app.
+- **Sending is real.** The server tells the assistant to show you the exact text and wait for a yes before it sends, unless you told it to send without asking. If you never want it to send, withhold **Send messages**.
+- Each record comes with a link that opens it in AgentSDR.
+
+## Disconnect
+
+**Settings, AI assistants, Your connections** lists every assistant connected as you, with when it was last active. **Disconnect** stops it at once, including tokens it already holds. Removing someone from the organization cuts their connections too.
+
+## Example prompts
+
+- *Summarise my Action required queue by group.*
+- *Draft replies for everyone who asked for pricing. Show me each one before sending.*
+- *Find Priya from Acme and tell me where the deal stands.*
+- *Everyone who said "not now": snooze their follow-up by a month.*
+- *What did Rahul say on our last call? Write a follow-up that picks up from there.*
+
+## Self-hosting notes
+
+- OAuth for MCP is served by Better Auth (`@better-auth/mcp`). Its tables (`jwks`, `oauth_*`) are created by `bun run scripts/create-oauth-provider-tables.ts`. API key scopes need `bun run scripts/add-api-key-scopes.ts`.
+- `BETTER_AUTH_URL` must be the public address: tokens are issued for, and only accepted at, `<BETTER_AUTH_URL>/api/mcp`.
+- The token-signing key in `jwks` is encrypted with `BETTER_AUTH_SECRET`. Two deployments that share a database must share that secret too.
+- Claude's servers must be able to reach your instance over HTTPS to connect from claude.ai. Claude Code connects from the computer it runs on.

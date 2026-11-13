@@ -22,6 +22,12 @@ export const apiKeys = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    /**
+     * What the key may do (src/lib/publicApi/scopes.ts). NULL = every scope:
+     * keys made before scopes existed keep working as they did.
+     * scripts/add-api-key-scopes.ts.
+     */
+    scopes: text("scopes").array(),
   },
   (t) => [
     uniqueIndex("api_keys_key_hash_uq").on(t.keyHash),
