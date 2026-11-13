@@ -250,6 +250,18 @@ the campaign scheduler yields a mailbox's turn to a waiting follow-up. A draft
 the sender cannot send within 48 h, or that a person takes over ("Review
 before sending"), goes to Action required like any other.
 
+An **out-of-office** reply needs no answer and never reaches Action required
+(`src/lib/crm/outOfOffice.ts`). Ingest still stops the person's outreach on
+arrival, but first writes down what it stopped (`outreach.paused_by_reply`
+event: email and WhatsApp campaign enrollments, the record's next CRM
+follow-up). When the classifier reads the reply as `out_of_office`, that is
+put back: the next message goes out when it was due, or on the return day
+the classifier read from the notice (`suggestedNextActionAt`, start of that
+day in the organization's time zone) if later. No draft is written. An
+out-of-office keeps any stage the record already has. LinkedIn and AI calling
+stay stopped. If an earlier reply from the person is still unanswered, the
+normal reply flow runs instead.
+
 Every draft (`buildDraftPrompt`, `src/lib/crm/ai/draft.ts`) is told who it
 goes out as (`sender`: the sending mailbox's display name or LinkedIn
 account's name, `src/lib/crm/draftSender.ts`), `now` in the organization's

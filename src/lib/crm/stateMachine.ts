@@ -129,6 +129,9 @@ export function classificationApplicationDecision(
 
 export type ReplyClassificationDecision = "auto_apply" | "keep_current" | "requires_review";
 
+/** The seeded Out of Office subcategory's key (slug of its name, fixed once created). */
+export const OUT_OF_OFFICE_SUBCATEGORY_KEY = "out_of_office";
+
 /**
  * How the AI's reading of an inbound reply lands on the record. Its best
  * guess applies whatever its confidence — the rep sees the category before
@@ -138,6 +141,10 @@ export type ReplyClassificationDecision = "auto_apply" | "keep_current" | "requi
  * (Meeting Booked → Interested). A move to an unranked stage (Not
  * Interested, Other) is a real change in the conversation, so it applies.
  * Only a stage marked "review required" still waits for a person.
+ *
+ * An out-of-office notice is not a change in the conversation either: it
+ * keeps whatever stage the record already has (Meeting Requested stays
+ * Meeting Requested), and labels only a record that has none.
  *
  * Call transcripts keep classificationApplicationDecision: nobody looks at
  * a call's stage before something is sent, so a doubtful reading there
@@ -152,13 +159,16 @@ export function replyClassificationDecision(
     | "subcategoryReviewRequired"
     | "currentStageRank"
     | "proposedStageRank"
-  >,
+  > & { proposedSubcategoryKey?: string | null },
 ): ReplyClassificationDecision {
   if (
     input.currentCategoryLocked
     && input.currentCategoryKey === "customer"
     && input.proposedCategoryKey !== "customer"
   ) {
+    return "keep_current";
+  }
+  if (input.proposedSubcategoryKey === OUT_OF_OFFICE_SUBCATEGORY_KEY && input.currentCategoryKey !== null) {
     return "keep_current";
   }
   if (

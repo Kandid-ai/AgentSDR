@@ -22,6 +22,7 @@ import {
 import { assertWorkflowTransition, workflowStateForInbound } from "./stateMachine";
 import { enqueueCrmJobInTransaction } from "./queue";
 import { interruptActiveSequenceRunInTransaction } from "./sequences";
+import { capturePausedOutreachInTransaction, hasPausedOutreach, OUTREACH_PAUSED_EVENT } from "./outOfOffice";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 
 export type CrmConversation = typeof crmConversations.$inferSelect;
@@ -348,19 +349,6 @@ export async function ingestInboundReplyInTransaction(
     .returning();
   if (!updated) throw new Error("Inbound CRM record update did not return a row");
 
-  await interruptActiveSequenceRunInTransaction(tx, {
-    recordId: current.id,
-    reason: "new_inbound_reply",
-    contextVersion,
-  });
-  await tx
-    .update(crmDrafts)
-    .set({ status: "stale", updatedAt: now })
-    .where(and(
-      eq(crmDrafts.crmRecordId, current.id),
-      inArray(crmDrafts.status, ["generating", "awaiting_review", "failed"]),
-    ));
-
   // A reply wins over every cold-outreach timer for this Person. The two
   // channel stores keep their execution state, separate from CRM classification.
   const emailEnrollments = await tx
@@ -374,6 +362,50 @@ export async function ingestInboundReplyInTransaction(
       eq(outreachLeads.personId, current.personId),
       inArray(outreachLeads.sequenceStatus, ["pending", "initial_sent", "in_follow_up", "reply_processing"]),
     ));
+  const whatsappEnrollments = await tx
+    .select({ id: whatsappCampaignLeads.id })
+    .from(whatsappCampaignLeads)
+    .where(and(
+      inArray(
+        whatsappCampaignLeads.campaignId,
+        tx.select({ id: whatsappCampaigns.id }).from(whatsappCampaigns).where(inOrg(whatsappCampaigns)),
+      ),
+      eq(whatsappCampaignLeads.personId, current.personId),
+      inArray(whatsappCampaignLeads.status, ["queued", "in_sequence"]),
+    ));
+  // Written down before it is stopped, so an out-of-office reply can put it
+  // back once the classifier has read it (outOfOffice.ts).
+  const paused = await capturePausedOutreachInTransaction(tx, {
+    recordId: current.id,
+    emailLeadIds: emailEnrollments.map((row) => row.id),
+    whatsappLeadIds: whatsappEnrollments.map((row) => row.id),
+  });
+  if (hasPausedOutreach(paused)) {
+    await appendCrmEvent(tx, {
+      personId: current.personId,
+      crmRecordId: current.id,
+      pipelineId: current.pipelineId,
+      eventType: OUTREACH_PAUSED_EVENT,
+      actorType: "system",
+      fromData: paused,
+      meta: { messageId: message.id },
+      contextVersion,
+    });
+  }
+
+  await interruptActiveSequenceRunInTransaction(tx, {
+    recordId: current.id,
+    reason: "new_inbound_reply",
+    contextVersion,
+  });
+  await tx
+    .update(crmDrafts)
+    .set({ status: "stale", updatedAt: now })
+    .where(and(
+      eq(crmDrafts.crmRecordId, current.id),
+      inArray(crmDrafts.status, ["generating", "awaiting_review", "failed"]),
+    ));
+
   if (emailEnrollments.length) {
     const ids = emailEnrollments.map((row) => row.id);
     await tx.delete(outreachMailboxQueue).where(inArray(outreachMailboxQueue.leadId, ids));
@@ -386,15 +418,13 @@ export async function ingestInboundReplyInTransaction(
       eq(linkedinLeads.personId, current.personId),
       inArray(linkedinLeads.status, ["PENDING", "REQUEST_SENT", "CONNECTED", "ACCEPT_MESSAGE_SENT", "FOLLOW_UP_1_SENT", "FOLLOW_UP_2_SENT", "FOLLOW_UP_3_SENT"]),
     ));
-  await tx.update(whatsappCampaignLeads).set({ status: "replied", repliedAt: now, nextSendAt: null, updatedAt: now })
-    .where(and(
-      inArray(
-        whatsappCampaignLeads.campaignId,
-        tx.select({ id: whatsappCampaigns.id }).from(whatsappCampaigns).where(inOrg(whatsappCampaigns)),
-      ),
-      eq(whatsappCampaignLeads.personId, current.personId),
-      inArray(whatsappCampaignLeads.status, ["queued", "in_sequence"]),
-    ));
+  if (whatsappEnrollments.length) {
+    await tx.update(whatsappCampaignLeads).set({ status: "replied", repliedAt: now, nextSendAt: null, updatedAt: now })
+      .where(and(
+        inArray(whatsappCampaignLeads.id, whatsappEnrollments.map((row) => row.id)),
+        inArray(whatsappCampaignLeads.status, ["queued", "in_sequence"]),
+      ));
+  }
   // AI calling campaigns: the engine stops calling and messaging them; a
   // call or message already under way finishes, and settling it leaves them replied.
   await tx.update(callCampaignContacts).set({ aiStatus: "replied", aiNextAt: null, updatedAt: now })

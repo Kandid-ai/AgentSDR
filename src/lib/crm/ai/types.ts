@@ -95,7 +95,11 @@ export type ClassificationContextInput = {
   recentConversation: readonly ClassificationMessage[];
   campaignSummary?: ClassificationCampaignSummary | null;
   knowledge?: readonly ClassificationKnowledgeDocument[] | null;
+  /** The current moment in the organization's time zone, to resolve "back on Monday". */
+  now?: ClassificationNow | null;
 };
+
+export type ClassificationNow = { iso: string; timeZone: string; local: string };
 
 export type ClassificationContextSnapshot = {
   taxonomy: {
@@ -120,6 +124,7 @@ export type ClassificationContextSnapshot = {
   latestInboundMessage: ClassificationMessage & { sentAt: string };
   recentConversation: Array<ClassificationMessage & { sentAt: string }>;
   knowledge: Array<{ documentId: string; title: string; kind: string | null; content: string }>;
+  now?: ClassificationNow;
 };
 
 export type BuiltClassificationContext = {

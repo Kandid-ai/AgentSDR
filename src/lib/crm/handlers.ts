@@ -10,6 +10,9 @@ import type {
   ClassificationSubcategory,
 } from "./ai/types";
 import { generateDraftForStep, generateFallbackDraft } from "./drafts";
+import { draftNow, loadDraftNow } from "./draftSender";
+import { resumeOutreachAfterOutOfOfficeInTransaction } from "./outOfOffice";
+import { OUT_OF_OFFICE_SUBCATEGORY_KEY } from "./stateMachine";
 import { loadCallContextMessages } from "./callHistory";
 import { appendCrmEvent } from "./events";
 import { inboundAnsweredFromCrm, inboundAnsweredSince, settleAnsweredRecordInTransaction } from "./manualOutbound";
@@ -65,6 +68,15 @@ export function classifiedIntoDoNotContactSubcategory(
   return subcategory?.key === "do_not_contact";
 }
 
+/** The classifier read the reply as an out-of-office notice (whatever stage the record keeps). */
+export function isOutOfOfficeReading(
+  subcategoryId: string | null,
+  subcategories: readonly Pick<ClassificationSubcategory, "id" | "key">[],
+): boolean {
+  if (!subcategoryId) return false;
+  return subcategories.find((candidate) => candidate.id === subcategoryId)?.key === OUT_OF_OFFICE_SUBCATEGORY_KEY;
+}
+
 function scalarAttributes(raw: Record<string, unknown> | null | undefined) {
   return Object.fromEntries(Object.entries(raw ?? {}).filter((entry): entry is [string, string | number | boolean | null] => {
     const value = entry[1];
@@ -78,6 +90,7 @@ async function classificationContext(messageId: string): Promise<{
   expectedContextVersion: number;
   personId: string;
   dncIntent: boolean;
+  timeZone: string;
   input: Parameters<typeof classifyCrmReply>[0];
 }> {
   const [scope] = await db.select({ message: crmConversationMessages, conversation: crmConversations, record: crmRecords })
@@ -90,7 +103,7 @@ async function classificationContext(messageId: string): Promise<{
   if (scope.record.latestInboundMessageId !== messageId) {
     throw new PermanentCrmJobError("Classification job was superseded by a newer inbound message");
   }
-  const [profile, categories, subcategories, messages, settings, currentSubcategory, knowledgeDocuments, calls] = await Promise.all([
+  const [profile, categories, subcategories, messages, settings, currentSubcategory, knowledgeDocuments, calls, now] = await Promise.all([
     db.select({ person: people, company: companies }).from(people)
       .leftJoin(companies, eq(companies.id, people.companyId))
       .where(and(inOrg(people), eq(people.id, scope.record.personId))).limit(1),
@@ -121,6 +134,8 @@ async function classificationContext(messageId: string): Promise<{
     scope.conversation.channel === "whatsapp"
       ? loadCallContextMessages(db, scope.record.personId)
       : Promise.resolve([]),
+    // Without it "back on Monday" has no date. Never fails the classification.
+    loadDraftNow().catch(() => draftNow(new Date(), "UTC")),
   ]);
   if (!profile[0]) throw new PermanentCrmJobError(`Person ${scope.record.personId} was not found`);
   const person = profile[0].person;
@@ -187,6 +202,7 @@ async function classificationContext(messageId: string): Promise<{
       kind: document.kind,
       content: document.content,
     })),
+    now,
   };
   return {
     recordId: scope.record.id,
@@ -194,6 +210,7 @@ async function classificationContext(messageId: string): Promise<{
     expectedContextVersion: scope.record.contextVersion,
     personId: scope.record.personId,
     dncIntent: detectsExplicitDncIntent(scope.message.bodyText),
+    timeZone: now.timeZone,
     input: {
       ...contextInput,
       instructions: formatAiInstructions(settings[0]?.classificationInstructions),
@@ -320,6 +337,23 @@ export async function handleClassificationJob(
           actorType: "system",
         });
         return;
+      }
+      // An out-of-office notice needs no answer: whatever it stopped carries
+      // on, from the day the person is back when the notice says so, and the
+      // record never reaches Action required (outOfOffice.ts).
+      if (isOutOfOfficeReading(result.subcategoryId, context.input.subcategories)) {
+        const resumed = await resumeOutreachAfterOutOfOfficeInTransaction(tx, {
+          record: current,
+          conversationId: context.conversationId,
+          messageId: job.entityId,
+          suggestedReturnAt: result.suggestedNextActionAt,
+          timeZone: context.timeZone,
+        });
+        if (resumed) {
+          await tx.update(crmClassifications).set({ acknowledgedAt: new Date(), updatedAt: new Date() })
+            .where(eq(crmClassifications.id, appliedResult.classification.id));
+          return;
+        }
       }
       const started = await startSequenceRunInTransaction(tx, {
         recordId: current.id,

@@ -512,6 +512,7 @@ export async function recordAiClassificationInTransaction(
     subcategoryReviewRequired: subcategory?.reviewRequired ?? false,
     currentStageRank: currentSubcategory?.stageRank ?? null,
     proposedStageRank: subcategory?.stageRank ?? null,
+    proposedSubcategoryKey: subcategory?.key ?? null,
   });
   // keep_current takes effect like an applied reading — the reply is drafted
   // straight away — with the record's own stage as the applied one.

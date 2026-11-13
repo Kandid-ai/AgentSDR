@@ -297,4 +297,11 @@ describe("reply classification decision", () => {
   it("still waits for a person on a stage marked review required", () => {
     assert.equal(replyClassificationDecision({ ...base, subcategoryReviewRequired: true }), "requires_review");
   });
+
+  it("lets an out-of-office notice keep the stage a record already has", () => {
+    const outOfOffice = { ...base, proposedCategoryKey: "other" as const, proposedSubcategoryKey: "out_of_office" };
+    assert.equal(replyClassificationDecision({ ...outOfOffice, currentCategoryKey: "interested", currentStageRank: 2 }), "keep_current");
+    assert.equal(replyClassificationDecision({ ...outOfOffice, currentCategoryKey: "not_interested" }), "keep_current");
+    assert.equal(replyClassificationDecision(outOfOffice), "auto_apply");
+  });
 });

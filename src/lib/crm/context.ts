@@ -252,6 +252,7 @@ export function buildClassificationContext(
     latestInboundMessage: latest,
     recentConversation: [],
     knowledge: knowledgeSnapshot(input.knowledge),
+    ...(input.now ? { now: { ...input.now } } : {}),
   };
 
   if (!snapshot.taxonomy.categories.length) {
