@@ -2,6 +2,7 @@ import "server-only";
 
 import { createMcpHandler, McpServer, type McpRequestContext } from "@modelcontextprotocol/server";
 import type { McpCaller } from "./caller";
+import { appBaseUrl } from "./oauth";
 import { registerCrmTools } from "./tools/crm";
 
 /**
@@ -37,7 +38,19 @@ Rules:
 function buildServer(context: McpRequestContext): McpServer {
   const caller = context.authInfo?.extra?.caller as McpCaller | undefined;
   const server = new McpServer(
-    { name: "agentsdr", title: "AgentSDR", version: MCP_SERVER_VERSION, websiteUrl: "https://agentsdr.ai" },
+    {
+      name: "agentsdr",
+      title: "AgentSDR",
+      version: MCP_SERVER_VERSION,
+      description:
+        "Work your AgentSDR CRM from chat: the Action required queue, lead threads across email, LinkedIn and WhatsApp, AI drafts, stages and follow-ups.",
+      websiteUrl: "https://agentsdr.ai/mcp",
+      // Clients that show an app icon (ChatGPT, Claude) read these; served by this app.
+      icons: [
+        { src: `${appBaseUrl()}/icon.svg`, mimeType: "image/svg+xml", sizes: ["any"] },
+        { src: `${appBaseUrl()}/apple-icon.png`, mimeType: "image/png", sizes: ["180x180"] },
+      ],
+    },
     { instructions: MCP_INSTRUCTIONS },
   );
   registerCrmTools(server, caller?.scopes ?? []);
