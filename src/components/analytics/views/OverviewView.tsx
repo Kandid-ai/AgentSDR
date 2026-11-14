@@ -25,6 +25,7 @@ import { KpiCell, KpiStrip } from "../kit/KpiStrip";
 import { ProgressList, type ProgressTone } from "../kit/ProgressList";
 import { SectionHeading } from "../kit/SectionHeading";
 import { CHANNEL_META, formatCompact, formatMinutes, formatPercent } from "../theme";
+import { ConversionCard } from "./ConversionCard";
 import { AiAssistantCard, PipelineCard, SentimentCard, StageMovesCard, WorkflowCard } from "./CrmCards";
 import type { ViewProps } from "./types";
 
@@ -70,6 +71,8 @@ export function OverviewView({ data, loading, onSelectView }: ViewProps<"overvie
       </div>
 
       <AiAssistantCard className="lg:col-span-12" crm={crm} loading={loading} />
+
+      <ConversionCard className="lg:col-span-12" value={data.conversion} loading={loading} />
 
       <SectionHeading className="mt-2 lg:col-span-12" title="Outreach" description="Where these conversations came from. Open a channel for its detail." />
       <ChannelTable data={data} loading={loading} onSelectView={onSelectView} />

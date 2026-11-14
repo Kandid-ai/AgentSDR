@@ -12,6 +12,7 @@ import {
   type Metric,
   type OverviewAnalytics,
 } from "./contract";
+import { getConversionReport } from "./conversion.server";
 import { getCrmSummary, runQueries, STAGE_CHANGE_EVENTS } from "./crm.server";
 import { createLimiter, inCurrentOrPreviousRange, inRange, num } from "./server";
 
@@ -65,7 +66,7 @@ export async function getOverviewAnalytics(range: AnalyticsRange): Promise<Overv
   const meetingKeys = sql.join(MEETING_SUBCATEGORY_KEYS.map((key) => sql`${key}`), sql`, `);
 
   const limit = createLimiter(3);
-  const [crm, [reachedRows, repliedRows, stageRows, attentionRows]] = await Promise.all([getCrmSummary(range, limit), runQueries(
+  const [crm, conversion, [reachedRows, repliedRows, stageRows, attentionRows]] = await Promise.all([getCrmSummary(range, limit), getConversionReport(range, limit), runQueries(
     limit,
     [
       () =>
@@ -170,5 +171,6 @@ export async function getOverviewAnalytics(range: AnalyticsRange): Promise<Overv
       whatsappDisconnected: num(a.whatsapp),
     },
     crm,
+    conversion,
   };
 }

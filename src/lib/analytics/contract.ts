@@ -89,6 +89,35 @@ export type OverviewAnalytics = {
     whatsappDisconnected: number;
   };
   crm: CrmSummary;
+  conversion: ConversionReport;
+};
+
+export type ConversionStageKey = "booked" | "showed" | "pilot" | "customer";
+
+/** One cohort (or the whole range): how many leads became interested, and how many went on to each stage. */
+export type ConversionCohort = {
+  /** First day of the cohort's week (YYYY-MM-DD), or null for the whole-range total. */
+  weekStart: string | null;
+  /** Records whose first move into Interested fell in this cohort. */
+  interested: number;
+  /** Records that ever reached each stage (rank-based); null when the stage does not exist for the organization. */
+  reached: Record<ConversionStageKey, number | null>;
+  /** reached / interested, null when interested is 0 or the stage is absent. */
+  rates: Record<ConversionStageKey, number | null>;
+};
+
+/**
+ * Cohort conversion and the booking-link funnel. Unlike the rest of the
+ * Overview this IS a cohort: leads are followed past the end of the range.
+ */
+export type ConversionReport = {
+  /** The subcategory each stage was resolved to for this organization (by key), or null when absent. */
+  stages: Record<ConversionStageKey, { label: string; rank: number | null } | null>;
+  total: ConversionCohort;
+  /** Weekly cohorts, oldest first, zero-filled. */
+  weeks: ConversionCohort[];
+  /** Records whose booking link was first sent in the range → booked → showed up. */
+  bookingFunnel: { linksSent: number; booked: number; showed: number; bookedRate: number | null; showedRate: number | null };
 };
 
 /**
