@@ -17,6 +17,7 @@ import {
 } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import { VoicePreviewButton } from "@/components/calls/VoicePreviewButton";
+import { BookingLinkField } from "./BookingLinkField";
 import { KnowledgePicker } from "./KnowledgePicker";
 import * as Input from "@/components/alignui/input";
 import * as Select from "@/components/alignui/select";
@@ -366,7 +367,7 @@ export function AiCampaignWizard() {
                   </div>
                   {!handover && (
                     <div className="space-y-3">
-                      <TextField label="Booking link (Cal.com)" value={bookingUrl} onChange={setBookingUrl} placeholder="https://cal.com/acme/30min" inputMode="url" />
+                      <BookingLinkField label="Booking link (Cal.com)" value={bookingUrl} onChange={setBookingUrl} />
                       <div>
                         <label htmlFor="wiz-booking-message" className="mb-1.5 block text-label-sm text-text-strong-950">Booking message</label>
                         <Textarea.Root id="wiz-booking-message" simple rows={3} value={bookingMessage} onChange={(event) => setBookingMessage(event.target.value)} hasError={Boolean(bookingUrl.trim()) && !bookingMessage.includes("{{bookingLink}}")} />

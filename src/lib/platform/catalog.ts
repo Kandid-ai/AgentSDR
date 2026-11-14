@@ -329,7 +329,7 @@ export const PLATFORM_INTEGRATIONS: readonly PlatformIntegration[] = [
         key: "apiKey",
         label: "API key (optional)",
         placeholder: "cal_live_…",
-        help: "Cal.com → Settings → Developer → API keys. Only checked for now; leave it empty if you like.",
+        help: "Cal.com → Settings → Developer → API keys. Lets a campaign pick its booking link from your Cal.com event types; without it you paste the link yourself.",
         inputType: "password",
         required: false,
         secret: true,

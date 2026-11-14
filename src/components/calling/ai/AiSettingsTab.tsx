@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { RiArchiveLine, RiErrorWarningLine, RiLoader4Line, RiPauseCircleLine, RiPlayCircleLine, RiSaveLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import { VoicePreviewButton } from "@/components/calls/VoicePreviewButton";
+import { BookingLinkField } from "./BookingLinkField";
 import { KnowledgePicker } from "./KnowledgePicker";
 import * as Select from "@/components/alignui/select";
 import * as Textarea from "@/components/alignui/textarea";
@@ -232,7 +233,7 @@ export function AiSettingsTab({
         <Frame>
           <FrameHeader title="Booking" description="Where interested leads book a time with your team (a Cal.com page), and the WhatsApp that sends them there right after the call." />
           <FramePanel className="space-y-4">
-            <TextField label="Booking link" value={draft.bookingUrl} onChange={(value) => set("bookingUrl", value)} placeholder="https://cal.com/acme/30min" inputMode="url" />
+            <BookingLinkField label="Booking link" value={draft.bookingUrl} onChange={(value) => set("bookingUrl", value)} />
             <div>
               <label htmlFor="ai-booking-message" className="mb-1.5 block text-label-sm text-text-strong-950">Booking message</label>
               <Textarea.Root

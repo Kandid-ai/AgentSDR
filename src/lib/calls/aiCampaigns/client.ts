@@ -22,6 +22,8 @@ import type {
   UpdateStationAiSettingsRequest,
 } from "./api";
 
+import type { BookingLinksResponse } from "./bookingLinks";
+
 const BASE = "/api/calling/ai-campaigns";
 
 export async function aiApi<T>(url: string, init?: RequestInit): Promise<T> {
@@ -42,6 +44,7 @@ export const updateAiCampaign = (id: string, request: UpdateAiCampaignRequest) =
 export const archiveAiCampaign = (id: string) => aiApi<{ ok: true }>(`${BASE}/${id}`, json("DELETE"));
 export const setAiCampaignStations = (id: string, stationIds: string[]) => aiApi<AiCampaignDetail>(`${BASE}/${id}/stations`, json("PUT", { stationIds }));
 export const launchAiCampaign = (id: string) => aiApi<AiCampaignDetail>(`${BASE}/${id}/launch`, json("POST"));
+export const listBookingLinks = () => aiApi<BookingLinksResponse>(`${BASE}/booking-links`);
 export const getAiCampaignStats = (id: string) => aiApi<AiCampaignStats>(`${BASE}/${id}/stats`);
 
 export function listAiLeads(id: string, query: AiLeadsQuery = {}) {
