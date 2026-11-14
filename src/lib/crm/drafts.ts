@@ -412,7 +412,7 @@ async function failDraftGeneration(draftId: string, error: unknown): Promise<voi
  * playbook for ("Ok", a thumbs-up, "I'm not the right person"). Without a step
  * to follow, the thread itself is the brief.
  */
-const FALLBACK_STEP_INSTRUCTIONS = [
+export const FALLBACK_STEP_INSTRUCTIONS = [
   "No reply playbook is configured for this conversation, so the thread is the brief.",
   "Read the whole conversation and write the reply the situation actually calls for:",
   "answer any question the person asked, acknowledge what they told us, and propose one",

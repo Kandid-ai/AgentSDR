@@ -4,7 +4,7 @@ description: "Connect Claude, Claude Code or any MCP client to AgentSDR and work
 icon: "robot"
 ---
 
-AgentSDR is an [MCP](https://modelcontextprotocol.io) server. Connect an AI assistant (Claude on the web or desktop, Claude Code, Cursor, or any client that supports remote MCP servers) and it can do what a rep does in **CRM, Action required**: read the queue, open a lead with its whole conversation, review and send the AI's drafts or write its own, confirm or correct how a reply was classified, move stages, snooze, close and mark people Do Not Contact.
+AgentSDR is an [MCP](https://modelcontextprotocol.io) server. Connect an AI assistant (Claude on the web or desktop, Claude Code, Cursor, or any client that supports remote MCP servers) and it can do what a rep does in the **CRM**: read the Action required queue, find any lead by stage, name or company, open a lead with its whole conversation, read the team's writing instructions and Knowledge, review and send the AI's drafts or write its own, confirm or correct how a reply was classified, move stages, snooze, close and mark people Do Not Contact.
 
 Nobody needs database access or the API for this. Each person signs in with their own AgentSDR account, and everything the assistant does is recorded in the CRM timeline as *"&lt;their name&gt; via AI assistant"*.
 
@@ -62,7 +62,7 @@ Every connection carries scopes, and the assistant only sees the tools those all
 
 | Scope | Lets the assistant | Tools |
 |---|---|---|
-| `crm:read` (always) | See the Action required queue and lead records: conversations, details, calls | `crm_list_action_required`, `crm_get_record`, `crm_get_call`, `crm_list_stages` |
+| `crm:read` (always) | See the queue and every lead record (conversations, details, calls), and the team's writing instructions and Knowledge | `crm_list_records`, `crm_get_record`, `crm_get_call`, `crm_list_stages`, `crm_get_writing_guide`, `crm_get_knowledge` |
 | `crm:write` | Edit and rewrite drafts, write new ones, confirm or correct classifications, move stages, snooze, close or reopen, set Do Not Contact | `crm_update_draft`, `crm_regenerate_draft`, `crm_write_draft`, `crm_discard_draft`, `crm_review_classification`, `crm_move_stage`, `crm_snooze`, `crm_close_record`, `crm_set_do_not_contact` |
 | `crm:send` | Send messages to leads by email, LinkedIn or WhatsApp | `crm_send_draft` |
 
@@ -74,6 +74,21 @@ When you connect, the consent screen lists what the app asked for. Untick **Work
 - It follows every rule the app follows: Do Not Contact, sending limits and hours, and the stage sequences. Sending a reply or moving a stage starts that stage's follow-ups, exactly as it does in the app.
 - **Sending is real.** The server tells the assistant to show you the exact text and wait for a yes before it sends, unless you told it to send without asking. If you never want it to send, withhold **Send messages**.
 - Each record comes with a link that opens it in AgentSDR.
+
+## Finding leads
+
+`crm_list_records` reads the **Action required** queue by default. Ask for a stage ("show me the interested leads") or a person and the assistant switches to all **open** leads: the queue, leads waiting on a reply or a scheduled follow-up, and leads whose follow-ups have all gone out. Closed records are a separate view. Every list can be narrowed by stage, sub-stage, channel and search (name, email or company).
+
+## Writing like your team
+
+Before it writes or rewrites a message, the assistant reads `crm_get_writing_guide`. That is the same picture AgentSDR's own AI drafts from:
+
+- the reply rules AgentSDR's drafter follows (kept in your Langfuse project as `mcp/writing-rules` if you connected one);
+- your **draft instructions** (Settings, Instructions);
+- for a lead: who the message goes out as, the current time in your time zone, the sequence step it is for and that step's instructions;
+- your **Knowledge** documents marked "always include", and those the step's tags or brief match, in full.
+
+`crm_get_knowledge` lists and reads any other Knowledge document. Both are read-only. Instructions and Knowledge are edited in the app, not through the assistant.
 
 ## Disconnect
 

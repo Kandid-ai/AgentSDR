@@ -21,6 +21,15 @@ Each release lists the database migrations it needs; see
   URL, setup steps and each person's connections with Disconnect. API keys now
   have permissions too (`campaigns:read`, `campaigns:write`, and the CRM
   ones); keys created earlier keep full access. See `docs/mcp.mdx`.
+- **AI assistants find any lead and write like the team, 2026-11-14.**
+  `crm_list_action_required` is now `crm_list_records`: the queue by default,
+  or every open lead (waiting, follow-ups exhausted) or closed ones, by stage,
+  sub-stage, channel and search. New read-only `crm_get_writing_guide` (the
+  drafter's reply rules, the team's draft instructions, the lead's sender,
+  local time, sequence step and matching Knowledge) and `crm_get_knowledge`.
+  The rules are the Langfuse prompt `mcp/writing-rules`; saving the Langfuse
+  integration or `scripts/seed-langfuse-prompts.ts` creates it. ChatGPT apps
+  created earlier need a refresh to see the new tools.
 - **Public API with API keys.** Owners and admins create keys in Settings,
   API keys; another application uses one to list email campaigns
   (`GET /api/v1/campaigns`), add leads to a campaign

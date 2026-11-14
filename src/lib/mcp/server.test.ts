@@ -33,7 +33,8 @@ describe("AgentSDR MCP server", () => {
   test("introduces itself with instructions", async () => {
     const { result } = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
     expect((result!.serverInfo as { name: string }).name).toBe("agentsdr");
-    expect(result!.instructions).toContain("crm_list_action_required");
+    expect(result!.instructions).toContain("crm_list_records");
+    expect(result!.instructions).toContain("crm_get_writing_guide");
     expect(result!.instructions).toContain("cannot be undone");
   });
 
@@ -45,8 +46,10 @@ describe("AgentSDR MCP server", () => {
       "crm_close_record",
       "crm_discard_draft",
       "crm_get_call",
+      "crm_get_knowledge",
       "crm_get_record",
-      "crm_list_action_required",
+      "crm_get_writing_guide",
+      "crm_list_records",
       "crm_list_stages",
       "crm_move_stage",
       "crm_regenerate_draft",
@@ -64,7 +67,14 @@ describe("AgentSDR MCP server", () => {
     }
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
     const readOnly = tools.filter((tool) => tool.annotations.readOnlyHint).map((tool) => tool.name).sort();
-    expect(readOnly).toEqual(["crm_get_call", "crm_get_record", "crm_list_action_required", "crm_list_stages"]);
+    expect(readOnly).toEqual([
+      "crm_get_call",
+      "crm_get_knowledge",
+      "crm_get_record",
+      "crm_get_writing_guide",
+      "crm_list_records",
+      "crm_list_stages",
+    ]);
     // Sending reaches outside AgentSDR and cannot be taken back.
     expect(byName.get("crm_send_draft")!.annotations).toMatchObject({ destructiveHint: true, openWorldHint: true });
     expect(Object.keys(byName.get("crm_send_draft")!.inputSchema.properties ?? {})).toContain("revision");
@@ -74,8 +84,10 @@ describe("AgentSDR MCP server", () => {
     const { result } = await rpc("tools/list", {}, { caller: READ_ONLY });
     expect((result!.tools as Tool[]).map((tool) => tool.name).sort()).toEqual([
       "crm_get_call",
+      "crm_get_knowledge",
       "crm_get_record",
-      "crm_list_action_required",
+      "crm_get_writing_guide",
+      "crm_list_records",
       "crm_list_stages",
     ]);
     const send = await rpc(
@@ -94,6 +106,12 @@ describe("AgentSDR MCP server", () => {
   test("a call that reaches a tool without a caller is refused", async () => {
     const { result, error } = await rpc("tools/call", { name: "crm_list_stages", arguments: {} });
     expect(error ?? result?.isError).toBeTruthy();
+  });
+
+  test("list filters that belong to another view are refused before any query", async () => {
+    const { result } = await rpc("tools/call", { name: "crm_list_records", arguments: { view: "open", group: "reply" } }, { caller: FULL });
+    expect(result!.isError).toBe(true);
+    expect(JSON.stringify(result!.content)).toContain("only applies to view action_required");
   });
 
   test("bad arguments come back as a readable tool error", async () => {
