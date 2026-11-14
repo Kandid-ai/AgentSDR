@@ -277,11 +277,16 @@ export async function seedFollowUpTemplateInTransaction(
       autoSendFollowUps: sequence.autoSendFollowUps,
       autoSendReply: sequence.autoSendReply,
     });
-    await tx.insert(crmSequenceVersions).values([
-      { id: publishedId, sequenceId: id, version: 1, status: "published", publishedAt: now },
-      { id: draftId, sequenceId: id, version: 2, status: "draft" },
-    ]);
+    // A trigger allows steps only on a draft version, and a sequence holds one
+    // draft at a time: version 1 is written as a draft, published, and only
+    // then is version 2 (the next draft) created — as publishSequence does.
     for (const versionId of [publishedId, draftId]) {
+      await tx.insert(crmSequenceVersions).values({
+        id: versionId,
+        sequenceId: id,
+        version: versionId === publishedId ? 1 : 2,
+        status: "draft",
+      });
       await tx.insert(crmSequenceSteps).values(sequence.steps.map((step, index) => ({
         sequenceVersionId: versionId,
         position: index + 1,
@@ -292,6 +297,10 @@ export async function seedFollowUpTemplateInTransaction(
         aiInstructions: step.aiInstructions,
         knowledgeTags: step.knowledgeTags,
       })));
+      if (versionId === publishedId) {
+        await tx.update(crmSequenceVersions).set({ status: "published", publishedAt: now, updatedAt: now })
+          .where(eq(crmSequenceVersions.id, publishedId));
+      }
     }
   }
   for (const sequence of plan.toCreate) {
