@@ -28,12 +28,14 @@ import { EditorBody } from "./CrmSkeletons";
 import { asList, asObject, crmFetch, errorMessage } from "./crm-utils";
 
 type DelayUnit = "minutes" | "hours" | "days";
+type StepTiming = "after_previous" | "before_meeting";
 
 type EditorStep = {
   clientId: string;
   storedName: string;
   delayAmount: number;
   delayUnit: DelayUnit;
+  timing: StepTiming;
   subjectTemplate: string | null;
   bodyTemplate: string | null;
   messageGoal: string;
@@ -43,6 +45,7 @@ type EditorStep = {
 type StepPayload = {
   name: string;
   delayMinutes: number;
+  timing: StepTiming;
   subjectTemplate: string | null;
   bodyTemplate: string | null;
   aiInstructions: string;
@@ -75,6 +78,7 @@ function immediateStep(): EditorStep {
     storedName: "Immediate reply",
     delayAmount: 0,
     delayUnit: "minutes",
+    timing: "after_previous",
     subjectTemplate: null,
     bodyTemplate: null,
     messageGoal: DEFAULT_IMMEDIATE_GOAL,
@@ -88,6 +92,7 @@ function followUpStep(): EditorStep {
     storedName: "Follow-up",
     delayAmount: 2,
     delayUnit: "days",
+    timing: "after_previous",
     subjectTemplate: null,
     bodyTemplate: null,
     messageGoal: DEFAULT_FOLLOW_UP_GOAL,
@@ -102,6 +107,7 @@ function parseStep(value: Record<string, unknown>, index: number): EditorStep {
     storedName: String(value.name ?? stepLabel(index)),
     delayAmount: index === 0 ? 0 : delay.amount,
     delayUnit: index === 0 ? "minutes" : delay.unit,
+    timing: index > 0 && value.timing === "before_meeting" ? "before_meeting" : "after_previous",
     subjectTemplate: value.subjectTemplate == null ? null : String(value.subjectTemplate),
     bodyTemplate: value.bodyTemplate == null ? null : String(value.bodyTemplate),
     messageGoal: String(value.aiInstructions ?? ""),
@@ -129,6 +135,7 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<"" | "save" | "publish" | "duplicate" | "auto">("");
   const [dirty, setDirty] = useState(false);
+  const [allSequences, setAllSequences] = useState<Record<string, unknown>[]>([]);
 
   const load = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -153,6 +160,14 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
     void load();
   }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    crmFetch("/sequences")
+      .then((result) => { if (!cancelled) setAllSequences(asList<Record<string, unknown>>(result, ["sequences"])); })
+      .catch(() => { /* the continue-with select just shows fewer options */ });
+    return () => { cancelled = true; };
+  }, []);
+
   const updateMetadata = (field: "name" | "description", value: string) => {
     if (field === "name") setName(value);
     else setDescription(value);
@@ -173,6 +188,47 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
       setSequence((current) => ({ ...current, autoSendFollowUps: value }));
       setNotice(value ? "Follow-ups will now send automatically." : "Automatic follow-ups turned off. Waiting follow-ups are now in Action required.");
     } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const toggleAutoSendReply = async (value: boolean) => {
+    setBusy("auto");
+    setError("");
+    setNotice("");
+    const previous = sequence.autoSendReply === true;
+    setSequence((current) => ({ ...current, autoSendReply: value }));
+    try {
+      await crmFetch(`/sequences/${sequenceId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ autoSendReply: value }),
+      });
+      setNotice(value ? "The immediate reply will now send itself after a 15-minute hold." : "The immediate reply now waits for you in Action required.");
+    } catch (cause) {
+      setSequence((current) => ({ ...current, autoSendReply: previous }));
+      setError(errorMessage(cause));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  // Not versioned either. null = stop; this sequence's own id = repeat it.
+  const changeThenSequence = async (value: string | null) => {
+    setBusy("auto");
+    setError("");
+    setNotice("");
+    const previous = sequence.thenSequenceId ?? null;
+    setSequence((current) => ({ ...current, thenSequenceId: value }));
+    try {
+      await crmFetch(`/sequences/${sequenceId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ thenSequenceId: value }),
+      });
+      setNotice("Saved what happens when the steps run out.");
+    } catch (cause) {
+      setSequence((current) => ({ ...current, thenSequenceId: previous }));
       setError(errorMessage(cause));
     } finally {
       setBusy("");
@@ -218,6 +274,7 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
     steps: steps.map<StepPayload>((step, index) => ({
       name: persistedStepName(step, index),
       delayMinutes: index === 0 ? 0 : delayInMinutes(step.delayAmount, step.delayUnit),
+      timing: index === 0 ? "after_previous" : step.timing,
       subjectTemplate: step.subjectTemplate,
       bodyTemplate: step.bodyTemplate,
       aiInstructions: step.messageGoal.trim(),
@@ -303,7 +360,7 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
   const published = Boolean(sequence.latestPublishedVersionId);
   const publishedVersion = asList<Record<string, unknown>>(sequence.versions).find((version) => version.id === sequence.latestPublishedVersionId)?.version;
   const status = archived ? { label: "Archived", color: "orange" as const } : published ? { label: "Published", color: "green" as const } : { label: "Draft", color: "gray" as const };
-  const spanMinutes = steps.reduce((sum, step, index) => sum + (index === 0 ? 0 : delayInMinutes(step.delayAmount || 0, step.delayUnit)), 0);
+  const spanMinutes = steps.reduce((sum, step, index) => sum + (index === 0 || step.timing === "before_meeting" ? 0 : delayInMinutes(step.delayAmount || 0, step.delayUnit)), 0);
   return (
     <div className="space-y-5">
       <PageHeader
@@ -413,9 +470,41 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
             />
             <span>
               <span className="block text-label-sm text-text-strong-950">Send follow-ups automatically</span>
-              <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">After the immediate reply goes out from AgentSDR, this sequence&apos;s follow-ups are drafted by the AI and sent on their own — at most one every 30 minutes (by default; see Sending rules) from each mailbox, LinkedIn account or WhatsApp number, inside its sending hours. The immediate reply always waits for you. Turning this off moves waiting follow-ups to Action required.</span>
+              <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">After the immediate reply goes out from AgentSDR, this sequence&apos;s follow-ups are drafted by the AI and sent on their own — at most one every 30 minutes (by default; see Sending rules) from each mailbox, LinkedIn account or WhatsApp number, inside its sending hours. The immediate reply waits for you unless the next option is on. Turning this off moves waiting follow-ups to Action required.</span>
             </span>
           </label>
+          <label className="flex cursor-pointer items-start gap-3 text-paragraph-sm">
+            <Checkbox.Root
+              className="mt-0.5"
+              checked={sequence.autoSendReply === true}
+              disabled={Boolean(busy) || archived}
+              onCheckedChange={(checked) => void toggleAutoSendReply(checked === true)}
+            />
+            <span>
+              <span className="block text-label-sm text-text-strong-950">Send the immediate reply automatically (after a 15-minute hold)</span>
+              <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">The AI-drafted reply is held for 15 minutes, then sent on its own. A person can still stop it with Review before sending during the hold.</span>
+            </span>
+          </label>
+          <div className="text-paragraph-sm">
+            <span className="mb-1.5 block text-label-xs text-text-sub-600">When the steps run out, continue with:</span>
+            <Select.Root
+              size="small"
+              value={String(sequence.thenSequenceId ?? "none")}
+              disabled={Boolean(busy) || archived}
+              onValueChange={(value) => void changeThenSequence(value === "none" ? null : value)}
+            >
+              <Select.Trigger aria-label="Continue with after the last step" className="w-full sm:max-w-sm">
+                <Select.Value />
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="none">Nothing — stop here</Select.Item>
+                <Select.Item value={sequenceId}>This sequence (repeat)</Select.Item>
+                {allSequences
+                  .filter((row) => String(row.id) !== sequenceId && row.status !== "archived")
+                  .map((row) => <Select.Item key={String(row.id)} value={String(row.id)}>{String(row.name ?? "Unnamed sequence")}</Select.Item>)}
+              </Select.Content>
+            </Select.Root>
+          </div>
           {validationError && <p role="alert" className="text-label-xs text-error-base">{validationError}</p>}
         </FramePanel>
       </Frame>
@@ -437,7 +526,22 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
                       <p className="mt-0.5 text-paragraph-xs text-text-sub-600">Immediately after classification</p>
                     ) : (
                       <fieldset disabled={Boolean(busy)} className="mt-2">
-                        <legend className="mb-1.5 text-paragraph-xs text-text-sub-600">Wait after previous message</legend>
+                        <legend className="mb-1.5 text-paragraph-xs text-text-sub-600">
+                          {step.timing === "before_meeting" ? "Send before the meeting starts" : "Wait after previous message"}
+                        </legend>
+                        <Select.Root
+                          size="xsmall"
+                          value={step.timing}
+                          onValueChange={(value) => updateStep(index, { timing: value as StepTiming })}
+                        >
+                          <Select.Trigger aria-label={`${stepLabel(index)} timing`} className="mb-1.5 w-full">
+                            <Select.Value />
+                          </Select.Trigger>
+                          <Select.Content>
+                            <Select.Item value="after_previous">After the previous message</Select.Item>
+                            <Select.Item value="before_meeting">Before the meeting</Select.Item>
+                          </Select.Content>
+                        </Select.Root>
                         <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-1.5">
                           <input
                             aria-label={`${stepLabel(index)} delay amount`}
@@ -463,6 +567,9 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
                             </Select.Content>
                           </Select.Root>
                         </div>
+                        {step.timing === "before_meeting" && (
+                          <p className="mt-1.5 text-paragraph-xs text-text-sub-600">before the meeting starts. Skipped if no meeting is booked.</p>
+                        )}
                       </fieldset>
                     )}
                   </div>

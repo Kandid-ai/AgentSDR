@@ -267,7 +267,7 @@ The `WHATSAPP_*` constants in `src/lib/whatsapp/contract.ts` remain only as
 the defaults the extension shows (and agentsdr.ai, which copies this file) (that file must stay
 import-free); `rules.test.ts` keeps them equal to the registry.
 
-## CRM follow-ups: the reply is a person's, the follow-ups can send themselves
+## CRM follow-ups: chase each lead until they move up a stage or say stop
 
 A reply's AI classification always applies (`replyClassificationDecision`,
 `src/lib/crm/stateMachine.ts`; call transcripts keep the stricter
@@ -287,6 +287,45 @@ Email follow-ups share the mailbox's gap and daily limit with campaigns, and
 the campaign scheduler yields a mailbox's turn to a waiting follow-up. A draft
 the sender cannot send within 48 h, or that a person takes over ("Review
 before sending"), goes to Action required like any other.
+
+The immediate reply is a person's unless its sequence has **Send the
+immediate reply automatically** (`crm_sequences.auto_send_reply`, off by
+default): then a reply draft that answers the latest inbound on an *applied*
+classification gets `auto_send_at` = drafted + `AUTO_REPLY_HOLD_MS` (15 min,
+`autoFollowUpRules.ts`) and the same sender takes it; a classification held
+for review keeps it on a person's desk.
+
+**Never idle.** `crm_sequences.then_sequence_id` names what follows when a
+run's steps run out (or a stage has no follow-ups): the record continues with
+that sequence from its first follow-up instead of going idle
+(`continueWithThenSequenceInTransaction`, `sequences.ts`; in a savepoint, so
+a failure costs only the chaining). It may name itself — the **Long-term
+loop**, one useful touch every 21 days until they reply or say stop. Not for
+Do Not Contact, closed or paused records.
+
+**Meetings** (`src/lib/crm/meetings.ts`, table `crm_meetings`). A draft may
+carry `{{booking_link}}`; `sendDraft` replaces it with the record's own
+Cal.com link (`crm_settings.booking_url` + a 5-character
+`crm_records.booking_code` in `metadata[c]`, longer than AI-campaign codes so
+they never collide) and counts the send (`booking_link_sent_count`). The Cal.com
+webhook (`/api/webhooks/calcom`, after the AI-campaign handling) matches a
+booking to a record by that code, the booking's uid, an AI-campaign code's
+person, or the attendee's email; it books or moves the open meeting and
+moves the stage to `meeting_booked` (reply drafted); a cancellation goes back
+to `meeting_requested`. A step with `timing = 'before_meeting'` is due that
+long before the open meeting starts (`stepTiming.ts`; skipped with no meeting
+or when its time has passed; re-timed by `rescheduleMeetingStepsInTransaction`).
+Once a meeting's end passes with no outcome, the record is in Action required
+as "Did they show up?" (`meeting_outcome` group); the answer moves it to
+`meeting_done` or `meeting_no_show`. Stage keys are looked up by key; an
+organization that removed one just keeps the meeting row.
+
+**The template** (`src/lib/crm/followUpTemplate.ts`): a new organization's
+pipeline is seeded with the ladder Interested → Meeting Booked → Meeting Done
+→ Pilot → Customer (+ No-show) and a sequence per stage chained into the
+Long-term loop. `scripts/apply-crm-follow-up-template.ts` (dry run unless
+`--apply`; `--loop-existing` chains existing interested-stage sequences)
+brings an existing organization up to it without replacing its assignments.
 
 An **out-of-office** reply needs no answer and never reaches Action required
 (`src/lib/crm/outOfOffice.ts`). Ingest still stops the person's outreach on

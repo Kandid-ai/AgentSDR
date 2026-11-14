@@ -16,11 +16,16 @@ import "server-only";
  * Created / rescheduled → `booked` (ai_meeting_at), in Action required a day
  * before the meeting (meetingPrepAt); cancelled → back to `chasing` where it
  * was, in Action required a day later unless they book again.
+ *
+ * Then the same event goes to the CRM (src/lib/crm/meetings.ts), which keeps
+ * the meetings of every lead with a CRM record — booked from a CRM reply's
+ * `{{booking_link}}`, from a campaign's link, or matched by email.
  */
 import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { publicAppUrl } from "@/lib/http/publicAppUrl";
 import { people } from "@/lib/leads/schema";
+import { handleCrmMeetingEvent } from "@/lib/crm/meetings";
 import { getPlatformCredentials } from "@/lib/platform/credentials";
 import { inOrg, runInOrganization } from "@/lib/tenancy/scope";
 import { normalizePhone } from "../phone";
@@ -67,7 +72,17 @@ export async function handleCalcomWebhook(request: Request): Promise<Response> {
     const event = parseCalcomEvent(body);
     if (!event) return Response.json({ ok: true, ignored: "event" });
     const contactIds = event.kind === "booked" ? await markBooked(event) : await markCancelled(event);
-    return Response.json({ ok: true, contacts: contactIds.length });
+    // Every lead in the CRM, not only campaign leads: its own meetings. A
+    // failure there must not fail the campaign's handling (or make Cal.com
+    // retry what is already done).
+    let crm: Awaited<ReturnType<typeof handleCrmMeetingEvent>> | { error: string };
+    try {
+      crm = await handleCrmMeetingEvent(event);
+    } catch (error) {
+      console.error("[calcom] CRM meeting handling failed", error);
+      crm = { error: "CRM meeting handling failed" };
+    }
+    return Response.json({ ok: true, contacts: contactIds.length, crm });
   });
 }
 

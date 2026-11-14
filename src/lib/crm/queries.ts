@@ -12,6 +12,7 @@ import {
   crmDraftKnowledgeCitations,
   crmDrafts,
   crmEvents,
+  crmMeetings,
   crmPersonContactPolicies,
   crmPipelines,
   crmRecords,
@@ -161,7 +162,7 @@ export async function countCrmActionGroups(): Promise<Record<CrmActionGroup, num
       select ${crmActionGroupSql(r)} as grp from crm_records r
        where r.organization_id = ${currentOrganizationId()} and ${crmActionableSql(r)}
     ) grouped group by grp`)) as unknown as { grp: CrmActionGroup | null; total: number }[];
-  const counts = { reply: 0, follow_up: 0, classification: 0, next_step: 0, problem: 0 } satisfies Record<CrmActionGroup, number>;
+  const counts = { reply: 0, follow_up: 0, classification: 0, next_step: 0, meeting_outcome: 0, problem: 0 } satisfies Record<CrmActionGroup, number>;
   for (const row of rows) if (row.grp) counts[row.grp] = Number(row.total);
   return counts;
 }
@@ -224,7 +225,20 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
   const pagePersonIds = db.select({ personId: crmRecords.personId }).from(crmRecords)
     .innerJoin(people, eq(people.id, crmRecords.personId))
     .where(where).orderBy(...orderBy).limit(limit).offset(offset);
-  const [rows, totals, messages, classifications, runs, drafts, policies, stageCounts, lastRuns] = await Promise.all([
+  // The meeting each row asks "Did they show up?" about: over, unanswered,
+  // not cancelled (the oldest first, which is the one to answer first).
+  const dueMeetingsRead = db.selectDistinctOn([crmMeetings.crmRecordId], {
+    recordId: crmMeetings.crmRecordId, id: crmMeetings.id, startAt: crmMeetings.startAt, endAt: crmMeetings.endAt,
+  }).from(crmMeetings)
+    .where(and(
+      inOrg(crmMeetings),
+      inArray(crmMeetings.crmRecordId, pageRecordIds),
+      eq(crmMeetings.status, "booked"),
+      isNull(crmMeetings.outcome),
+      sql`${crmMeetings.endAt} <= now()`,
+    ))
+    .orderBy(crmMeetings.crmRecordId, asc(crmMeetings.startAt));
+  const [rows, totals, messages, classifications, runs, drafts, policies, stageCounts, lastRuns, dueMeetings] = await Promise.all([
     db.select({ record: crmRecords, person: personListColumns, company: companies, subcategory: crmSubcategories, stage: pipelineStage })
       .from(crmRecords)
       .innerJoin(people, eq(people.id, crmRecords.personId))
@@ -272,6 +286,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
         .where(inArray(crmSequenceRuns.crmRecordId, pageRecordIds))
         .orderBy(crmSequenceRuns.crmRecordId, desc(crmSequenceRuns.createdAt))
       : Promise.resolve([]),
+    dueMeetingsRead,
   ]);
   // Which step each open draft was written for: a follow-up on someone's desk
   // is not an immediate reply, and the row has to say so.
@@ -289,12 +304,17 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
   const currentDraft = new Map(drafts.map((draft) => [draft.crmRecordId, draft]));
   const policyByPerson = new Map(policies.map((policy) => [policy.personId, policy]));
   const lastRunByRecord = new Map(lastRuns.map((row) => [row.recordId, row]));
+  const dueMeetingByRecord = new Map(dueMeetings.map((row) => [row.recordId, { id: row.id, startAt: row.startAt, endAt: row.endAt }]));
   const actions = rows.map((row) => {
     const classification = latestClassification.get(row.record.id) ?? null;
     const run = activeRun.get(row.record.id) ?? null;
     const draft = currentDraft.get(row.record.id) ?? null;
     const draftStep = draft?.sequenceStepRunId ? draftStepByRunId.get(draft.sequenceStepRunId) ?? null : null;
     const aiChanged = Boolean(classification && !classification.acknowledgedAt);
+    // Same precedence as crmActionGroupSql: an error or a send to reconcile
+    // first, then a meeting nobody has said they showed up to.
+    const dueMeeting = row.record.workflowState !== "closed" ? dueMeetingByRecord.get(row.record.id) ?? null : null;
+    const meetingOutcomeDue = Boolean(dueMeeting) && draft?.status !== "delivery_uncertain";
     // Off the queue there is no action to name, so say what the record is
     // waiting on instead of falling through to "Human review".
     const actionType = row.stage === "exhausted"
@@ -309,6 +329,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
         : "Awaiting their reply"
       : row.record.workflowState === "error"
       ? "Processing error"
+      : meetingOutcomeDue
+      ? "Did they show up?"
       : classification?.status === "proposed"
         ? "Classification review"
         : draft?.status === "delivery_uncertain"
@@ -345,6 +367,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       channel: row.record.activeChannel,
       dueAt: row.record.nextActionAt,
       actionType,
+      /** The meeting to answer "Did they show up?" for, when that is the row's action. */
+      dueMeeting: meetingOutcomeDue ? dueMeeting : null,
       /** e.g. "Follow-up 2 · Share Information" for the draft on the row; null for a hand-written or reply draft. */
       draftStepLabel: draftStep && draftStep.stepType === "follow_up" ? followUpStepLabel(draftStep.position, draftStep.name) : null,
       latestInbound: latestInbound.get(row.record.id) ?? null,
@@ -384,7 +408,14 @@ export async function getCrmRecordWorkspace(recordId: string) {
   const personIdOfRecord = db.select({ personId: crmRecords.personId }).from(crmRecords).where(and(inOrg(crmRecords), eq(crmRecords.id, recordId)));
   const personEmailOfRecord = db.select({ email: sql<string>`lower(${people.email})` }).from(crmRecords)
     .innerJoin(people, eq(people.id, crmRecords.personId)).where(and(inOrg(crmRecords), eq(crmRecords.id, recordId)));
-  const [headers, conversations, messages, classifications, events, runs, drafts, stepRuns, citations, attempts, linkedinHistory, linkedinAccounts, emailOutreach, inboxHistory] = await Promise.all([
+  // The record's meetings (src/lib/crm/meetings.ts), newest first.
+  const meetingsRead = db.select({
+    id: crmMeetings.id, provider: crmMeetings.provider, status: crmMeetings.status, startAt: crmMeetings.startAt, endAt: crmMeetings.endAt,
+    bookedAt: crmMeetings.bookedAt, cancelledAt: crmMeetings.cancelledAt, outcome: crmMeetings.outcome, outcomeAt: crmMeetings.outcomeAt, outcomeBy: crmMeetings.outcomeBy,
+  }).from(crmMeetings)
+    .where(and(inOrg(crmMeetings), eq(crmMeetings.crmRecordId, recordId)))
+    .orderBy(desc(crmMeetings.startAt));
+  const [headers, conversations, messages, classifications, events, runs, drafts, stepRuns, citations, attempts, linkedinHistory, linkedinAccounts, emailOutreach, inboxHistory, meetings] = await Promise.all([
     db.select({ record: crmRecords, person: people, company: companies, subcategory: crmSubcategories, policy: crmPersonContactPolicies })
       .from(crmRecords)
       .innerJoin(people, eq(people.id, crmRecords.personId))
@@ -461,6 +492,7 @@ export async function getCrmRecordWorkspace(recordId: string) {
       .innerJoin(inboxContacts, eq(inboxContacts.id, inboxMessages.contactId))
       .where(and(inOrg(inboxContacts), sql`lower(${inboxContacts.email}) in (${personEmailOfRecord})`))
       .orderBy(asc(inboxMessages.sentAt)),
+    meetingsRead,
   ]);
   const header = headers[0];
   if (!header) throw new CrmNotFoundError("CRM record", recordId);
@@ -632,6 +664,7 @@ export async function getCrmRecordWorkspace(recordId: string) {
     drafts,
     citations,
     sendAttempts: attempts,
+    meetings,
   };
 }
 

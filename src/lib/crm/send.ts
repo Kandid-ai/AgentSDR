@@ -15,6 +15,8 @@ import {
 import { whatsappMessages } from "@/lib/whatsapp/schema";
 import { crmChannelSendProvider } from "./channels";
 import { insertConversationMessageInTransaction } from "./conversations";
+import { recordBookingLinkSentInTransaction, resolveBookingLinkInTransaction } from "./bookingLink";
+import { hasBookingLinkToken } from "./bookingLinkToken";
 import { appendCrmEvent } from "./events";
 import { isEmailDoNotContact, isPersonDoNotContact } from "./policies";
 import { CrmConfigurationValidationError } from "./categories";
@@ -42,7 +44,12 @@ import {
   type CrmSendActorType,
 } from "./schema";
 import { assertCurrentCrmContext } from "./stateMachine";
-import { adoptCurrentSequenceStepInTransaction, interruptActiveSequenceRunInTransaction } from "./sequences";
+import {
+  adoptCurrentSequenceStepInTransaction,
+  continueWithThenSequenceInTransaction,
+  interruptActiveSequenceRunInTransaction,
+  scheduleNextSequenceStepInTransaction,
+} from "./sequences";
 import { workflowStateAfterOffScriptSend } from "./manualOutbound";
 
 export type NormalizedCrmSendResult = {
@@ -317,8 +324,16 @@ async function prepareSend(tx: CrmTransaction, input: {
     if (await isSuppressed(address)) throw new CrmConflictError(`${address} is on the suppression list; remove it from Cc/Bcc to send`);
     if (await isEmailDoNotContact(tx, address)) throw new CrmConflictError(`${address} is marked Do Not Contact; remove it from Cc/Bcc to send`);
   }
-  const bodyText = draft.editedBodyText?.trim() || draft.aiBodyText?.trim() || "";
-  if (!bodyText) throw new CrmConflictError("Draft has no sendable body");
+  const draftText = draft.editedBodyText?.trim() || draft.aiBodyText?.trim() || "";
+  if (!draftText) throw new CrmConflictError("Draft has no sendable body");
+  // {{booking_link}} becomes the record's own Cal.com link here, so the
+  // attempt, the provider and the stored message all carry the real URL.
+  const { bodyText, bodyHtml } = await resolveBookingLinkInTransaction(tx, {
+    recordId: record.id,
+    pipelineId: record.pipelineId,
+    bodyText: draftText,
+    bodyHtml: draft.editedBodyHtml ?? draft.aiBodyHtml,
+  });
   const request: CrmSendAdapterInput = {
     channel: draft.channel,
     accountRef: conversation.accountRef,
@@ -328,7 +343,7 @@ async function prepareSend(tx: CrmTransaction, input: {
     recipientPhone: draft.channel === "whatsapp" ? person.phone : null,
     subject: draft.subject,
     bodyText,
-    bodyHtml: draft.editedBodyHtml ?? draft.aiBodyHtml,
+    bodyHtml,
     inReplyTo: thread.inReplyTo,
     ...(draft.channel === "email" ? { ccEmails: extras.cc, bccEmails: extras.bcc, references: thread.references } : {}),
   };
@@ -397,6 +412,9 @@ async function finishSuccessfulSend(
         await tx.update(crmConversations).set({ providerThreadId: result.providerThreadId, updatedAt: now })
           .where(eq(crmConversations.id, conversation.id));
       }
+    }
+    if (hasBookingLinkToken(draft.editedBodyText?.trim() || draft.aiBodyText, draft.editedBodyHtml ?? draft.aiBodyHtml)) {
+      await recordBookingLinkSentInTransaction(tx, record.id, now);
     }
     const { message } = await insertConversationMessageInTransaction(tx, {
       conversationId: conversation.id,
@@ -505,29 +523,34 @@ async function finishSuccessfulSend(
       if (scope) {
         await tx.update(crmSequenceStepRuns).set({ status: "sent", sentMessageId: message.id, updatedAt: now })
           .where(eq(crmSequenceStepRuns.id, scope.stepRun.id));
-        const [next] = await tx.select({ stepRun: crmSequenceStepRuns, step: crmSequenceSteps })
-          .from(crmSequenceStepRuns)
-          .innerJoin(crmSequenceSteps, eq(crmSequenceSteps.id, crmSequenceStepRuns.sequenceStepId))
-          .where(and(
-            eq(crmSequenceStepRuns.sequenceRunId, scope.run.id),
-            eq(crmSequenceStepRuns.status, "scheduled"),
-            sql`${crmSequenceSteps.position} > ${scope.step.position}`,
-          )).orderBy(asc(crmSequenceSteps.position)).limit(1);
         const stillCurrent = record.contextVersion === draft.expectedContextVersion && scope.run.status === "active";
-        if (next && stillCurrent) {
-          nextActionAt = new Date(now.getTime() + next.step.delayMinutes * 60_000);
-          workflowState = "waiting";
-          // The run moves on in the record's current context (stillCurrent),
-          // so the next step is drafted in it — whatever version it was
-          // given when the run started.
-          await tx.update(crmSequenceStepRuns).set({ dueAt: nextActionAt, expectedContextVersion: record.contextVersion, updatedAt: now })
-            .where(eq(crmSequenceStepRuns.id, next.stepRun.id));
-          await tx.update(crmSequenceRuns).set({ currentStepPosition: next.step.position, updatedAt: now })
-            .where(eq(crmSequenceRuns.id, scope.run.id));
-        } else if (!next && stillCurrent) {
-          workflowState = "idle";
-          await tx.update(crmSequenceRuns).set({ status: "completed", updatedAt: now })
-            .where(eq(crmSequenceRuns.id, scope.run.id));
+        if (stillCurrent) {
+          // The next step counts from this send (a reminder from the meeting);
+          // one that cannot run is skipped on the way (stepTiming.ts).
+          const next = await scheduleNextSequenceStepInTransaction(tx, {
+            runId: scope.run.id,
+            recordId: record.id,
+            afterPosition: scope.step.position,
+            from: now,
+            contextVersion: record.contextVersion,
+            now,
+          });
+          if (next) {
+            nextActionAt = next.dueAt;
+            workflowState = "waiting";
+          } else {
+            await tx.update(crmSequenceRuns).set({ status: "completed", updatedAt: now })
+              .where(eq(crmSequenceRuns.id, scope.run.id));
+            // Never idle: the sequence's "then" sequence takes over, if any.
+            const continued = await continueWithThenSequenceInTransaction(tx, {
+              recordId: record.id,
+              sequenceId: scope.run.sequenceId,
+              conversationId: scope.run.conversationId,
+              completedRunId: scope.run.id,
+            });
+            nextActionAt = continued?.nextActionAt ?? null;
+            workflowState = continued ? "waiting" : "idle";
+          }
         }
       }
     } else if (record.contextVersion === draft.expectedContextVersion) {

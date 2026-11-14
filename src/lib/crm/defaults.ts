@@ -2,13 +2,13 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import { slugifySubcategoryKey } from "./categories";
+import { seedFollowUpTemplateInTransaction } from "./followUpTemplate";
 import { crmPipelines, crmSettings, crmSubcategories, type CrmCategoryKey } from "./schema";
 
 /**
  * The CRM an organization starts with: one default pipeline, its settings row
- * and the reply taxonomy (subcategories only — the sequences scripts/
- * seed-crm-response-taxonomy.ts writes are one company's copy, so a new
- * organization writes its own).
+ * the reply taxonomy and the follow-up template (src/lib/crm/followUpTemplate.ts:
+ * a sequence per stage plus a long-term loop; the organization edits them freely).
  *
  * Created lazily, on the first thing that needs "the default pipeline", so
  * nothing depends on a sign-up hook having run. Idempotent and race-safe: the
@@ -19,7 +19,7 @@ import { crmPipelines, crmSettings, crmSubcategories, type CrmCategoryKey } from
  */
 export const DEFAULT_PIPELINE_NAME = "Default";
 
-type DefaultSubcategory = {
+export type DefaultSubcategory = {
   categoryKey: CrmCategoryKey;
   name: string;
   description: string;
@@ -28,7 +28,7 @@ type DefaultSubcategory = {
   stageRank: number | null;
 };
 
-const DEFAULT_SUBCATEGORIES: readonly DefaultSubcategory[] = [
+export const DEFAULT_SUBCATEGORIES: readonly DefaultSubcategory[] = [
   {
     categoryKey: "not_interested",
     name: "Do Not Contact",
@@ -79,19 +79,27 @@ const DEFAULT_SUBCATEGORIES: readonly DefaultSubcategory[] = [
   },
   {
     categoryKey: "interested",
+    name: "Meeting Booked",
+    description: "The person booked a meeting through the booking link (set automatically from Cal.com) or confirmed a time.",
+    classificationGuidance: "Use when the reply confirms a booked or agreed meeting time, for example accepting a proposed slot or saying they have booked through the link. A request to be sent a link or times is Meeting Requested instead.",
+    sortOrder: 35,
+    stageRank: 3,
+  },
+  {
+    categoryKey: "interested",
     name: "Meeting No Show",
     description: "A scheduled meeting did not happen because the prospect did not attend.",
     classificationGuidance: "Use after a confirmed meeting time passes and the external participant did not attend or explicitly says they missed the meeting.",
     sortOrder: 40,
-    stageRank: 2,
+    stageRank: 3,
   },
   {
     categoryKey: "interested",
     name: "Meeting Done",
-    description: "The meeting was completed and the person should receive a recap and agreed next steps.",
+    description: "The meeting or demo happened and the person should receive a recap and agreed next steps.",
     classificationGuidance: "Use when the meeting has taken place and the next response should recap discussion, decisions, responsibilities, or follow-up actions.",
     sortOrder: 50,
-    stageRank: 3,
+    stageRank: 4,
   },
   {
     categoryKey: "interested",
@@ -115,6 +123,14 @@ const DEFAULT_SUBCATEGORIES: readonly DefaultSubcategory[] = [
     description: "The person is actively using the trial and needs help progressing through setup or integration.",
     classificationGuidance: "Use for an active trial user discussing setup, activation, usage, onboarding, or integration rather than requesting initial trial access.",
     sortOrder: 80,
+    stageRank: 5,
+  },
+  {
+    categoryKey: "interested",
+    name: "Pilot",
+    description: "A guided pilot is running: we set it up for them and convert to a paid plan at the end.",
+    classificationGuidance: "Use when a pilot is under way and the conversation concerns its setup, progress, results or conversion to a paid plan.",
+    sortOrder: 85,
     stageRank: 5,
   },
   {
@@ -202,6 +218,7 @@ export async function ensureCrmDefaults(): Promise<{ pipelineId: string; created
         stageRank: entry.stageRank,
       })))
       .onConflictDoNothing();
+    await seedFollowUpTemplateInTransaction(tx, { organizationId, pipelineId: pipeline.id, mode: "new_organization" });
     return pipeline.id;
   });
   if (created) return { pipelineId: created, created: true };

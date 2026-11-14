@@ -14,6 +14,7 @@ import {
   parseAssignmentInput,
   parseCreateSequenceInput,
   parseSequenceSteps,
+  parseUpdateSequenceInput,
   validatePublishableSteps,
 } from "./sequences";
 
@@ -67,6 +68,34 @@ describe("CRM configuration validation", () => {
       ]),
       /positive delay/,
     );
+  });
+
+  test("times follow-ups after the previous message or before the meeting", () => {
+    const steps = parseSequenceSteps([
+      { name: "Reply", delayMinutes: 0, aiInstructions: "Answer" },
+      { name: "Nudge", delayMinutes: 1_440, aiInstructions: "Check in" },
+      { name: "Reminder", delayMinutes: 60, aiInstructions: "Remind", timing: "before_meeting" },
+    ]);
+    assert.deepEqual(steps.map((step) => step.timing), ["after_previous", "after_previous", "before_meeting"]);
+    assert.throws(
+      () => parseSequenceSteps([{ name: "Reply", delayMinutes: 0, aiInstructions: "Answer", timing: "before_meeting" }]),
+      /immediate reply cannot be timed before the meeting/,
+    );
+    assert.throws(
+      () => parseSequenceSteps([
+        { name: "Reply", delayMinutes: 0, aiInstructions: "Answer" },
+        { name: "Later", delayMinutes: 60, aiInstructions: "x", timing: "sometime" },
+      ]),
+      /timing must be/,
+    );
+  });
+
+  test("accepts the unversioned reply and continuation switches", () => {
+    assert.deepEqual(parseUpdateSequenceInput({ autoSendReply: true }), { autoSendReply: true });
+    assert.deepEqual(parseUpdateSequenceInput({ thenSequenceId: null }), { thenSequenceId: null });
+    assert.deepEqual(parseUpdateSequenceInput({ thenSequenceId: SEQUENCE_ID }), { thenSequenceId: SEQUENCE_ID });
+    assert.throws(() => parseUpdateSequenceInput({ autoSendReply: "yes" }), /autoSendReply must be true or false/);
+    assert.throws(() => parseUpdateSequenceInput({ thenSequenceId: "nope" }), /UUID/);
   });
 
   test("supports explicit assignment clearing and validates IDs", () => {

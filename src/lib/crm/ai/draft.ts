@@ -108,8 +108,16 @@ export type DraftPromptInput = {
   instructions?: string | null;
   sender?: DraftSender | null;
   now?: DraftNow | null;
+  /** The record's booked meeting (crm_meetings), in the organization's time zone. */
+  meeting?: DraftNow | null;
   /** Steps in the sequence; absent for a draft no sequence covers. */
   totalSteps?: number | null;
+  /**
+   * The organization has a booking page (crm_settings.booking_url): the
+   * prompt tells the model to write the literal `{{booking_link}}` where the
+   * person's own link goes, which the send replaces (src/lib/crm/bookingLink.ts).
+   */
+  bookingLink?: boolean;
 };
 
 /** What the caller adds to the draft's Langfuse trace (record ids; never secrets). */
@@ -399,6 +407,7 @@ export function buildDraftPrompt(input: DraftPromptInput, templates: DraftTempla
     snapshot.sender = { name: cleanOptionalText(input.sender.name), account: cleanRequiredText(input.sender.account, "CRM draft sender account") };
   }
   if (input.now) snapshot.now = { ...input.now };
+  if (input.meeting) snapshot.meeting = { ...input.meeting };
   if (input.totalSteps && Number.isInteger(input.totalSteps) && input.totalSteps >= step.position) {
     snapshot.sequenceProgress = draftSequenceProgress(step, input.totalSteps, input.recentConversation);
   }
@@ -421,7 +430,7 @@ export function buildDraftPrompt(input: DraftPromptInput, templates: DraftTempla
   }
 
   return {
-    systemPrompt: fillPrompt(templates["crm/draft-system"], { instructions: input.instructions?.trim() }),
+    systemPrompt: fillPrompt(templates["crm/draft-system"], { instructions: input.instructions?.trim(), booking_link: Boolean(input.bookingLink) }),
     userPrompt: fillPrompt(templates["crm/draft-user"], {
       revision: Boolean(revision),
       context_json: JSON.stringify(snapshot, null, 2),

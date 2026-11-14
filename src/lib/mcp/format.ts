@@ -57,12 +57,13 @@ export function personName(person: PersonLike | null | undefined): string {
   return rawString(person.raw, "name", "fullName", "full_name") ?? person.email ?? "Unknown person";
 }
 
-/** Labels for the five Action required groups, as the app's queue filter names them. */
+/** Labels for the Action required groups, as the app's queue filter names them. */
 export const ACTION_GROUP_LABELS = {
   reply: "Immediate reply",
   follow_up: "Follow-up due",
   classification: "Confirm classification",
   next_step: "Needs a next step",
+  meeting_outcome: "Did they show up?",
   problem: "Error or failed",
 } as const;
 

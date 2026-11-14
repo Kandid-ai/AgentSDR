@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   AUTO_FOLLOW_UP_HANDOFF_MS,
+  AUTO_REPLY_HOLD_MS,
   autoFollowUpVerdict,
   followUpGapPassed,
+  isAppliedClassificationStatus,
   oldestPerAccount,
+  sequenceAutoSendFor,
   type AutoFollowUpCandidate,
 } from "./autoFollowUpRules";
 
@@ -17,11 +20,14 @@ function candidate(overrides: Partial<AutoFollowUpCandidate> = {}): AutoFollowUp
     channel: "email",
     accountRef: "rep@example.com",
     autoSendAt: minutesAgo(10),
+    stepType: "follow_up",
     sequenceAutoSend: true,
     workflowState: "waiting",
     runActive: true,
     stepAwaitingReview: true,
     contextCurrent: true,
+    answersLatestInbound: true,
+    classificationApplied: true,
     ...overrides,
   };
 }
@@ -58,6 +64,57 @@ describe("autoFollowUpVerdict", () => {
     expect(autoFollowUpVerdict(candidate({ contextCurrent: false }), now)).toEqual({ verdict: "wait" });
     expect(autoFollowUpVerdict(candidate({ runActive: false }), now)).toEqual({ verdict: "wait" });
     expect(autoFollowUpVerdict(candidate({ stepAwaitingReview: false }), now)).toEqual({ verdict: "wait" });
+  });
+});
+
+describe("autoFollowUpVerdict for an immediate reply", () => {
+  const reply = (overrides: Partial<AutoFollowUpCandidate> = {}) => candidate({ stepType: "reply", ...overrides });
+
+  test("the hold is 15 minutes", () => {
+    expect(AUTO_REPLY_HOLD_MS).toBe(15 * 60_000);
+  });
+
+  test("a reply to the latest inbound, on an applied stage, is sent", () => {
+    expect(autoFollowUpVerdict(reply(), now)).toEqual({ verdict: "send" });
+  });
+
+  test("a reply on a stage still held for review goes to a person", () => {
+    expect(autoFollowUpVerdict(reply({ classificationApplied: false }), now))
+      .toEqual({ verdict: "hand_to_rep", reason: "record_needs_a_person" });
+    expect(autoFollowUpVerdict(reply({ workflowState: "action_required" }), now))
+      .toEqual({ verdict: "hand_to_rep", reason: "record_needs_a_person" });
+  });
+
+  test("a newer inbound stops the reply: it no longer answers the latest message", () => {
+    expect(autoFollowUpVerdict(reply({ answersLatestInbound: false }), now)).toEqual({ verdict: "wait" });
+    // The usual shape: the new inbound bumped the context and is being classified.
+    expect(autoFollowUpVerdict(reply({ contextCurrent: false, classificationApplied: false, workflowState: "classifying" }), now))
+      .toEqual({ verdict: "wait" });
+  });
+
+  test("the reply switch off hands it over", () => {
+    expect(autoFollowUpVerdict(reply({ sequenceAutoSend: false }), now))
+      .toEqual({ verdict: "hand_to_rep", reason: "sequence_auto_send_off" });
+  });
+
+  test("a follow-up does not depend on the reply checks", () => {
+    expect(autoFollowUpVerdict(candidate({ answersLatestInbound: false, classificationApplied: false }), now))
+      .toEqual({ verdict: "send" });
+  });
+});
+
+describe("sequenceAutoSendFor", () => {
+  test("each step type reads its own switch", () => {
+    expect(sequenceAutoSendFor("reply", { autoSendReply: true, autoSendFollowUps: false })).toBe(true);
+    expect(sequenceAutoSendFor("follow_up", { autoSendReply: true, autoSendFollowUps: false })).toBe(false);
+    expect(sequenceAutoSendFor("follow_up", { autoSendReply: false, autoSendFollowUps: true })).toBe(true);
+  });
+});
+
+describe("isAppliedClassificationStatus", () => {
+  test("only applied readings count", () => {
+    for (const status of ["auto_applied", "accepted", "overridden"] as const) expect(isAppliedClassificationStatus(status)).toBe(true);
+    for (const status of ["proposed", "rejected", "stale", "failed", null] as const) expect(isAppliedClassificationStatus(status)).toBe(false);
   });
 });
 

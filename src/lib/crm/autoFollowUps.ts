@@ -1,8 +1,11 @@
 /**
- * Automatic CRM follow-ups.
+ * Automatic CRM follow-ups (and immediate replies).
  *
  * A sequence with "Send follow-ups automatically" on hands each follow-up
- * draft here instead of to a person (drafts.ts sets `auto_send_at`). Every
+ * draft here instead of to a person (drafts.ts sets `auto_send_at`); one with
+ * "Send the immediate reply automatically" does the same with its reply
+ * draft, AUTO_REPLY_HOLD_MS after it was written, and only on a stage that
+ * was applied (not one proposed for review) for the latest inbound. Every
  * few minutes (scheduler job `crm-auto-follow-ups`) this sends at most one
  * per sending account — mailbox, LinkedIn account, WhatsApp number — oldest
  * first, and only when that account:
@@ -20,9 +23,10 @@
  * guardrails, the stale-context check (a new reply from the lead retires the
  * draft before it can go) and the delivery-uncertain handling all apply.
  *
- * Only follow-ups: the immediate reply always waits for a person. A draft
- * that cannot go within 48 hours, or whose record needs a person, is handed
- * to the Action required queue like any other draft.
+ * The immediate reply waits for a person unless its sequence says otherwise;
+ * during its hold it can still be stopped with "Review before sending". A
+ * draft that cannot go within 48 hours, or whose record needs a person, is
+ * handed to the Action required queue like any other draft.
  */
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, isNotNull, lte, or, isNull, sql } from "drizzle-orm";
@@ -46,7 +50,9 @@ import { withinCampaignSendingHours } from "@/lib/whatsapp/campaigns/engineRules
 import {
   autoFollowUpVerdict,
   followUpGapPassed,
+  isAppliedClassificationStatus,
   oldestPerAccount,
+  sequenceAutoSendFor,
   type AutoFollowUpCandidate,
   type AutoFollowUpHandoffReason,
 } from "./autoFollowUpRules";
@@ -54,6 +60,7 @@ import { appendCrmEvent, type CrmEventActor } from "./events";
 import { draftInOrg, lockCrmRecord } from "./records";
 import { CrmConflictError, type CrmTransaction, withCrmTransaction } from "./repository";
 import {
+  crmClassifications,
   crmConversationMessages,
   crmConversations,
   crmDrafts,
@@ -64,6 +71,7 @@ import {
   crmSequenceSteps,
   crmSequences,
   type CrmChannel,
+  type CrmClassificationStatus,
 } from "./schema";
 import { sendDraft, sendThroughCrmProvider, sendWhatsappThroughCrm, type CrmSendAdapter } from "./send";
 
@@ -122,18 +130,43 @@ export async function handAutoFollowUpToRepInTransaction(
 }
 
 /**
- * The opposite of a hand-off: puts a follow-up draft that is waiting in
- * Action required onto the automatic path, for when its sequence was
- * switched on after it was drafted. Only a follow-up of a sequence that
- * sends automatically, on a live run and the record's current context, and
- * only once the lead's latest reply was answered from the CRM (follow-ups
- * never chase an unanswered reply). Returns whether it was queued.
+ * The latest classification of `messageId` on the record, applied or not.
+ * crm_classifications has no organization of its own: the record (already
+ * locked in the caller's organization) scopes it.
+ */
+async function latestClassificationStatus(
+  tx: CrmTransaction,
+  recordId: string,
+  messageId: string,
+): Promise<CrmClassificationStatus | null> {
+  const [row] = await tx.select({ status: crmClassifications.status }).from(crmClassifications)
+    .where(and(eq(crmClassifications.crmRecordId, recordId), eq(crmClassifications.messageId, messageId)))
+    .orderBy(desc(crmClassifications.createdAt)).limit(1);
+  return row?.status ?? null;
+}
+
+/**
+ * The opposite of a hand-off: puts a draft that is waiting in Action
+ * required onto the automatic path, for when its sequence was switched on
+ * after it was drafted. Only a step whose switch is on (autoSendFollowUps
+ * for a follow-up, autoSendReply for the immediate reply), on a live run and
+ * the record's current context. A follow-up only once the lead's latest
+ * reply was answered from the CRM (follow-ups never chase an unanswered
+ * reply); a reply only when it answers that latest reply and its
+ * classification was applied. Returns whether it was queued.
  */
 export async function queueAutoFollowUpInTransaction(
   tx: CrmTransaction,
   input: { draftId: string; at: Date; actorType: CrmEventActor; actorRef?: string | null; reason: string },
 ): Promise<boolean> {
-  const [scope] = await tx.select({ draft: crmDrafts, stepType: crmSequenceSteps.stepType, runStatus: crmSequenceRuns.status, stepStatus: crmSequenceStepRuns.status, autoSend: crmSequences.autoSendFollowUps })
+  const [scope] = await tx.select({
+    draft: crmDrafts,
+    stepType: crmSequenceSteps.stepType,
+    runStatus: crmSequenceRuns.status,
+    stepStatus: crmSequenceStepRuns.status,
+    autoSendFollowUps: crmSequences.autoSendFollowUps,
+    autoSendReply: crmSequences.autoSendReply,
+  })
     .from(crmDrafts)
     .innerJoin(crmSequenceStepRuns, eq(crmSequenceStepRuns.id, crmDrafts.sequenceStepRunId))
     .innerJoin(crmSequenceSteps, eq(crmSequenceSteps.id, crmSequenceStepRuns.sequenceStepId))
@@ -146,13 +179,21 @@ export async function queueAutoFollowUpInTransaction(
   const { draft } = scope;
   if (
     draft.status !== "awaiting_review" || draft.autoSendAt
-    || scope.stepType !== "follow_up" || !scope.autoSend
+    || !sequenceAutoSendFor(scope.stepType, scope)
     || scope.runStatus !== "active" || scope.stepStatus !== "awaiting_review"
   ) return false;
   const record = await lockCrmRecord(tx, draft.crmRecordId);
   if (record.contextVersion !== draft.expectedContextVersion) return false;
   if (record.workflowState !== "action_required" && record.workflowState !== "waiting") return false;
   if (!record.latestInboundMessageId) return false;
+  if (scope.stepType === "reply") {
+    // The reply answers the latest inbound by definition — so it must be the
+    // one it was written for, read on a stage that was applied. (A newer
+    // reply has bumped the context already; this is the second lock.)
+    if (draft.replyForMessageId !== record.latestInboundMessageId) return false;
+    if (!isAppliedClassificationStatus(await latestClassificationStatus(tx, record.id, record.latestInboundMessageId))) return false;
+    return markQueued(tx, record, draft.id, input);
+  }
   const [latestInbound] = await tx.select({ sentAt: crmConversationMessages.sentAt }).from(crmConversationMessages)
     .where(eq(crmConversationMessages.id, record.latestInboundMessageId)).limit(1);
   const [answered] = latestInbound
@@ -165,8 +206,18 @@ export async function queueAutoFollowUpInTransaction(
       )).limit(1)
     : [];
   if (!answered) return false;
+  return markQueued(tx, record, draft.id, input);
+}
+
+/** Puts the draft on the automatic path and the record back to waiting for it. */
+async function markQueued(
+  tx: CrmTransaction,
+  record: Awaited<ReturnType<typeof lockCrmRecord>>,
+  draftId: string,
+  input: { at: Date; actorType: CrmEventActor; actorRef?: string | null; reason: string },
+): Promise<boolean> {
   const now = new Date();
-  await tx.update(crmDrafts).set({ autoSendAt: input.at, updatedAt: now }).where(eq(crmDrafts.id, draft.id));
+  await tx.update(crmDrafts).set({ autoSendAt: input.at, updatedAt: now }).where(eq(crmDrafts.id, draftId));
   await tx.update(crmRecords).set({ workflowState: "waiting", nextActionAt: null, updatedAt: now })
     .where(eq(crmRecords.id, record.id));
   await appendCrmEvent(tx, {
@@ -176,8 +227,8 @@ export async function queueAutoFollowUpInTransaction(
     eventType: "draft.auto_send_queued",
     actorType: input.actorType,
     actorRef: input.actorRef,
-    fromData: { draftId: draft.id, workflowState: record.workflowState },
-    toData: { draftId: draft.id, autoSendAt: input.at.toISOString(), workflowState: "waiting" },
+    fromData: { draftId: draftId, workflowState: record.workflowState },
+    toData: { draftId: draftId, autoSendAt: input.at.toISOString(), workflowState: "waiting" },
     meta: { reason: input.reason },
     contextVersion: record.contextVersion,
   });
@@ -194,20 +245,25 @@ export function takeOverAutoFollowUp(input: { draftId: string; actorRef?: string
   }));
 }
 
-/** Every automatic follow-up still waiting in a sequence, handed to a person (the switch went off). */
+/**
+ * Every automatic draft still waiting in a sequence, handed to a person (a
+ * switch went off): only the replies or only the follow-ups with `stepType`.
+ */
 export async function handSequenceAutoFollowUpsToRepInTransaction(
   tx: CrmTransaction,
-  input: { sequenceId: string; actorRef?: string | null },
+  input: { sequenceId: string; stepType?: "reply" | "follow_up"; actorRef?: string | null },
 ): Promise<number> {
   const waiting = await tx.select({ id: crmDrafts.id })
     .from(crmDrafts)
     .innerJoin(crmSequenceStepRuns, eq(crmSequenceStepRuns.id, crmDrafts.sequenceStepRunId))
+    .innerJoin(crmSequenceSteps, eq(crmSequenceSteps.id, crmSequenceStepRuns.sequenceStepId))
     .innerJoin(crmSequenceRuns, eq(crmSequenceRuns.id, crmSequenceStepRuns.sequenceRunId))
     .where(and(
       draftInOrg(),
       eq(crmSequenceRuns.sequenceId, input.sequenceId),
       eq(crmDrafts.status, "awaiting_review"),
       isNotNull(crmDrafts.autoSendAt),
+      ...(input.stepType ? [eq(crmSequenceSteps.stepType, input.stepType)] : []),
     ));
   let handed = 0;
   for (const draft of waiting) {
@@ -221,7 +277,11 @@ export async function handSequenceAutoFollowUpsToRepInTransaction(
   return handed;
 }
 
-/** Due automatic follow-ups of the current organization, oldest first. */
+/**
+ * Due automatic drafts (follow-ups and held immediate replies) of the current
+ * organization, oldest first. `autoSendAt <= now` is what keeps a reply in
+ * its hold: drafts.ts sets it AUTO_REPLY_HOLD_MS ahead.
+ */
 async function dueCandidates(now: Date, account?: { channel: CrmChannel; accountRef: string }): Promise<AutoFollowUpCandidate[]> {
   const rows = await db
     .select({
@@ -235,12 +295,26 @@ async function dueCandidates(now: Date, account?: { channel: CrmChannel; account
       contextVersion: crmRecords.contextVersion,
       runStatus: crmSequenceRuns.status,
       stepStatus: crmSequenceStepRuns.status,
-      sequenceAutoSend: crmSequences.autoSendFollowUps,
+      stepType: crmSequenceSteps.stepType,
+      autoSendFollowUps: crmSequences.autoSendFollowUps,
+      autoSendReply: crmSequences.autoSendReply,
+      replyForMessageId: crmDrafts.replyForMessageId,
+      latestInboundMessageId: crmRecords.latestInboundMessageId,
+      // The reading of the message the reply answers; the record (inOrg
+      // below) scopes it.
+      classificationStatus: sql<CrmClassificationStatus | null>`(
+        SELECT ${crmClassifications.status} FROM ${crmClassifications}
+        WHERE ${crmClassifications.crmRecordId} = ${crmRecords.id}
+          AND ${crmClassifications.messageId} = ${crmDrafts.replyForMessageId}
+        ORDER BY ${crmClassifications.createdAt} DESC
+        LIMIT 1
+      )`,
     })
     .from(crmDrafts)
     .innerJoin(crmRecords, eq(crmRecords.id, crmDrafts.crmRecordId))
     .innerJoin(crmConversations, eq(crmConversations.id, crmDrafts.conversationId))
     .innerJoin(crmSequenceStepRuns, eq(crmSequenceStepRuns.id, crmDrafts.sequenceStepRunId))
+    .innerJoin(crmSequenceSteps, eq(crmSequenceSteps.id, crmSequenceStepRuns.sequenceStepId))
     .innerJoin(crmSequenceRuns, eq(crmSequenceRuns.id, crmSequenceStepRuns.sequenceRunId))
     .innerJoin(crmSequences, eq(crmSequences.id, crmSequenceRuns.sequenceId))
     .where(and(
@@ -258,11 +332,15 @@ async function dueCandidates(now: Date, account?: { channel: CrmChannel; account
     channel: row.channel,
     accountRef: row.accountRef,
     autoSendAt: row.autoSendAt!,
-    sequenceAutoSend: row.sequenceAutoSend,
+    stepType: row.stepType,
+    sequenceAutoSend: sequenceAutoSendFor(row.stepType, row),
     workflowState: row.workflowState,
     runActive: row.runStatus === "active",
     stepAwaitingReview: row.stepStatus === "awaiting_review",
     contextCurrent: row.contextVersion === row.expectedContextVersion,
+    answersLatestInbound: row.stepType === "follow_up"
+      || (row.replyForMessageId !== null && row.replyForMessageId === row.latestInboundMessageId),
+    classificationApplied: row.stepType === "follow_up" || isAppliedClassificationStatus(row.classificationStatus),
   }));
 }
 

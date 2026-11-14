@@ -423,6 +423,8 @@ describe("Cal.com", () => {
       kind: "booked",
       uid: "bk_1",
       startTime: new Date("2026-10-29T06:30:00Z"),
+      endTime: null,
+      rescheduleUid: null,
       bookingCode: null,
       contactId,
       emails: ["asha@example.com"],
@@ -434,6 +436,18 @@ describe("Cal.com", () => {
     const event = parseCalcomEvent({ triggerEvent: "BOOKING_CREATED", payload: { metadata: { c: "K7P2" } } });
     expect(event).toMatchObject({ bookingCode: "k7p2", contactId: null });
     expect(parseCalcomEvent({ triggerEvent: "BOOKING_CREATED", payload: { metadata: { c: "no spaces!" } } })?.bookingCode).toBeNull();
+  });
+
+  test("a booking's end time, and the booking a reschedule replaces", () => {
+    const created = parseCalcomEvent({
+      triggerEvent: "BOOKING_CREATED",
+      payload: { uid: "bk_1", startTime: "2026-10-29T06:30:00Z", endTime: "2026-10-29T07:00:00Z", rescheduleUid: "ignored" },
+    });
+    expect(created).toMatchObject({ endTime: new Date("2026-10-29T07:00:00Z"), rescheduleUid: null });
+    expect(parseCalcomEvent({ triggerEvent: "BOOKING_RESCHEDULED", payload: { uid: "bk_2", rescheduleUid: "bk_1" } })?.rescheduleUid).toBe("bk_1");
+    expect(parseCalcomEvent({ triggerEvent: "BOOKING_RESCHEDULED", payload: { uid: "bk_2", fromReschedule: "bk_1" } })?.rescheduleUid).toBe("bk_1");
+    expect(parseCalcomEvent({ triggerEvent: "BOOKING_RESCHEDULED", payload: { uid: "bk_2", rescheduleUid: "bk_2" } })?.rescheduleUid).toBeNull();
+    expect(parseCalcomEvent({ triggerEvent: "BOOKING_CREATED", payload: { endTime: "not a time" } })?.endTime).toBeNull();
   });
 
   test("rescheduled is a booking, cancelled a cancellation, the rest ignored", () => {

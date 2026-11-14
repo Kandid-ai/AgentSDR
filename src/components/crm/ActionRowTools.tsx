@@ -276,6 +276,51 @@ export const HoverPreviewProvider = ({ children }: { children: React.ReactNode }
 /** Where a row's draft edits and sends go. `path` is relative to `/api/crm`. */
 export type RowMutation = (path: string, body: Data, method: string, success: string) => Promise<boolean>;
 
+/** "Thu 20 Nov, 10:00–10:30" in the reader's local time (end shown with its date only when it falls on another day). */
+export function formatMeetingRange(startAt: unknown, endAt: unknown): string {
+  const start = new Date(String(startAt));
+  const end = new Date(String(endAt));
+  if (Number.isNaN(start.getTime())) return "—";
+  const day = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+  const head = `${day.format(start)}, ${time.format(start)}`;
+  if (Number.isNaN(end.getTime())) return head;
+  return start.toDateString() === end.toDateString() ? `${head}–${time.format(end)}` : `${head} – ${day.format(end)}, ${time.format(end)}`;
+}
+
+export type MeetingOutcome = "showed" | "no_show";
+
+/** The two answers to "Did they show up?"; the caller posts them and refreshes. */
+export function MeetingOutcomeButtons({ busy, onAnswer, className }: { busy: boolean; onAnswer: (outcome: MeetingOutcome) => void; className?: string }) {
+  return (
+    <div data-row-tools className={cn("flex shrink-0 items-center gap-1.5", className)}>
+      <button type="button" className={cn(primaryButtonClass, "h-8")} disabled={busy} onClick={() => onAnswer("showed")}><RiCheckLine className="size-4" aria-hidden="true" />Showed up</button>
+      <button type="button" className={cn(secondaryButtonClass, "h-8")} disabled={busy} onClick={() => onAnswer("no_show")}>No-show</button>
+    </div>
+  );
+}
+
+/** A row whose action is "Did they show up?": the meeting time and the two answers. */
+export function MeetingOutcomeTools({ recordId, meeting, busy, onMutate }: {
+  recordId: string;
+  meeting: { id: string; startAt: string; endAt: string };
+  busy: boolean;
+  onMutate: RowMutation;
+}) {
+  const answer = (outcome: MeetingOutcome) => void onMutate(
+    `/records/${recordId}/meeting-outcome`,
+    { meetingId: meeting.id, outcome },
+    "POST",
+    outcome === "showed" ? "Marked as showed up" : "Marked as no-show",
+  );
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <p className="truncate text-label-sm text-text-strong-950" title={formatMeetingRange(meeting.startAt, meeting.endAt)}>Meeting {formatMeetingRange(meeting.startAt, meeting.endAt)}</p>
+      <MeetingOutcomeButtons busy={busy} onAnswer={answer} />
+    </div>
+  );
+}
+
 /** Starting points for feedback; each appends a line so several can be combined. */
 const REGENERATE_HINTS: { label: string; text: string }[] = [
   { label: "Shorter", text: "Make it shorter — three or four lines at most." },

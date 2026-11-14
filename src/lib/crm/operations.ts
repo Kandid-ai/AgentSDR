@@ -188,6 +188,11 @@ export type MoveRecordStageInput = {
    */
   next: StageMoveNext;
   actorRef?: string | null;
+  /**
+   * Who moved it: a person (the default), or an integration acting on what
+   * happened elsewhere — a Cal.com booking (src/lib/crm/meetings.ts).
+   */
+  source?: "human" | "integration";
 };
 
 /**
@@ -214,25 +219,26 @@ export async function moveRecordStageInTransaction(tx: CrmTransaction, input: Mo
     throw new CrmConflictError("A stage move cannot happen in the future");
   }
   const note = input.note?.trim() || null;
+  // The draft job is keyed to a classification (a trigger enforces it), so it
+  // hangs off the AI's reading of the latest reply — the row this move leaves
+  // as it was. Read before anything is written, so a refusal changes nothing.
+  const [classification] = await tx.select({ id: crmClassifications.id }).from(crmClassifications).where(and(
+    eq(crmClassifications.crmRecordId, before.id),
+    eq(crmClassifications.messageId, before.latestInboundMessageId),
+  )).orderBy(desc(crmClassifications.createdAt)).limit(1);
+  if (!classification) throw new CrmConflictError("Classify the latest reply before moving this record's stage");
+  const integration = input.source === "integration";
   const updated = await setRecordClassificationInTransaction(tx, {
     recordId: input.recordId,
     categoryKey: input.categoryKey,
     subcategoryId: input.subcategoryId,
     expectedContextVersion: input.expectedContextVersion,
-    source: "human",
-    actorType: "authenticated_operator",
+    source: integration ? "integration" : "human",
+    actorType: integration ? "integration" : "authenticated_operator",
     actorRef: input.actorRef,
     eventType: STAGE_MOVED_EVENT,
     eventMeta: { occurredAt: occurredAt.toISOString(), note, next: input.next },
   });
-  // The draft job is keyed to a classification (a trigger enforces it), so it
-  // hangs off the AI's reading of the latest reply — the row this move leaves
-  // as it was.
-  const [classification] = await tx.select({ id: crmClassifications.id }).from(crmClassifications).where(and(
-    eq(crmClassifications.crmRecordId, updated.id),
-    eq(crmClassifications.messageId, before.latestInboundMessageId),
-  )).orderBy(desc(crmClassifications.createdAt)).limit(1);
-  if (!classification) throw new CrmConflictError("Classify the latest reply before moving this record's stage");
   return restartRecordWorkInTransaction(tx, updated, {
     draftJob: input.next === "reply" ? { entityId: classification.id, requeueCompleted: true } : null,
     actorRef: input.actorRef,

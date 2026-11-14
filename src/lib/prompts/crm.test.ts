@@ -7,7 +7,7 @@ const fill = (name: keyof typeof CRM_PROMPTS, variables: Parameters<typeof fillP
 describe("CRM prompts", () => {
   test("each uses only the variables the code passes", () => {
     const passed: Record<keyof typeof CRM_PROMPTS, string[]> = {
-      "crm/draft-system": ["instructions"],
+      "crm/draft-system": ["booking_link", "instructions"],
       "crm/draft-channel-rules": ["email", "linkedin", "whatsapp"],
       "crm/draft-user": ["context_json", "revision"],
       "crm/draft-tool": [],
@@ -32,6 +32,18 @@ describe("CRM prompts", () => {
     expect(instructed).toContain("Follow them for tone, style, length");
     expect(instructed.endsWith("<operator_instructions>\nSign off as Priya.\n</operator_instructions>")).toBe(true);
     expect(instructed).not.toContain("{{");
+  });
+
+  test("the draft system prompt names the literal {{booking_link}} only when there is a booking page", () => {
+    const plain = fill("crm/draft-system", { instructions: null, booking_link: false });
+    const withLink = fill("crm/draft-system", { instructions: null, booking_link: true });
+    expect(plain).not.toContain("booking_link");
+    expect(plain).not.toContain("\n\n");
+    expect(withLink).toContain("write exactly {{booking_link}} where the link goes");
+    expect(withLink).toContain("Never write a booking URL yourself");
+    expect(withLink.split("\n")).toHaveLength(plain.split("\n").length + 1);
+    // Operator instructions mentioning the token reach the model as written.
+    expect(fill("crm/draft-system", { instructions: "Offer {{booking_link}}.", booking_link: true })).toContain("Offer {{booking_link}}.");
   });
 
   test("the channel rules hold only the chosen channel's lines", () => {

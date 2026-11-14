@@ -456,6 +456,12 @@ export type CalcomBookingEvent = {
   /** Cal.com's booking uid. */
   uid: string | null;
   startTime: Date | null;
+  endTime: Date | null;
+  /**
+   * On a reschedule, the uid of the booking it replaces (Cal.com sends
+   * `rescheduleUid`, older payloads `fromReschedule`); null otherwise.
+   */
+  rescheduleUid: string | null;
   /** The lead's booking code from the link's metadata. */
   bookingCode: string | null;
   /** The lead's call_campaign_contacts id, from a link sent before booking codes. */
@@ -475,6 +481,12 @@ function text(value: unknown): string | null {
   // Cal.com's `responses` hold { label, value } objects.
   const inner = record(value)?.value;
   return typeof inner === "string" && inner.trim() ? inner.trim() : null;
+}
+
+function calcomTime(value: unknown): Date | null {
+  const raw = text(value);
+  const ms = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(ms) ? new Date(ms) : null;
 }
 
 /**
@@ -504,12 +516,14 @@ export function parseCalcomEvent(body: unknown): CalcomBookingEvent | null {
     const phone = text(value);
     if (phone) phones.add(phone);
   }
-  const start = text(payload.startTime);
-  const startMs = start ? Date.parse(start) : NaN;
+  const uid = text(payload.uid);
+  const rescheduleUid = trigger === "BOOKING_RESCHEDULED" ? text(payload.rescheduleUid) ?? text(payload.fromReschedule) : null;
   return {
     kind,
-    uid: text(payload.uid),
-    startTime: Number.isFinite(startMs) ? new Date(startMs) : null,
+    uid,
+    startTime: calcomTime(payload.startTime),
+    endTime: calcomTime(payload.endTime),
+    rescheduleUid: rescheduleUid && rescheduleUid !== uid ? rescheduleUid : null,
     bookingCode: code && BOOKING_CODE_PATTERN.test(code) ? code : null,
     contactId: contact && UUID_PATTERN.test(contact) ? contact : null,
     emails: [...emails],

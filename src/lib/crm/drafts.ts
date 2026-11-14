@@ -5,7 +5,8 @@ import { db } from "@/lib/db";
 import { companies, people } from "@/lib/leads/schema";
 import { generateCrmDraft, type DraftCompletion, type DraftRevisionRequest, type GenerateCrmDraftInput } from "./ai/draft";
 import { loadCallContextMessages } from "./callHistory";
-import { loadDraftNow, loadDraftSender } from "./draftSender";
+import { draftNow, loadDraftNow, loadDraftSender } from "./draftSender";
+import { AUTO_REPLY_HOLD_MS, isAppliedClassificationStatus } from "./autoFollowUpRules";
 import { appendCrmEvent } from "./events";
 import { retrieveKnowledge } from "./knowledge";
 import { isPersonDoNotContact } from "./policies";
@@ -16,7 +17,11 @@ import {
   withCrmTransaction,
 } from "./repository";
 import { draftInOrg, lockCrmRecord } from "./records";
-import { releaseStepRunDraftLinks } from "./sequences";
+import {
+  openMeetingStartAtInTransaction,
+  releaseStepRunDraftLinks,
+  rescheduleMeetingStepsInTransaction,
+} from "./sequences";
 import { currentStageMoveInTransaction } from "./stageMove";
 import {
   crmClassifications,
@@ -101,8 +106,10 @@ async function loadDraftSubject(
     .limit(1);
   const sender = conversation ? await loadDraftSender(tx, conversation) : null;
   const now = await loadDraftNow();
+  const meetingStartAt = await openMeetingStartAtInTransaction(tx, record.id);
+  const meeting = meetingStartAt ? draftNow(meetingStartAt, now.timeZone) : null;
   const [settings] = await tx
-    .select({ draftInstructions: crmSettings.draftInstructions })
+    .select({ draftInstructions: crmSettings.draftInstructions, bookingUrl: crmSettings.bookingUrl })
     .from(crmSettings)
     .where(eq(crmSettings.pipelineId, record.pipelineId))
     .limit(1);
@@ -149,8 +156,10 @@ async function loadDraftSubject(
     },
     stageChange: stageMove,
     instructions: formatAiInstructions(settings?.draftInstructions),
+    bookingLink: Boolean(settings?.bookingUrl?.trim()),
     sender,
     now,
+    meeting,
     mergeVariables: {
       first_name: profile.person.firstName,
       last_name: profile.person.lastName,
@@ -335,27 +344,50 @@ async function finishGeneratedDraft(
       });
       if (citations.length) await tx.insert(crmDraftKnowledgeCitations).values(citations);
     }
-    let autoSend = false;
+    let autoSendAt: Date | null = null;
     if (draft.sequenceStepRunId) {
       await tx.update(crmSequenceStepRuns).set({ status: "awaiting_review", lastError: null, updatedAt: now })
         .where(eq(crmSequenceStepRuns.id, draft.sequenceStepRunId));
-      // A follow-up of a sequence that sends on its own goes to the sender,
-      // not to a person — unless a person asked for this rewrite, in which
-      // case they are reviewing it already.
+      // A step of a sequence that sends it on its own goes to the sender, not
+      // to a person — unless a person asked for this rewrite, in which case
+      // they are reviewing it already. Follow-ups go at once (their delay is
+      // behind them); the immediate reply after AUTO_REPLY_HOLD_MS, and only
+      // when it answers the latest inbound on a stage that was applied — a
+      // classification held for review stays a person's.
       if (!options.personRequested) {
-        const [scope] = await tx.select({ stepType: crmSequenceSteps.stepType, autoSend: crmSequences.autoSendFollowUps })
+        const [scope] = await tx.select({
+          stepType: crmSequenceSteps.stepType,
+          autoSendFollowUps: crmSequences.autoSendFollowUps,
+          autoSendReply: crmSequences.autoSendReply,
+        })
           .from(crmSequenceStepRuns)
           .innerJoin(crmSequenceSteps, eq(crmSequenceSteps.id, crmSequenceStepRuns.sequenceStepId))
           .innerJoin(crmSequenceRuns, eq(crmSequenceRuns.id, crmSequenceStepRuns.sequenceRunId))
           .innerJoin(crmSequences, eq(crmSequences.id, crmSequenceRuns.sequenceId))
-          .where(eq(crmSequenceStepRuns.id, draft.sequenceStepRunId)).limit(1);
-        autoSend = scope?.stepType === "follow_up" && scope.autoSend;
+          .where(and(inOrg(crmSequenceRuns), eq(crmSequenceStepRuns.id, draft.sequenceStepRunId))).limit(1);
+        if (scope?.stepType === "follow_up" && scope.autoSendFollowUps) {
+          autoSendAt = now;
+        } else if (
+          scope?.stepType === "reply" && scope.autoSendReply
+          && draft.replyForMessageId && draft.replyForMessageId === record.latestInboundMessageId
+        ) {
+          const [classification] = await tx.select({ status: crmClassifications.status }).from(crmClassifications)
+            .where(and(
+              eq(crmClassifications.crmRecordId, record.id),
+              eq(crmClassifications.messageId, draft.replyForMessageId),
+            ))
+            .orderBy(desc(crmClassifications.createdAt)).limit(1);
+          if (isAppliedClassificationStatus(classification?.status)) {
+            autoSendAt = new Date(now.getTime() + AUTO_REPLY_HOLD_MS);
+          }
+        }
       }
     }
-    if (autoSend) {
-      // Off the person's desk: it waits for its account's turn
-      // (autoFollowUps.ts), where "Review before sending" can still stop it.
-      await tx.update(crmDrafts).set({ autoSendAt: now }).where(eq(crmDrafts.id, draft.id));
+    if (autoSendAt) {
+      // Off the person's desk: it waits for its account's turn (and a reply
+      // for its hold) in autoFollowUps.ts, where "Review before sending" can
+      // still stop it.
+      await tx.update(crmDrafts).set({ autoSendAt }).where(eq(crmDrafts.id, draft.id));
       await tx.update(crmRecords).set({ workflowState: "waiting", nextActionAt: null, updatedAt: now })
         .where(eq(crmRecords.id, record.id));
     } else {
@@ -374,11 +406,11 @@ async function finishGeneratedDraft(
         provider: generated.provider,
         model: generated.model,
         ...(prepared.promptInput.revision ? { reviewerFeedback: prepared.promptInput.revision.reviewerFeedback } : {}),
-        ...(autoSend ? { autoSend: true } : {}),
+        ...(autoSendAt ? { autoSend: true, autoSendAt: autoSendAt.toISOString() } : {}),
       },
       contextVersion: record.contextVersion,
     });
-    return autoSend ? { ...updated, autoSendAt: now } : updated;
+    return autoSendAt ? { ...updated, autoSendAt } : updated;
   });
 }
 
@@ -531,12 +563,38 @@ export async function generateFallbackDraft(
   }
 }
 
+/**
+ * A reminder ('before_meeting' step) that came due is drafted only while its
+ * meeting is still booked and ahead. Normally a cancellation or reschedule
+ * re-times it already (rescheduleMeetingStepsInTransaction); this is the
+ * safety net when that did not happen: the step is skipped and the run moves
+ * on. Returns whether it was skipped.
+ */
+async function skipReminderWithoutMeeting(stepRunId: string): Promise<boolean> {
+  return withCrmTransaction(async (tx) => {
+    const [scope] = await tx.select({ timing: crmSequenceSteps.timing, recordId: crmSequenceRuns.crmRecordId })
+      .from(crmSequenceStepRuns)
+      .innerJoin(crmSequenceSteps, eq(crmSequenceSteps.id, crmSequenceStepRuns.sequenceStepId))
+      .innerJoin(crmSequenceRuns, eq(crmSequenceRuns.id, crmSequenceStepRuns.sequenceRunId))
+      .where(and(inOrg(crmSequenceRuns), eq(crmSequenceStepRuns.id, stepRunId)))
+      .limit(1);
+    if (!scope || scope.timing !== "before_meeting") return false;
+    const meetingStartAt = await openMeetingStartAtInTransaction(tx, scope.recordId);
+    if (meetingStartAt && meetingStartAt.getTime() > Date.now()) return false;
+    await rescheduleMeetingStepsInTransaction(tx, scope.recordId, null);
+    return true;
+  });
+}
+
 export async function generateDraftForStep(
   stepRunId: string,
   dependencies: { complete?: DraftCompletion } = {},
   revision: DraftRevisionRequest | null = null,
   regenerating = false,
 ): Promise<CrmDraft> {
+  if (!regenerating && await skipReminderWithoutMeeting(stepRunId)) {
+    throw new CrmConflictError("The meeting this reminder was for is no longer booked or has started; the step was skipped");
+  }
   const prepared = await withCrmTransaction((tx) => loadDraftContext(tx, stepRunId, regenerating));
   try {
     const generated = await generateCrmDraft({ ...prepared.promptInput, revision, trace: draftTrace(prepared) }, dependencies);

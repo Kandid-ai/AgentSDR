@@ -53,7 +53,7 @@ import {
 } from "./CrmLayout";
 import { RecordBody } from "./CrmSkeletons";
 import { asList, asObject, crmFetch, displayName, errorMessage, formatDate, relativeDate } from "./crm-utils";
-import { ClassificationPicker, MoveStageDialog, moveStageSuccessMessage, RegenerateDraftDialog, humanize } from "./ActionRowTools";
+import { ClassificationPicker, formatMeetingRange, MeetingOutcomeButtons, MoveStageDialog, moveStageSuccessMessage, RegenerateDraftDialog, humanize } from "./ActionRowTools";
 import { ContactAvatar } from "./ContactAvatar";
 import { takeRecordWorkspace } from "./recordPrefetch";
 import { announceRecordChanged } from "./recordEvents";
@@ -265,8 +265,63 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
             : <ConversationPanel conversations={conversations} messages={messages} name={name} avatarUrl={avatarUrl} />}
         </div>
       </div>
+      <MeetingsCard
+        meetings={asList<Data>(data.meetings)}
+        linkSentCount={Number(data.bookingLinkSentCount ?? 0)}
+        linkFirstSentAt={data.bookingLinkFirstSentAt}
+        onAction={mutate}
+        recordId={recordId}
+      />
       <CallsCard personId={String(person.id ?? data.personId)} refreshKey={callsRefreshKey} />
     </div>
+  );
+}
+
+/** Booked calls with the lead and how they went; hidden until there is a meeting or a booking link was sent. */
+function MeetingsCard({ meetings, linkSentCount, linkFirstSentAt, onAction, recordId }: {
+  meetings: Data[];
+  linkSentCount: number;
+  linkFirstSentAt: unknown;
+  onAction: (path: string, body?: Data, method?: string, success?: string) => Promise<void>;
+  recordId: string;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [now] = useState(() => Date.now());
+  if (!meetings.length && !(linkSentCount > 0)) return null;
+  const answer = async (meetingId: string, outcome: "showed" | "no_show") => {
+    setBusyId(meetingId);
+    try { await onAction(`/records/${recordId}/meeting-outcome`, { meetingId, outcome }, "POST", outcome === "showed" ? "Marked as showed up" : "Marked as no-show"); }
+    finally { setBusyId(null); }
+  };
+  return (
+    <Frame>
+      <FrameHeader
+        title="Meetings"
+        description={linkSentCount > 0 ? `Booking link sent ${linkSentCount} ${linkSentCount === 1 ? "time" : "times"}${linkFirstSentAt ? `, first on ${formatDate(linkFirstSentAt)}` : ""}.` : undefined}
+      />
+      {meetings.length > 0 && <FramePanel className="divide-y divide-stroke-soft-200 p-0 sm:p-0">
+        {meetings.map((meeting) => {
+          const id = String(meeting.id);
+          const cancelled = meeting.status === "cancelled";
+          const past = new Date(String(meeting.endAt)).getTime() < now;
+          const outcome = meeting.outcome ? String(meeting.outcome) : null;
+          const needsAnswer = !cancelled && !outcome && past;
+          return (
+            <div key={id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-label-sm text-text-strong-950">{formatMeetingRange(meeting.startAt, meeting.endAt)}</p>
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-paragraph-xs text-text-sub-600">
+                  <span className={cn(cancelled && "text-error-base")}>{cancelled ? "Cancelled" : "Booked"}</span>
+                  {outcome && <><span aria-hidden="true">·</span><span>{outcome === "showed" ? "Showed up" : "No-show"}{meeting.outcomeBy ? `, answered by ${String(meeting.outcomeBy)}` : ""}</span></>}
+                  {needsAnswer && <><span aria-hidden="true">·</span><span>Not answered yet</span></>}
+                </p>
+              </div>
+              {needsAnswer && <MeetingOutcomeButtons busy={busyId === id} onAnswer={(value) => void answer(id, value)} />}
+            </div>
+          );
+        })}
+      </FramePanel>}
+    </Frame>
   );
 }
 

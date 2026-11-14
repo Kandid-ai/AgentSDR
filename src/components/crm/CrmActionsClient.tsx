@@ -56,7 +56,7 @@ import { cn } from "@/utils/cn";
 import { ContactAvatar } from "./ContactAvatar";
 import { ErrorState, primaryButtonClass, secondaryButtonClass } from "./CrmLayout";
 import { RowsSkeleton } from "./CrmSkeletons";
-import { CategoryDot, ClassificationPicker, HoverPreview, HoverPreviewProvider, InlineDraftEditor, MoveStageDialog, moveStageSuccessMessage, RegenerateDraftDialog, humanize, type MoveStageBody, type RowMutation } from "./ActionRowTools";
+import { CategoryDot, ClassificationPicker, HoverPreview, HoverPreviewProvider, InlineDraftEditor, MeetingOutcomeTools, MoveStageDialog, moveStageSuccessMessage, RegenerateDraftDialog, humanize, type MoveStageBody, type RowMutation } from "./ActionRowTools";
 import { asList, asObject, CATEGORY_LABELS, crmFetch, displayName, errorMessage, formatDate, relativeDate, timeAgo } from "./crm-utils";
 import { prefetchRecordWorkspace } from "./recordPrefetch";
 import { useRecordChanged } from "./recordEvents";
@@ -613,6 +613,12 @@ function draftStateOf({ editable, draftFull, status, dnc, sendable, actionText }
   }
 }
 
+/** The meeting a "Did they show up?" row is about (listCrmActions' dueMeeting). */
+function asDueMeeting(value: unknown): { id: string; startAt: string; endAt: string } | null {
+  const meeting = asObject(value);
+  return meeting.id ? { id: String(meeting.id), startAt: String(meeting.startAt ?? ""), endAt: String(meeting.endAt ?? "") } : null;
+}
+
 /** Everything a row or card shows about one action, computed once. */
 export function describeAction(action: Action, categories: Data[], pipeline: boolean | undefined, now: number) {
   const record = asObject(action.record);
@@ -710,6 +716,7 @@ export function describeAction(action: Action, categories: Data[], pipeline: boo
     id, href, record, person, activeRun, inbound, subcategory, classification, category, channel, stage,
     proposedCategoryKey, proposedSubcategoryId, proposedLabel, keepCategoryKey, keepSubcategoryId,
     dueLabel, dueDetail, dueColor, dueIcon, actionText, name, companyDomain, companyLabel,
+    dueMeeting: asDueMeeting(action.dueMeeting),
     latestReplyFull, latestReply, draft, draftFull, draftReply, editable, repliedAt, sequenceLabel, stepLabel, sendableDraft, draftState,
     avatarUrl: person.profilePictureUrl ? String(person.profilePictureUrl) : null,
   };
@@ -911,7 +918,7 @@ function ActionRow({ action, categories, busy, editing, pipeline, now, onOpen, o
         {/* Hover the text for the whole draft (with Edit and Send there too);
             the same two actions float in at the cell's end while the row is
             hovered or focused, so a ready draft is one click from sent. */}
-        <HoverPreview
+        {row.dueMeeting ? <MeetingOutcomeTools recordId={id} meeting={row.dueMeeting} busy={busy} onMutate={onMutate} /> : <HoverPreview
           className="min-w-0"
           title={String(row.draft.subject ?? "").trim() || (row.draftFull ? "Draft reply" : "")}
           meta={row.draftState.label}
@@ -924,7 +931,7 @@ function ActionRow({ action, categories, busy, editing, pipeline, now, onOpen, o
           </>}
         >
           <DraftSummary row={row} />
-        </HoverPreview>
+        </HoverPreview>}
         {editable && !editing && <div data-row-tools className="pointer-events-none absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-lg bg-bg-white-0 p-1 opacity-0 shadow-regular-md ring-1 ring-inset ring-stroke-soft-200 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100">
           <Button.Root variant="neutral" mode="ghost" size="xxsmall" onClick={onToggleEdit} aria-label={`Edit the draft to ${row.name}`} title="Edit the draft here"><Button.Icon as={RiPencilLine} /></Button.Root>
           <Button.Root variant="primary" mode="filled" size="xxsmall" disabled={!sendable} onClick={() => sendDraft(row, onMutate)} aria-label={`Send the draft to ${row.name}`} title={sendTitle}><Button.Icon as={RiSendPlaneFill} />Send</Button.Root>
@@ -1094,7 +1101,8 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
       <ReplyQuote row={row} lines={2} />
     </HoverPreview>}
 
-    {row.draftReply ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200">
+    {row.dueMeeting ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200"><MeetingOutcomeTools recordId={id} meeting={row.dueMeeting} busy={busy} onMutate={onMutate} /></div>
+      : row.draftReply ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200">
       <HoverPreview
         title={String(row.draft.subject ?? "").trim() || "Draft reply"}
         meta={row.draftState.label}

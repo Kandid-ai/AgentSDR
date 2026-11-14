@@ -167,6 +167,21 @@ export default function CrmSequencesClient() {
     }
   };
 
+  const toggleAutoSendReply = async (sequence: Sequence, value: boolean) => {
+    const id = String(sequence.id);
+    setBusyKey(`auto-reply:${id}`);
+    setError("");
+    setSequences((current) => current.map((row) => String(row.id) === id ? { ...row, autoSendReply: value } : row));
+    try {
+      await crmFetch(`/sequences/${id}`, { method: "PATCH", body: JSON.stringify({ autoSendReply: value }) });
+    } catch (cause) {
+      setSequences((current) => current.map((row) => String(row.id) === id ? { ...row, autoSendReply: !value } : row));
+      setError(errorMessage(cause));
+    } finally {
+      setBusyKey("");
+    }
+  };
+
   const counts = useMemo(() => {
     const byStatus: Record<Tab, number> = { all: sequences.length, published: 0, draft: 0, archived: 0 };
     for (const sequence of sequences) byStatus[sequenceStatus(sequence)] += 1;
@@ -188,7 +203,7 @@ export default function CrmSequencesClient() {
     <>
       <PageHeader
         title="Sequences"
-        description="Reusable reply flows for CRM subcategories. The immediate reply always waits for you; with Auto-send on, a sequence's follow-ups send themselves."
+        description="Reusable reply flows for CRM subcategories. The immediate reply waits for you unless its sequence sends it after a 15-minute hold; with Auto-send on, a sequence's follow-ups send themselves."
         actions={
           <Button.Root variant="primary" mode="filled" size="small" disabled={Boolean(busyKey)} onClick={() => setShowCreate(true)}>
             <Button.Icon as={RiAddLine} />
@@ -243,7 +258,7 @@ export default function CrmSequencesClient() {
                       <Table.Head scope="col" className="w-[27%] px-4">Sequence</Table.Head>
                       <Table.Head scope="col" className="w-[18%] px-4">Steps</Table.Head>
                       <Table.Head scope="col" className="w-[25%] px-4">Used for</Table.Head>
-                      <Table.Head scope="col" className="w-[15%] px-4" title="Follow-ups drafted by the AI send themselves, one per account every 30 minutes, inside sending hours. The immediate reply always waits for you.">Auto-send</Table.Head>
+                      <Table.Head scope="col" className="w-[15%] px-4" title="Follow-ups drafted by the AI send themselves, one per account every 30 minutes, inside sending hours. The second switch sends the immediate reply too, after a 15-minute hold.">Auto-send</Table.Head>
                       <Table.Head scope="col" className="w-[12%] px-4">Status</Table.Head>
                       <Table.Head scope="col" className="w-14 px-2"><span className="sr-only">Actions</span></Table.Head>
                     </Table.Row>
@@ -259,6 +274,7 @@ export default function CrmSequencesClient() {
                         onOpen={open}
                         onDelete={remove}
                         onToggleAutoSend={toggleAutoSend}
+                        onToggleAutoSendReply={toggleAutoSendReply}
                       />
                     ))}
                   </Table.Body>
@@ -286,6 +302,7 @@ function SequenceRow({
   onOpen,
   onDelete,
   onToggleAutoSend,
+  onToggleAutoSendReply,
 }: {
   sequence: Sequence;
   subcategoryById: Record<string, SubcategoryReference>;
@@ -294,6 +311,7 @@ function SequenceRow({
   onOpen: (id: string) => void;
   onDelete: (sequence: Sequence) => Promise<void>;
   onToggleAutoSend: (sequence: Sequence, value: boolean) => Promise<void>;
+  onToggleAutoSendReply: (sequence: Sequence, value: boolean) => Promise<void>;
 }) {
   const id = String(sequence.id);
   const name = String(sequence.name ?? "Unnamed sequence");
@@ -306,6 +324,7 @@ function SequenceRow({
     .map((subcategoryId) => subcategoryById[String(subcategoryId)])
     .filter((value): value is SubcategoryReference => Boolean(value));
   const autoSend = sequence.autoSendFollowUps === true;
+  const autoSendReply = sequence.autoSendReply === true;
   const visible = assignments.slice(0, 3);
   const hidden = assignments.slice(3);
 
@@ -361,6 +380,15 @@ function SequenceRow({
             aria-label={`Send ${name}'s follow-ups automatically`}
           />
           <span className={cn("text-label-sm", autoSend ? "text-text-strong-950" : "text-text-sub-600")}>{autoSend ? "On" : "Off"}</span>
+        </div>
+        <div className="mt-1.5 flex items-center gap-2">
+          <Switch.Root
+            checked={autoSendReply}
+            disabled={busy || archived}
+            onCheckedChange={(value) => void onToggleAutoSendReply(sequence, value)}
+            aria-label={`Send ${name}'s immediate reply automatically`}
+          />
+          <span className={cn("text-paragraph-xs", autoSendReply ? "text-text-strong-950" : "text-text-sub-600")}>{autoSendReply ? "Reply sends after 15 min" : "Reply waits for you"}</span>
         </div>
         <p className="mt-1 truncate text-paragraph-xs text-text-sub-600">
           {archived ? "Archived" : steps <= 1 ? "No follow-ups" : autoSend ? "Sends on its own" : "Waits for you"}

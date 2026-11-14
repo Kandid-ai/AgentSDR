@@ -294,3 +294,14 @@ describe("CRM draft sender, time and sequence progress", () => {
     assert.match(systemPrompt, /do not repeat an ask, figure or link/);
   });
 });
+
+describe("CRM draft booking link", () => {
+  test("tells the model to write the literal {{booking_link}} only when the organization has a booking page", () => {
+    const base = buildDraftPrompt(fixture()).systemPrompt;
+    const withLink = buildDraftPrompt(fixture({ bookingLink: true })).systemPrompt;
+    assert.doesNotMatch(base, /booking_link/);
+    assert.equal(buildDraftPrompt(fixture({ bookingLink: false })).systemPrompt, base);
+    assert.match(withLink, /write exactly \{\{booking_link\}\} where the link goes/);
+    assert.match(withLink, /Never write a booking URL yourself/);
+  });
+});

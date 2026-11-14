@@ -602,8 +602,8 @@ export const crmSequences = pgTable(
     ),
     /**
      * Follow-up drafts of this sequence go out on their own, paced per sending
-     * account (src/lib/crm/autoFollowUps.ts); the immediate reply always waits
-     * for a person. Not versioned: switching it needs no re-publish.
+     * account (src/lib/crm/autoFollowUps.ts); the immediate reply has its own
+     * switch, autoSendReply. Not versioned: switching it needs no re-publish.
      * scripts/add-crm-auto-follow-ups.ts.
      */
     autoSendFollowUps: boolean("auto_send_follow_ups").notNull().default(false),

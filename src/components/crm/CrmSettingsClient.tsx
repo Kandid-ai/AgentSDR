@@ -19,13 +19,15 @@ import * as Modal from "@/components/alignui/modal";
 import * as Select from "@/components/alignui/select";
 import * as Table from "@/components/alignui/table";
 import * as Textarea from "@/components/alignui/textarea";
-import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
+import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
 import { CRM_CATEGORY_COLOR } from "@/components/analytics/theme";
+import { BookingLinkField } from "@/components/calling/ai/BookingLinkField";
 import { EmptyState } from "@/components/page/EmptyState";
 import { Callout, Field } from "@/components/settings/SettingsKit";
 import { CategoriesSkeleton } from "@/components/settings/SettingsSkeletons";
 import { cn } from "@/utils/cn";
 import { useDialogs } from "@/components/DialogProvider";
+import { BOOKING_LINK_TOKEN, parseBookingUrl } from "@/lib/crm/bookingLinkToken";
 import {
   asList,
   asObject,
@@ -60,6 +62,87 @@ function classificationDescription(item: Category) {
 function sequenceIsAssignable(sequence: Sequence) {
   return sequence.status === "active" && Boolean(
     sequence.latestPublishedVersionId ?? sequence.latest_published_version_id,
+  );
+}
+
+/** The pipeline's booking page: what `{{booking_link}}` in a CRM message becomes. */
+function BookingLinkSection() {
+  const [saved, setSaved] = useState<string | null>(null);
+  const [value, setValue] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [justSaved, setJustSaved] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    crmFetch<{ bookingUrl?: string | null }>("/settings/booking-link")
+      .then((result) => {
+        if (!live) return;
+        const url = result.bookingUrl ?? null;
+        setSaved(url);
+        setValue(url ?? "");
+        setLoaded(true);
+      })
+      .catch((cause) => { if (live) { setError(errorMessage(cause)); setLoaded(true); } });
+    return () => { live = false; };
+  }, []);
+
+  const save = async () => {
+    setError("");
+    setJustSaved(false);
+    const trimmed = value.trim();
+    if (trimmed) {
+      const parsed = parseBookingUrl(trimmed);
+      if (!parsed.ok) { setError(parsed.error); return; }
+    }
+    setBusy(true);
+    try {
+      const result = await crmFetch<{ bookingUrl?: string | null }>("/settings/booking-link", {
+        method: "PUT",
+        body: JSON.stringify({ bookingUrl: trimmed || null }),
+      });
+      const url = result.bookingUrl ?? null;
+      setSaved(url);
+      setValue(url ?? "");
+      setJustSaved(true);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dirty = value.trim() !== (saved ?? "");
+
+  return (
+    <Frame>
+      <FrameHeader
+        title="Booking link"
+        description={<>Write {BOOKING_LINK_TOKEN} in a CRM message (or let the AI draft do it) and it becomes this booking page with the lead&apos;s own code, so AgentSDR sees when they book.</>}
+      />
+      <FramePanel className="space-y-3 p-4 sm:p-4">
+        {!loaded ? (
+          <p className="text-paragraph-sm text-text-sub-600">Loading…</p>
+        ) : (
+          <>
+            <BookingLinkField label="Booking page" value={value} onChange={(next) => { setValue(next); setJustSaved(false); }} />
+            {!saved && (
+              <Callout tone="warning">
+                No booking link is set, so messages containing {BOOKING_LINK_TOKEN} cannot be sent until it is.
+              </Callout>
+            )}
+            {error && <Callout tone="error">{error}</Callout>}
+            <div className="flex items-center gap-3">
+              <Button.Root variant="primary" mode="filled" size="small" onClick={() => void save()} disabled={busy || !dirty}>
+                {busy ? "Saving…" : "Save"}
+              </Button.Root>
+              {justSaved && !error && <span role="status" className="text-paragraph-xs text-success-base">Saved</span>}
+            </div>
+          </>
+        )}
+      </FramePanel>
+    </Frame>
   );
 }
 
@@ -236,6 +319,7 @@ export default function CrmSettingsClient() {
 
   return (
     <div className="space-y-4">
+      <BookingLinkSection />
       {error && (
         <Callout
           tone="error"
