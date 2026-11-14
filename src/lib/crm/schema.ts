@@ -150,6 +150,12 @@ export const crmSettings = pgTable(
      * in src/lib/calls/callingInstructions.ts. scripts/add-crm-calling-instructions.ts.
      */
     callingInstructions: jsonb("calling_instructions").$type<AiInstructionBlock[]>(),
+    /**
+     * The Cal.com booking page a draft's `{{booking_link}}` becomes, with the
+     * record's booking code in the booking's metadata. Null: no link.
+     * scripts/add-crm-follow-up-system.ts.
+     */
+    bookingUrl: text("booking_url"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -293,11 +299,20 @@ export const crmRecords = pgTable(
     lastInteractionAt: timestamp("last_interaction_at", { withTimezone: true }),
     nextActionAt: timestamp("next_action_at", { withTimezone: true }),
     closedReason: text("closed_reason"),
+    /**
+     * The record's own booking code (`metadata[c]=` on its Cal.com link), given
+     * the first time `{{booking_link}}` is sent; unique across organizations,
+     * and longer than an AI campaign lead's code so the two never collide.
+     */
+    bookingCode: text("booking_code"),
+    bookingLinkFirstSentAt: timestamp("booking_link_first_sent_at", { withTimezone: true }),
+    bookingLinkSentCount: integer("booking_link_sent_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("crm_records_organization_idx").on(table.organizationId),
+    uniqueIndex("crm_records_booking_code_uq").on(table.bookingCode).where(sql`${table.bookingCode} IS NOT NULL`),
     foreignKey({
       columns: [table.personId],
       foreignColumns: [people.id],
@@ -563,6 +578,7 @@ export const crmEvents = pgTable(
 );
 
 export type CrmSequenceStatus = "active" | "archived";
+export type CrmSequenceStepTiming = "after_previous" | "before_meeting";
 export type CrmSequenceVersionStatus = "draft" | "published";
 
 /** Reusable reply/follow-up workflow. The conversation determines delivery channel. */
@@ -591,6 +607,19 @@ export const crmSequences = pgTable(
      * scripts/add-crm-auto-follow-ups.ts.
      */
     autoSendFollowUps: boolean("auto_send_follow_ups").notNull().default(false),
+    /**
+     * The immediate reply (step 1) of this sequence also sends on its own,
+     * after AUTO_REPLY_HOLD_MS in which a person can stop it. Not versioned.
+     * scripts/add-crm-follow-up-system.ts.
+     */
+    autoSendReply: boolean("auto_send_reply").notNull().default(false),
+    /**
+     * When a run of this sequence finishes its last step with no answer, the
+     * record continues with this sequence (from its first follow-up) instead
+     * of going idle. May name the sequence itself: the long-term loop. Not
+     * versioned. scripts/add-crm-follow-up-system.ts.
+     */
+    thenSequenceId: uuid("then_sequence_id").references((): AnyPgColumn => crmSequences.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -649,6 +678,13 @@ export const crmSequenceSteps = pgTable(
     bodyTemplate: text("body_template"),
     aiInstructions: text("ai_instructions").notNull(),
     knowledgeTags: text("knowledge_tags").array().notNull().default(sql`'{}'::text[]`),
+    /**
+     * What `delayMinutes` counts from: the previous message ('after_previous'),
+     * or the start of the record's booked meeting, counting back
+     * ('before_meeting' — a reminder; skipped when there is no meeting or
+     * its time has passed). Only follow-ups may be 'before_meeting'.
+     */
+    timing: text("timing").notNull().default("after_previous").$type<CrmSequenceStepTiming>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -668,6 +704,10 @@ export const crmSequenceSteps = pgTable(
       "crm_sequence_steps_semantics_chk",
       sql`(${table.position} = 1 AND ${table.stepType} = 'reply' AND ${table.delayMinutes} = 0)
         OR (${table.position} > 1 AND ${table.stepType} = 'follow_up')`,
+    ),
+    check(
+      "crm_sequence_steps_timing_chk",
+      sql`${table.timing} IN ('after_previous', 'before_meeting') AND (${table.position} > 1 OR ${table.timing} = 'after_previous')`,
     ),
   ],
 );
@@ -1138,5 +1178,51 @@ export const crmJobs = pgTable(
       sql`(${table.status} = 'failed') = (${table.failedAt} IS NOT NULL)
         AND (${table.status} <> 'failed' OR length(btrim(${table.lastError})) > 0)`,
     ),
+  ],
+);
+
+export type CrmMeetingStatus = "booked" | "cancelled";
+export type CrmMeetingOutcome = "showed" | "no_show";
+
+/**
+ * A meeting a lead booked (Cal.com, through the record's booking link or
+ * matched by the attendee's email), and whether they showed up — asked of a
+ * person in Action required once its end time passes. A reschedule moves the
+ * open meeting; a cancellation closes it. scripts/add-crm-follow-up-system.ts.
+ */
+export const crmMeetings = pgTable(
+  "crm_meetings",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    id: uuid("id").primaryKey().defaultRandom(),
+    crmRecordId: uuid("crm_record_id").notNull().references(() => crmRecords.id, { onDelete: "restrict" }),
+    personId: uuid("person_id").notNull().references(() => people.id, { onDelete: "restrict" }),
+    provider: text("provider").notNull().default("calcom").$type<"calcom">(),
+    providerBookingUid: text("provider_booking_uid"),
+    status: text("status").notNull().default("booked").$type<CrmMeetingStatus>(),
+    startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+    endAt: timestamp("end_at", { withTimezone: true }).notNull(),
+    bookedAt: timestamp("booked_at", { withTimezone: true }).notNull().defaultNow(),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    outcome: text("outcome").$type<CrmMeetingOutcome>(),
+    outcomeAt: timestamp("outcome_at", { withTimezone: true }),
+    outcomeBy: text("outcome_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("crm_meetings_organization_idx").on(table.organizationId),
+    index("crm_meetings_record_idx").on(table.crmRecordId),
+    index("crm_meetings_open_end_idx").on(table.endAt).where(sql`${table.status} = 'booked' AND ${table.outcome} IS NULL`),
+    uniqueIndex("crm_meetings_provider_uid_uq")
+      .on(table.provider, table.providerBookingUid)
+      .where(sql`${table.providerBookingUid} IS NOT NULL`),
+    check("crm_meetings_provider_chk", sql`${table.provider} IN ('calcom')`),
+    check("crm_meetings_status_chk", sql`${table.status} IN ('booked', 'cancelled')`),
+    check("crm_meetings_outcome_chk", sql`${table.outcome} IS NULL OR ${table.outcome} IN ('showed', 'no_show')`),
+    check("crm_meetings_outcome_at_chk", sql`(${table.outcome} IS NULL) = (${table.outcomeAt} IS NULL)`),
+    check("crm_meetings_time_chk", sql`${table.endAt} >= ${table.startAt}`),
   ],
 );

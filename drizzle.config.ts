@@ -97,6 +97,7 @@ const OWNED_TABLES = [
   "crm_knowledge_document_versions",
   "crm_draft_knowledge_citations",
   "crm_jobs",
+  "crm_meetings",
   "domains",
   "grid_cell_runs",
   "grid_columns",
