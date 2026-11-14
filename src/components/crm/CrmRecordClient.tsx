@@ -98,6 +98,8 @@ const eventLabels: Record<string, string> = {
   "sequence.resumed": "Sequence resumed",
   "sequence.snoozed": "Next step snoozed",
   "sequence.step_skipped": "Sequence step skipped",
+  "sequence.step_channel_switched": "Follow-up moved to their other channel",
+  "sequence.step_channel_fallback": "Follow-up kept on the same channel",
   "record.closed": "Record closed",
   "record.reopened": "Record reopened",
   "stage.moved": "Stage moved",

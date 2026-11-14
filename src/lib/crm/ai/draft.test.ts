@@ -295,6 +295,31 @@ describe("CRM draft sender, time and sequence progress", () => {
   });
 });
 
+describe("CRM draft on the person's other channel", () => {
+  test("the snapshot says the message switches channel, and the prompt says how to open", () => {
+    const prompt = buildDraftPrompt(fixture({
+      channel: "email",
+      switchedChannel: { from: "linkedin", to: "email" },
+      sequenceStep: { ...fixture().sequenceStep, position: 3, stepType: "follow_up" },
+    }));
+    assert.deepEqual(prompt.snapshot.switchedChannel, { from: "linkedin", to: "email" });
+    assert.match(prompt.systemPrompt, /switchedChannel, when present/);
+    assert.match(prompt.systemPrompt, /never write as if this were the same thread/);
+  });
+
+  test("without a switch the snapshot carries no key", () => {
+    assert.equal("switchedChannel" in buildDraftPrompt(fixture()).snapshot, false);
+    assert.equal("switchedChannel" in buildDraftPrompt(fixture({ switchedChannel: null })).snapshot, false);
+  });
+
+  test("refuses a switch to a channel the draft is not written for", () => {
+    assert.throws(
+      () => buildDraftPrompt(fixture({ channel: "email", switchedChannel: { from: "email", to: "linkedin" } })),
+      /switchedChannel\.to must be the draft's channel/,
+    );
+  });
+});
+
 describe("CRM draft booking link", () => {
   test("tells the model to write the literal {{booking_link}} only when the organization has a booking page", () => {
     const base = buildDraftPrompt(fixture()).systemPrompt;

@@ -90,6 +90,26 @@ describe("CRM configuration validation", () => {
     );
   });
 
+  test("sends follow-ups on the channel they replied on or on their other channel", () => {
+    const steps = parseSequenceSteps([
+      { name: "Reply", delayMinutes: 0, aiInstructions: "Answer" },
+      { name: "Nudge", delayMinutes: 1_440, aiInstructions: "Check in", channel: "same" },
+      { name: "Switch", delayMinutes: 2_880, aiInstructions: "Try email", channel: "other" },
+    ]);
+    assert.deepEqual(steps.map((step) => step.channel), ["same", "same", "other"]);
+    assert.throws(
+      () => parseSequenceSteps([{ name: "Reply", delayMinutes: 0, aiInstructions: "Answer", channel: "other" }]),
+      /immediate reply always goes out on the channel they replied on/,
+    );
+    assert.throws(
+      () => parseSequenceSteps([
+        { name: "Reply", delayMinutes: 0, aiInstructions: "Answer" },
+        { name: "Later", delayMinutes: 60, aiInstructions: "x", channel: "whatsapp" },
+      ]),
+      /channel must be same or other/,
+    );
+  });
+
   test("accepts the unversioned reply and continuation switches", () => {
     assert.deepEqual(parseUpdateSequenceInput({ autoSendReply: true }), { autoSendReply: true });
     assert.deepEqual(parseUpdateSequenceInput({ thenSequenceId: null }), { thenSequenceId: null });

@@ -23,6 +23,8 @@ import {
   rescheduleMeetingStepsInTransaction,
 } from "./sequences";
 import { currentStageMoveInTransaction } from "./stageMove";
+import { STEP_CHANNEL_FALLBACK_LABELS } from "./stepChannel";
+import { resolveStepConversationInTransaction, type ResolvedStepConversation } from "./stepChannel.server";
 import {
   crmClassifications,
   crmConversationMessages,
@@ -65,6 +67,12 @@ async function loadDraftSubject(
   record: Awaited<ReturnType<typeof lockCrmRecord>>,
   conversationId: string,
   knowledge: { query: string; knowledgeTags: string[] },
+  /**
+   * More conversations of the record whose messages the model reads beside
+   * this one's: a step switched to the other channel (stepChannel.ts) also
+   * sees the exchange on the run's own conversation.
+   */
+  alsoConversationIds: readonly string[] = [],
 ) {
   const [profile] = await tx
     .select({ person: people, company: companies })
@@ -77,7 +85,7 @@ async function loadDraftSubject(
   const messages = await tx
     .select()
     .from(crmConversationMessages)
-    .where(eq(crmConversationMessages.conversationId, conversationId))
+    .where(inArray(crmConversationMessages.conversationId, [...new Set([conversationId, ...alsoConversationIds])]))
     .orderBy(asc(crmConversationMessages.sentAt), asc(crmConversationMessages.id));
   // A WhatsApp conversation also gets the lead's recent call summaries.
   const calls = messages[0]?.channel === "whatsapp"
@@ -212,31 +220,57 @@ async function loadDraftContext(
     throw new CrmConflictError("A newer inbound reply interrupted this sequence step");
   }
 
-  const subject = await loadDraftSubject(tx, record, scope.conversation.id, {
-    query: [scope.step.name, scope.step.aiInstructions, scope.step.bodyTemplate].filter(Boolean).join(" "),
-    knowledgeTags: scope.step.knowledgeTags,
-  });
-  const [{ totalSteps } = { totalSteps: 0 }] = await tx
-    .select({ totalSteps: count() })
-    .from(crmSequenceSteps)
-    .where(eq(crmSequenceSteps.sequenceVersionId, scope.step.sequenceVersionId));
-
   let [draft] = scope.stepRun.draftId
     ? await tx.select().from(crmDrafts).where(eq(crmDrafts.id, scope.stepRun.draftId)).limit(1).for("update")
     : [];
   if (draft && regenerating && !["awaiting_review", "failed"].includes(draft.status)) {
     throw new CrmConflictError(`Cannot regenerate a ${draft.status} draft`);
   }
+
+  // Where the message goes: a draft already written keeps its conversation; a
+  // new one goes on the run's, or for an 'other' step on the person's other
+  // channel when they have a usable one (stepChannel.ts).
+  let conversation = scope.conversation;
+  let resolved: ResolvedStepConversation | null = null;
+  if (draft) {
+    if (draft.conversationId !== scope.conversation.id) {
+      const [own] = await tx.select().from(crmConversations)
+        .where(and(inOrg(crmConversations), eq(crmConversations.id, draft.conversationId), eq(crmConversations.crmRecordId, record.id)))
+        .limit(1);
+      if (!own) throw new CrmNotFoundError("CRM conversation", draft.conversationId);
+      conversation = own;
+    }
+  } else {
+    resolved = await resolveStepConversationInTransaction(tx, {
+      record,
+      runConversation: scope.conversation,
+      stepChannel: scope.step.channel,
+    });
+    conversation = resolved.conversation;
+  }
+  const switchedChannel = conversation.id !== scope.conversation.id && conversation.channel !== scope.conversation.channel
+    ? { from: scope.conversation.channel, to: conversation.channel }
+    : null;
+
+  const subject = await loadDraftSubject(tx, record, conversation.id, {
+    query: [scope.step.name, scope.step.aiInstructions, scope.step.bodyTemplate].filter(Boolean).join(" "),
+    knowledgeTags: scope.step.knowledgeTags,
+  }, [scope.conversation.id]);
+  const [{ totalSteps } = { totalSteps: 0 }] = await tx
+    .select({ totalSteps: count() })
+    .from(crmSequenceSteps)
+    .where(eq(crmSequenceSteps.sequenceVersionId, scope.step.sequenceVersionId));
+
   const now = new Date();
   if (!draft) {
     await releaseStepRunDraftLinks(tx, scope.stepRun.id);
     [draft] = await tx.insert(crmDrafts).values({
       crmRecordId: record.id,
-      conversationId: scope.conversation.id,
+      conversationId: conversation.id,
       replyForMessageId: scope.step.stepType === "reply" ? scope.run.triggerMessageId : null,
       sequenceStepRunId: scope.stepRun.id,
       expectedContextVersion: record.contextVersion,
-      channel: scope.conversation.channel,
+      channel: conversation.channel,
       status: "generating",
     }).returning();
     if (!draft) throw new Error("CRM draft insert did not return a row");
@@ -247,6 +281,21 @@ async function loadDraftContext(
       lastError: null,
       updatedAt: now,
     }).where(eq(crmSequenceStepRuns.id, scope.stepRun.id));
+    if (resolved && scope.step.channel === "other") {
+      await appendCrmEvent(tx, {
+        personId: record.personId,
+        crmRecordId: record.id,
+        pipelineId: record.pipelineId,
+        eventType: resolved.fallbackReason ? "sequence.step_channel_fallback" : "sequence.step_channel_switched",
+        actorType: "system",
+        fromData: { conversationId: scope.conversation.id, channel: scope.conversation.channel },
+        toData: { conversationId: conversation.id, channel: conversation.channel, draftId: draft.id, stepRunId: scope.stepRun.id },
+        meta: resolved.fallbackReason
+          ? { requested: "other", reason: resolved.fallbackReason, explanation: STEP_CHANNEL_FALLBACK_LABELS[resolved.fallbackReason] }
+          : { requested: "other", created: resolved.decision.use === "create" },
+        contextVersion: record.contextVersion,
+      });
+    }
   } else {
     [draft] = await tx.update(crmDrafts).set({
       status: "generating",
@@ -266,7 +315,8 @@ async function loadDraftContext(
   return {
     draft: draft!,
     promptInput: {
-      channel: scope.conversation.channel,
+      channel: conversation.channel,
+      switchedChannel,
       sequenceStep: {
         id: scope.step.id,
         name: scope.step.name,

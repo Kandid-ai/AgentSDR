@@ -29,6 +29,8 @@ import { asList, asObject, crmFetch, errorMessage } from "./crm-utils";
 
 type DelayUnit = "minutes" | "hours" | "days";
 type StepTiming = "after_previous" | "before_meeting";
+/** The channel they replied on, or their other one: email ↔ LinkedIn (src/lib/crm/stepChannel.ts). */
+type StepChannel = "same" | "other";
 
 type EditorStep = {
   clientId: string;
@@ -36,6 +38,7 @@ type EditorStep = {
   delayAmount: number;
   delayUnit: DelayUnit;
   timing: StepTiming;
+  channel: StepChannel;
   subjectTemplate: string | null;
   bodyTemplate: string | null;
   messageGoal: string;
@@ -46,6 +49,7 @@ type StepPayload = {
   name: string;
   delayMinutes: number;
   timing: StepTiming;
+  channel: StepChannel;
   subjectTemplate: string | null;
   bodyTemplate: string | null;
   aiInstructions: string;
@@ -79,6 +83,7 @@ function immediateStep(): EditorStep {
     delayAmount: 0,
     delayUnit: "minutes",
     timing: "after_previous",
+    channel: "same",
     subjectTemplate: null,
     bodyTemplate: null,
     messageGoal: DEFAULT_IMMEDIATE_GOAL,
@@ -93,6 +98,7 @@ function followUpStep(): EditorStep {
     delayAmount: 2,
     delayUnit: "days",
     timing: "after_previous",
+    channel: "same",
     subjectTemplate: null,
     bodyTemplate: null,
     messageGoal: DEFAULT_FOLLOW_UP_GOAL,
@@ -108,6 +114,7 @@ function parseStep(value: Record<string, unknown>, index: number): EditorStep {
     delayAmount: index === 0 ? 0 : delay.amount,
     delayUnit: index === 0 ? "minutes" : delay.unit,
     timing: index > 0 && value.timing === "before_meeting" ? "before_meeting" : "after_previous",
+    channel: index > 0 && value.channel === "other" ? "other" : "same",
     subjectTemplate: value.subjectTemplate == null ? null : String(value.subjectTemplate),
     bodyTemplate: value.bodyTemplate == null ? null : String(value.bodyTemplate),
     messageGoal: String(value.aiInstructions ?? ""),
@@ -275,6 +282,7 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
       name: persistedStepName(step, index),
       delayMinutes: index === 0 ? 0 : delayInMinutes(step.delayAmount, step.delayUnit),
       timing: index === 0 ? "after_previous" : step.timing,
+      channel: index === 0 ? "same" : step.channel,
       subjectTemplate: step.subjectTemplate,
       bodyTemplate: step.bodyTemplate,
       aiInstructions: step.messageGoal.trim(),
@@ -569,6 +577,23 @@ export default function CrmSequenceEditor({ sequenceId }: { sequenceId: string }
                         </div>
                         {step.timing === "before_meeting" && (
                           <p className="mt-1.5 text-paragraph-xs text-text-sub-600">before the meeting starts. Skipped if no meeting is booked.</p>
+                        )}
+                        <p className="mb-1.5 mt-2 text-paragraph-xs text-text-sub-600">Send on</p>
+                        <Select.Root
+                          size="xsmall"
+                          value={step.channel}
+                          onValueChange={(value) => updateStep(index, { channel: value as StepChannel })}
+                        >
+                          <Select.Trigger aria-label={`${stepLabel(index)} channel`} className="w-full">
+                            <Select.Value />
+                          </Select.Trigger>
+                          <Select.Content>
+                            <Select.Item value="same">The channel they replied on</Select.Item>
+                            <Select.Item value="other">Their other channel (email ↔ LinkedIn)</Select.Item>
+                          </Select.Content>
+                        </Select.Root>
+                        {step.channel === "other" && (
+                          <p className="mt-1.5 text-paragraph-xs text-text-sub-600">Email if they replied on LinkedIn, LinkedIn if by email. Sent on the channel they replied on when they cannot be reached there.</p>
                         )}
                       </fieldset>
                     )}

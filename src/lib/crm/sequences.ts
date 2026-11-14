@@ -33,6 +33,7 @@ import {
   crmSubcategories,
   crmSubcategorySequenceAssignments,
   type CrmSequenceStatus,
+  type CrmSequenceStepChannel,
   type CrmSequenceStepTiming,
 } from "./schema";
 import { materializeStepDueTimes, planNextStep, stepDueAt } from "./stepTiming";
@@ -1061,6 +1062,8 @@ export type SequenceStepInput = {
   knowledgeTags: string[];
   /** What delayMinutes counts from; the immediate reply is always 'after_previous'. */
   timing: CrmSequenceStepTiming;
+  /** Where the step goes out (stepChannel.ts); the immediate reply is always 'same'. */
+  channel: CrmSequenceStepChannel;
 };
 
 function configStatus(value: unknown): CrmSequenceStatus {
@@ -1090,6 +1093,17 @@ function stepTiming(value: unknown, position: number): CrmSequenceStepTiming {
   return value;
 }
 
+function stepChannel(value: unknown, position: number): CrmSequenceStepChannel {
+  if (value === undefined) return "same";
+  if (value !== "same" && value !== "other") {
+    throw new CrmConfigurationValidationError(`steps[${position - 1}].channel must be same or other`);
+  }
+  if (position === 1 && value !== "same") {
+    throw new CrmConfigurationValidationError("The immediate reply always goes out on the channel they replied on");
+  }
+  return value;
+}
+
 function configTags(value: unknown, label: string): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 50) {
@@ -1107,7 +1121,7 @@ export function parseSequenceSteps(value: unknown): SequenceStepInput[] {
   }
   return value.map((raw, index) => {
     assertObject(raw, `steps[${index}]`);
-    assertExactKeys(raw, ["name", "delayMinutes", "subjectTemplate", "bodyTemplate", "aiInstructions", "knowledgeTags", "timing"]);
+    assertExactKeys(raw, ["name", "delayMinutes", "subjectTemplate", "bodyTemplate", "aiInstructions", "knowledgeTags", "timing", "channel"]);
     const subjectTemplate = parseOptionalText(raw.subjectTemplate, `steps[${index}].subjectTemplate`, 500) ?? null;
     return {
       name: parseRequiredText(raw.name, `steps[${index}].name`, 120),
@@ -1117,6 +1131,7 @@ export function parseSequenceSteps(value: unknown): SequenceStepInput[] {
       aiInstructions: parseRequiredText(raw.aiInstructions, `steps[${index}].aiInstructions`, 8_000),
       knowledgeTags: configTags(raw.knowledgeTags, `steps[${index}].knowledgeTags`),
       timing: stepTiming(raw.timing, index + 1),
+      channel: stepChannel(raw.channel, index + 1),
     };
   });
 }
@@ -1126,6 +1141,7 @@ export function validatePublishableSteps(steps: readonly SequenceStepInput[]): v
   steps.forEach((step, index) => {
     stepDelay(step.delayMinutes, index + 1);
     stepTiming(step.timing, index + 1);
+    stepChannel(step.channel, index + 1);
   });
 }
 
@@ -1383,6 +1399,7 @@ export async function publishSequence(id: string) {
       aiInstructions: step.aiInstructions,
       knowledgeTags: step.knowledgeTags,
       timing: step.timing,
+      channel: step.channel,
     })));
     const [updated] = await tx.update(crmSequences).set({
       draftVersionId: nextDraftId,

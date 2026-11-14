@@ -579,6 +579,8 @@ export const crmEvents = pgTable(
 
 export type CrmSequenceStatus = "active" | "archived";
 export type CrmSequenceStepTiming = "after_previous" | "before_meeting";
+/** Where a step goes out: the run's own conversation, or the person's other channel (email ↔ LinkedIn). */
+export type CrmSequenceStepChannel = "same" | "other";
 export type CrmSequenceVersionStatus = "draft" | "published";
 
 /** Reusable reply/follow-up workflow. The conversation determines delivery channel. */
@@ -685,6 +687,15 @@ export const crmSequenceSteps = pgTable(
      * its time has passed). Only follow-ups may be 'before_meeting'.
      */
     timing: text("timing").notNull().default("after_previous").$type<CrmSequenceStepTiming>(),
+    /**
+     * Which conversation the step goes out on: the one the run is on ('same'),
+     * or the person's other channel — email if the run is on LinkedIn and
+     * LinkedIn if it is on email ('other'), resolved when the step is drafted
+     * (src/lib/crm/stepChannel.ts) and falling back to 'same' when there is no
+     * usable one. Only follow-ups may be 'other'.
+     * scripts/add-crm-step-channel.ts.
+     */
+    channel: text("channel").notNull().default("same").$type<CrmSequenceStepChannel>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -708,6 +719,10 @@ export const crmSequenceSteps = pgTable(
     check(
       "crm_sequence_steps_timing_chk",
       sql`${table.timing} IN ('after_previous', 'before_meeting') AND (${table.position} > 1 OR ${table.timing} = 'after_previous')`,
+    ),
+    check(
+      "crm_sequence_steps_channel_chk",
+      sql`${table.channel} IN ('same', 'other') AND (${table.position} > 1 OR ${table.channel} = 'same')`,
     ),
   ],
 );

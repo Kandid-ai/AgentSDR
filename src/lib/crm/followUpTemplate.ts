@@ -8,6 +8,7 @@ import {
   crmSequences,
   crmSubcategories,
   crmSubcategorySequenceAssignments,
+  type CrmSequenceStepChannel,
   type CrmSequenceStepTiming,
 } from "./schema";
 
@@ -37,6 +38,8 @@ export type TemplateStep = {
   /** Minutes: after the previous message, or before the booked meeting starts. */
   delayMinutes: number;
   timing: CrmSequenceStepTiming;
+  /** Where the step goes out: the channel they replied on, or their other one (stepChannel.ts). */
+  channel: CrmSequenceStepChannel;
   aiInstructions: string;
   knowledgeTags: string[];
 };
@@ -61,13 +64,13 @@ export const SUBCATEGORY_KEY_ALIASES: Record<string, string[]> = {
 };
 
 const reply = (name: string, aiInstructions: string): TemplateStep => ({
-  name, delayMinutes: 0, timing: "after_previous", aiInstructions, knowledgeTags: [],
+  name, delayMinutes: 0, timing: "after_previous", channel: "same", aiInstructions, knowledgeTags: [],
 });
 const after = (days: number, name: string, aiInstructions: string): TemplateStep => ({
-  name, delayMinutes: days * DAY, timing: "after_previous", aiInstructions, knowledgeTags: [],
+  name, delayMinutes: days * DAY, timing: "after_previous", channel: "same", aiInstructions, knowledgeTags: [],
 });
 const before = (minutes: number, name: string, aiInstructions: string): TemplateStep => ({
-  name, delayMinutes: minutes, timing: "before_meeting", aiInstructions, knowledgeTags: [],
+  name, delayMinutes: minutes, timing: "before_meeting", channel: "same", aiInstructions, knowledgeTags: [],
 });
 
 const LINK = "Include the literal token {{booking_link}} where the link goes; it is replaced with the person's own booking link when the message is sent.";
@@ -294,6 +297,7 @@ export async function seedFollowUpTemplateInTransaction(
         name: step.name,
         delayMinutes: step.delayMinutes,
         timing: step.timing,
+        channel: step.channel,
         aiInstructions: step.aiInstructions,
         knowledgeTags: step.knowledgeTags,
       })));

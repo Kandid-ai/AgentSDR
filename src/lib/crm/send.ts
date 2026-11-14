@@ -286,6 +286,9 @@ async function prepareSend(tx: CrmTransaction, input: {
     throw new CrmConflictError("CRM conversation is unavailable for sending");
   }
   if (conversation.channel !== draft.channel) throw new CrmConflictError("Draft channel does not match its conversation");
+  // A step that moved to the person's other channel (stepChannel.ts): its
+  // email address was checked when the step was drafted, and is again here.
+  let switchedToEmail = false;
   if (draft.sequenceStepRunId) {
     const [stepScope] = await tx.select({ stepRun: crmSequenceStepRuns, run: crmSequenceRuns })
       .from(crmSequenceStepRuns)
@@ -294,6 +297,7 @@ async function prepareSend(tx: CrmTransaction, input: {
     if (!stepScope || stepScope.stepRun.status !== "awaiting_review" || stepScope.run.status !== "active") {
       throw new CrmConflictError("The sequence step is no longer awaiting review on an active run");
     }
+    switchedToEmail = draft.channel === "email" && stepScope.run.conversationId !== conversation.id;
   } else {
     // A hand-written draft on a record with a pending step *is* that step's
     // reply (or follow-up). Linking it here lets finishSuccessfulSend advance
@@ -308,6 +312,10 @@ async function prepareSend(tx: CrmTransaction, input: {
   const [person] = await tx.select({ email: people.email, phone: people.phone }).from(people)
     .where(and(inOrg(people), eq(people.id, record.personId))).limit(1);
   if (!person) throw new CrmNotFoundError("Person", record.personId);
+  if (switchedToEmail && person.email) {
+    if (await isSuppressed(person.email)) throw new CrmConflictError(`${person.email} is on the suppression list`);
+    if (await isEmailDoNotContact(tx, person.email)) throw new CrmConflictError(`${person.email} is marked Do Not Contact`);
+  }
   const history = await tx.select({ raw: crmConversationMessages.raw, providerMessageId: crmConversationMessages.providerMessageId })
     .from(crmConversationMessages)
     .where(eq(crmConversationMessages.conversationId, conversation.id))
@@ -397,10 +405,16 @@ async function finishSuccessfulSend(
     if (!conversation) throw new CrmNotFoundError("CRM conversation", draft.conversationId);
     const now = new Date();
     // A WhatsApp conversation without a chat yet gets the one the send opened,
-    // so the lead's reply (keyed by chat) lands on this conversation. Skipped
-    // when another conversation already holds that chat, rather than tripping
-    // the (channel, account, thread) unique index inside this transaction.
-    if (!conversation.providerThreadId && result.providerThreadId && conversation.channel === "whatsapp") {
+    // so the lead's reply (keyed by chat) lands on this conversation; likewise
+    // an email conversation without a Gmail thread (one a step switched to
+    // email opened, stepChannel.ts) gets the thread its first message started,
+    // so later sends continue it. Skipped when another conversation already
+    // holds that thread, rather than tripping the (channel, account, thread)
+    // unique index inside this transaction.
+    if (
+      !conversation.providerThreadId && result.providerThreadId
+      && (conversation.channel === "whatsapp" || conversation.channel === "email")
+    ) {
       const [holder] = await tx.select({ id: crmConversations.id }).from(crmConversations)
         .where(and(
           inOrg(crmConversations),

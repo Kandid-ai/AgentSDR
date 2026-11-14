@@ -118,6 +118,12 @@ export type DraftPromptInput = {
    * person's own link goes, which the send replaces (src/lib/crm/bookingLink.ts).
    */
   bookingLink?: boolean;
+  /**
+   * The step goes out on a different channel than the conversation the run
+   * is on (crm_sequence_steps.channel 'other', src/lib/crm/stepChannel.ts):
+   * the model opens by referring to the earlier exchange on `from`.
+   */
+  switchedChannel?: { from: CrmChannel; to: CrmChannel } | null;
 };
 
 /** What the caller adds to the draft's Langfuse trace (record ids; never secrets). */
@@ -408,6 +414,10 @@ export function buildDraftPrompt(input: DraftPromptInput, templates: DraftTempla
   }
   if (input.now) snapshot.now = { ...input.now };
   if (input.meeting) snapshot.meeting = { ...input.meeting };
+  if (input.switchedChannel && input.switchedChannel.from !== input.switchedChannel.to) {
+    if (input.switchedChannel.to !== input.channel) throw new Error("CRM draft switchedChannel.to must be the draft's channel");
+    snapshot.switchedChannel = { from: input.switchedChannel.from, to: input.switchedChannel.to };
+  }
   if (input.totalSteps && Number.isInteger(input.totalSteps) && input.totalSteps >= step.position) {
     snapshot.sequenceProgress = draftSequenceProgress(step, input.totalSteps, input.recentConversation);
   }
