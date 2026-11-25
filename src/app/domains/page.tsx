@@ -5,7 +5,7 @@ import TableSkeleton from "@/components/TableSkeleton";
 import TableLoadingOverlay from "@/components/TableLoadingOverlay";
 import { NavigationProvider } from "@/components/NavigationProvider";
 import { requirePageOrgContext } from "@/lib/auth/context";
-import { getDomains } from "@/lib/queries";
+import { countDomains, getDomains } from "@/lib/queries";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 type Params = Record<string, string | string[] | undefined>;
@@ -25,6 +25,19 @@ function getQueryParams(params: Params) {
     sortBy: params.sortBy as string,
     sortDir: params.sortDir as string,
   };
+}
+
+/** The header's count, from the data itself: a fixed "2.5M+" contradicted the table below it. */
+async function StoreCount({ countryCode }: { countryCode: string }) {
+  const code = countryCode.toUpperCase();
+  const total = await countDomains(code);
+  let country = code;
+  try {
+    country = new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    // An unknown code shows as itself.
+  }
+  return <>{`${total.toLocaleString("en-US")} active ${total === 1 ? "store" : "stores"} · ${country}`}</>;
 }
 
 async function TableSection({ params }: { params: Params }) {
@@ -53,7 +66,11 @@ export default async function DomainsPage({ searchParams }: { searchParams: Sear
           <aside className="w-64 shrink-0 overflow-y-auto border-r border-stroke-soft-200 bg-bg-white-0">
             <div className="border-b border-stroke-soft-200 px-4 py-4">
               <h1 className="text-sm font-bold text-text-strong-950">All Domains</h1>
-              <p className="mt-0.5 text-xs text-text-strong-950/60">2.5M+ active stores</p>
+              <p className="mt-0.5 text-xs text-text-strong-950/60">
+                <Suspense fallback="Active stores">
+                  <StoreCount countryCode={getQueryParams(params).countryCode} />
+                </Suspense>
+              </p>
             </div>
             <Suspense>
               <Filters />

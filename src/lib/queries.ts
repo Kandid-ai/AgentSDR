@@ -124,3 +124,12 @@ export async function getDomains(params: DomainsParams): Promise<DomainsResult> 
 
   return { data, total, page, pageSize, totalPages: Math.ceil(total / pageSize), countryCode };
 }
+
+/** Every active store in one country: what the domains page lists before its other filters. */
+export async function countDomains(countryCode: string): Promise<number> {
+  const [row] = await db
+    .select({ count: count() })
+    .from(cleanDomains)
+    .where(eq(cleanDomains.countryCode, countryCode.toUpperCase()));
+  return Number(row?.count ?? 0);
+}
