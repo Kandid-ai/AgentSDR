@@ -29,7 +29,7 @@ import * as Tooltip from "@/components/alignui/tooltip";
 import { SETTINGS_HOME } from "@/components/settings/settingsNav";
 import { CommandPalette } from "@/components/nav/CommandPalette";
 import { ThemeToggleButton } from "@/components/theme/ThemeSwitch";
-import { activeHref, NAV_FOOTER, NAV_SECTIONS, type NavBadges, type NavEntry, type NavGroup, type NavLink } from "@/components/nav/navConfig";
+import { activeHref, activeHrefFrom, isOpenedFromPage, NAV_FOOTER, NAV_SECTIONS, type NavBadges, type NavEntry, type NavGroup, type NavLink } from "@/components/nav/navConfig";
 import { APP_VERSION, bugReportUrl, SUPPORT_LINKS } from "@/lib/support";
 import { useDemoMode } from "@/components/demo/DemoProvider";
 import { cn } from "@/utils/cn";
@@ -247,7 +247,12 @@ function GroupRow({ group, current, open, onToggle, badges, collapsed, compact }
 
 export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean; onClose?: () => void } = {}) {
   const pathname = usePathname();
-  const current = activeHref(pathname);
+  // The item lit on the last page that was not a record, so a record keeps the
+  // section it was opened from (updated while rendering, React's pattern for
+  // state that follows a prop).
+  const [section, setSection] = useState<{ pathname: string; href: string | undefined } | null>(null);
+  if (!isOpenedFromPage(pathname) && section?.pathname !== pathname) setSection({ pathname, href: activeHref(pathname) });
+  const current = activeHrefFrom(pathname, section?.href);
   const badges = useBadges(pathname);
   const [storedCollapsed, setCollapsed] = useState(false);
   // The phone drawer is always the full sidebar.

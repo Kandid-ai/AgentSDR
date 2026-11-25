@@ -39,7 +39,8 @@ import { SETTINGS_HOME, SETTINGS_NAV } from "@/components/settings/settingsNav";
  * Shape: a few labelled sections of links and collapsible groups (one group
  * per outreach channel), plus footer entries pinned to the bottom. A link's
  * `match` lists extra path prefixes that should light it up (a record page
- * belongs to Leads).
+ * belongs to Action required when it is opened directly; see
+ * `OPENED_FROM_PREFIXES`).
  */
 
 /** Live counts from GET /api/nav/badges. */
@@ -84,8 +85,8 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     entries: [
       link("/analytics", "Analytics", RiBarChartBoxLine),
-      link("/crm/actions", "Action required", RiTodoLine, { badge: "actionRequired" }),
-      link("/leads", "Leads", RiUserSearchLine, { match: ["/crm/records"] }),
+      link("/crm/actions", "Action required", RiTodoLine, { badge: "actionRequired", match: ["/crm/records"] }),
+      link("/leads", "Leads", RiUserSearchLine),
     ],
   },
   {
@@ -174,6 +175,28 @@ export function allLinks(): NavLink[] {
 }
 
 /** The one link that owns `pathname`: the longest matching href or `match` prefix. */
+/**
+ * Pages that keep the section they were opened from lit: a CRM record opens
+ * (often as a modal) from Action required, Leads, the Pipeline or an inbox,
+ * and the sidebar should not jump to another item when it does.
+ */
+const OPENED_FROM_PREFIXES = ["/crm/records"];
+
+/**
+ * The sidebar item to light for `pathname`, given the one lit on the page
+ * before it. A record page keeps the previous item; opened directly, it
+ * falls back to its `match` (Action required).
+ */
+export function activeHrefFrom(pathname: string, previousHref: string | undefined): string | undefined {
+  if (isOpenedFromPage(pathname) && previousHref) return previousHref;
+  return activeHref(pathname);
+}
+
+/** Whether `pathname` is a page that takes its sidebar item from the page that opened it. */
+export function isOpenedFromPage(pathname: string): boolean {
+  return OPENED_FROM_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 export function activeHref(pathname: string): string | undefined {
   let best: { href: string; length: number } | undefined;
   for (const l of allLinks()) {
