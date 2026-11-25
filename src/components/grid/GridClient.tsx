@@ -14,10 +14,12 @@ import {
   type ColDef,
   type ColumnMovedEvent,
   type DisplayedColumnsChangedEvent,
+  type GridApi,
   type IHeaderParams,
   type ICellRendererParams,
 } from "ag-grid-community";
 import "./grid-theme.css";
+import { trailingColumnWidth } from "@/lib/grid/trailing-column";
 import {
   RiAddLine,
   RiArrowDownSLine,
@@ -2259,7 +2261,21 @@ export default function GridClient({
     }
   }, [appliedSearch, table.id]);
 
+  /** Size the "Add column" filler so the horizontal scroll ends on a column boundary (see trailingColumnWidth). */
+  const fitAddColumn = useCallback((api: GridApi<RowData>) => {
+    const displayed = api.getAllDisplayedColumns();
+    const adder = displayed.find((column) => column.getColId() === "__add");
+    if (!adder) return;
+    const range = api.getHorizontalPixelRange();
+    const centerWidths = displayed
+      .filter((column) => !column.getPinned() && column !== adder)
+      .map((column) => column.getActualWidth());
+    const width = trailingColumnWidth(centerWidths, range.right - range.left, ADD_COL_W);
+    if (width !== adder.getActualWidth()) api.setColumnWidths([{ key: "__add", newWidth: width }]);
+  }, []);
+
   const onDisplayedColumnsChanged = useCallback((event: DisplayedColumnsChangedEvent<RowData>) => {
+    fitAddColumn(event.api);
     const known = new Set(visibleColumns.map((column) => column.key));
     const allDisplayedColumns = event.api.getAllDisplayedColumns();
     const addColumnIndex = allDisplayedColumns.findIndex((column) => column.getColId() === "__add");
@@ -2274,7 +2290,7 @@ export default function GridClient({
         ? current
         : next,
     );
-  }, [visibleColumns]);
+  }, [fitAddColumn, visibleColumns]);
 
   /** Persist a finished header drag: PATCH the column to sit right after its new left neighbour. */
   const onColumnMoved = useCallback((event: ColumnMovedEvent<RowData>) => {
@@ -2448,9 +2464,9 @@ export default function GridClient({
     const adder: ColDef<RowData> = {
       colId: "__add",
       headerName: "",
-      width: ADD_COL_W,
+      // Widened past this by fitAddColumn; initialWidth so column-def updates keep that.
+      initialWidth: ADD_COL_W,
       minWidth: ADD_COL_W,
-      maxWidth: ADD_COL_W,
       resizable: false,
       sortable: false,
       filter: false,
@@ -2747,6 +2763,10 @@ export default function GridClient({
             onCellFocused={onCellFocused}
             onColumnMoved={onColumnMoved}
             onDisplayedColumnsChanged={onDisplayedColumnsChanged}
+            onGridSizeChanged={(event) => fitAddColumn(event.api)}
+            onColumnResized={(event) => {
+              if (event.finished && event.column?.getColId() !== "__add") fitAddColumn(event.api);
+            }}
             stopEditingWhenCellsLoseFocus
             animateRows={false}
           />
