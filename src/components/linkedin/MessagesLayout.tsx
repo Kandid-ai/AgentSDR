@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useDialogs } from "@/components/DialogProvider";
+import { useHydrated } from "@/components/LocalTime";
 import {
   RiChatSmile3Line,
   RiCheckDoubleLine,
@@ -207,6 +208,9 @@ export function MessagesLayout({
   initialList: InitialList;
 }) {
   const dialogs = useDialogs();
+  // Row times and day headings follow the viewer's time zone, so the server
+  // (UTC) leaves them out of its HTML.
+  const hydrated = useHydrated();
   const [connections, setConnections] = useState(initialList.connections);
   const [totalCount, setTotalCount] = useState(initialList.totalCount);
   const [hasMore, setHasMore] = useState(initialList.hasMore);
@@ -892,7 +896,10 @@ export function MessagesLayout({
             />
           )
         ) : (
-          withRecencyBreaks(connections, (conn) => (conn.lastMessage ? new Date(conn.lastMessage.createdAt) : null)).map(({ row: conn, heading }) => {
+          (hydrated
+            ? withRecencyBreaks(connections, (conn) => (conn.lastMessage ? new Date(conn.lastMessage.createdAt) : null))
+            : connections.map((row) => ({ row, heading: null }))
+          ).map(({ row: conn, heading }) => {
             const name = displayName(conn);
             const hasUnseen = conn.unseenCount > 0;
             const last = conn.lastMessage ? new Date(conn.lastMessage.createdAt) : null;
@@ -908,8 +915,8 @@ export function MessagesLayout({
                   onSelect={() => openThread(conn)}
                   avatar={<InboxAvatar name={name} src={conn.profilePictureUrl} />}
                   title={name}
-                  time={rowTime(last)}
-                  timeTitle={fullTime(last)}
+                  time={hydrated ? rowTime(last) : ""}
+                  timeTitle={hydrated ? fullTime(last) : undefined}
                   snippet={
                     conn.lastMessage ? (
                       <>

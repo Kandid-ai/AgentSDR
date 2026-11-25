@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState, useTransition } from "react";
+import { LocalTime } from "@/components/LocalTime";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -42,13 +43,16 @@ type Target =
   | { kind: "folder"; id: string; name: string; parentId: string | null }
   | { kind: "workbook"; id: string; name: string; folderId: string | null };
 
-function formatDate(value: Date | string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("en", {
+const formatDate = (date: Date) =>
+  new Intl.DateTimeFormat("en", {
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(new Date(value));
+  }).format(date);
+
+/** A created/updated date, in the viewer's time zone. */
+function DateText({ value }: { value: Date | string | null }) {
+  return value ? <LocalTime value={value} format={formatDate} /> : "—";
 }
 
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
@@ -493,8 +497,8 @@ export default function WorkbookListClient({
                             </div>
                           </div>
                         </Table.Cell>
-                        <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600">{formatDate(folder.createdAt)}</Table.Cell>
-                        <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600">{formatDate(folder.updatedAt)}</Table.Cell>
+                        <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600"><DateText value={folder.createdAt} /></Table.Cell>
+                        <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600"><DateText value={folder.updatedAt} /></Table.Cell>
                         <Table.Cell className="px-4" {...stop}>
                           <div className="flex justify-end">{rowMenu(item)}</div>
                         </Table.Cell>
@@ -526,8 +530,8 @@ export default function WorkbookListClient({
                             </div>
                           </div>
                         </Table.Cell>
-                        <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600">{formatDate(workbook.createdAt)}</Table.Cell>
-                        <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600">{formatDate(workbook.updatedAt)}</Table.Cell>
+                        <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600"><DateText value={workbook.createdAt} /></Table.Cell>
+                        <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600"><DateText value={workbook.updatedAt} /></Table.Cell>
                         <Table.Cell className="px-4" {...stop}>
                           <div className="flex justify-end">{rowMenu(item)}</div>
                         </Table.Cell>

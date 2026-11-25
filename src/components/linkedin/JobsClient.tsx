@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState, useEffect, useTransition, type ReactNode } from "react";
+import { LocalTime, useHydrated } from "@/components/LocalTime";
 import { useRouter } from "next/navigation";
 import {
   RiArrowDownSLine,
@@ -84,6 +85,7 @@ function StatusBadge({ status }: { status: string }) {
 const COLUMNS = 6;
 
 function RunRows({ run }: { run: JobRun }) {
+  const hydrated = useHydrated();
   const [expanded, setExpanded] = useState(false);
   const [logs, setLogs] = useState<JobLog[] | null>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -131,8 +133,8 @@ function RunRows({ run }: { run: JobRun }) {
           <StatusBadge status={run.status} />
         </Table.Cell>
         <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600">
-          <span title={fmt(run.startedAt)} suppressHydrationWarning>{ago(run.startedAt)}</span>
-          <span className="block text-paragraph-xs text-text-soft-400" suppressHydrationWarning>{fmt(run.startedAt)}</span>
+          <span title={hydrated ? fmt(run.startedAt) : undefined} suppressHydrationWarning>{ago(run.startedAt)}</span>
+          <span className="block text-paragraph-xs text-text-soft-400"><LocalTime value={run.startedAt} format={fmt} /></span>
         </Table.Cell>
         <Table.Cell className="whitespace-nowrap px-4 text-right text-paragraph-sm tabular-nums text-text-strong-950">
           {duration(run.startedAt, run.finishedAt)}

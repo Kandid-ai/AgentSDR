@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState, type ReactNode } from "react";
+import { useHydrated } from "@/components/LocalTime";
 import { RiArrowDownSLine, RiArrowRightSLine, RiLoader4Line, RiWebhookLine } from "@remixicon/react";
 import * as Badge from "@/components/alignui/badge";
 import * as Table from "@/components/alignui/table";
@@ -99,6 +100,7 @@ const LEVEL_TAG: Record<string, string> = { info: "INF", warn: "WRN", error: "ER
 const COLUMNS = 6;
 
 function EventRows({ ev }: { ev: WebhookEventRow }) {
+  const hydrated = useHydrated();
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<WebhookEventDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -162,7 +164,7 @@ function EventRows({ ev }: { ev: WebhookEventRow }) {
           {accountRef ? <LinkedInAccountTag account={accountRef} size="sm" /> : <span className="text-paragraph-sm text-text-soft-400">—</span>}
         </Table.Cell>
         <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600">
-          <span title={fmt(ev.createdAt)} suppressHydrationWarning>{timeAgo(ev.createdAt)}</span>
+          <span title={hydrated ? fmt(ev.createdAt) : undefined} suppressHydrationWarning>{timeAgo(ev.createdAt)}</span>
         </Table.Cell>
         <Table.Cell className="px-4 text-text-sub-600">
           {expanded ? <RiArrowDownSLine className="size-5" aria-hidden="true" /> : <RiArrowRightSLine className="size-5" aria-hidden="true" />}

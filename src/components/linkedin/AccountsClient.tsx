@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useHydrated } from "@/components/LocalTime";
 import {
   RiErrorWarningLine,
   RiLinkedinBoxFill,
@@ -343,6 +344,7 @@ function AccountTableRow({
   onEditHours: () => void;
   onEditLimit: () => void;
 }) {
+  const hydrated = useHydrated();
   const { redirecting, error, start } = useHostedAuthRedirect();
   const displayName = account.name || account.username;
   const hours = hoursSummary(account);
@@ -407,8 +409,8 @@ function AccountTableRow({
 
       <Table.Cell className="px-4">
         <p className="truncate text-paragraph-sm text-text-strong-950" title={hours.tz ? `${hours.main} (${hours.tz})` : hours.main}>{hours.main}</p>
-        <p className="truncate text-paragraph-xs text-text-sub-600" suppressHydrationWarning>
-          Next: {formatNextAllowedRun(account.nextAllowedRun ? new Date(account.nextAllowedRun) : null)}
+        <p className="truncate text-paragraph-xs text-text-sub-600">
+          Next: {hydrated ? formatNextAllowedRun(account.nextAllowedRun ? new Date(account.nextAllowedRun) : null) : null}
         </p>
       </Table.Cell>
 

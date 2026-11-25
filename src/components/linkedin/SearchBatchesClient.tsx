@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LocalTime } from "@/components/LocalTime";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -75,8 +76,8 @@ function progressLabel(batch: SearchBatchSummary): string | null {
   return `${done.toLocaleString("en-US")} of ${batch.queryCount.toLocaleString("en-US")} URLs done`;
 }
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+function formatDate(date: Date) {
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 }
 
 const num = "text-paragraph-sm tabular-nums text-text-strong-950";
@@ -525,8 +526,8 @@ export function SearchBatchesClient({
                       </Table.Cell>
                       <Table.Cell className={cn("px-4 text-right", num)}>{b.queryCount.toLocaleString("en-US")}</Table.Cell>
                       <Table.Cell className={cn("px-4 text-right", num)}>{b.leadCount.toLocaleString("en-US")}</Table.Cell>
-                      <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600" suppressHydrationWarning>
-                        {formatDate(b.createdAt)}
+                      <Table.Cell className="whitespace-nowrap px-4 text-paragraph-sm text-text-sub-600">
+                        <LocalTime value={b.createdAt} format={formatDate} />
                       </Table.Cell>
                       <Table.Cell className="px-4" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                         <div className="flex justify-end">

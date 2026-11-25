@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { LocalTime } from "@/components/LocalTime";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   RiBarChart2Line,
@@ -50,8 +51,8 @@ type Campaign = {
   createdAt: string;
 };
 
-function createdLabel(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+function createdLabel(date: Date): string {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 type TabId = "overview" | "leads" | "sequence";
@@ -153,7 +154,7 @@ export function CampaignDetailClient({
             )}
           </>
         }
-        description={<span suppressHydrationWarning>{`Created ${createdLabel(campaign.createdAt)} · ${steps} of 5 sequence steps written${campaign.description ? ` · ${campaign.description}` : ""}`}</span>}
+        description={<span>Created <LocalTime value={campaign.createdAt} format={createdLabel} />{` · ${steps} of 5 sequence steps written${campaign.description ? ` · ${campaign.description}` : ""}`}</span>}
         actions={
           <>
             <span className="mr-1 hidden sm:inline-flex">

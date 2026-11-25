@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { LocalTime } from "@/components/LocalTime";
 import { useRouter } from "next/navigation";
 import {
   RiAddLine,
@@ -58,8 +59,8 @@ const FILTER_LABEL: Record<Filter, string> = { ALL: "All", ACTIVE: "Active", PAU
 
 const num = "text-paragraph-sm tabular-nums text-text-strong-950";
 
-function shortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+function shortDate(date: Date): string {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /** A count, its rate, and a slim bar scaled to the column's best rate so rows compare. */
@@ -343,8 +344,8 @@ export function CampaignsClient({
                               </Badge.Root>
                               {deleting && <span className="shrink-0 text-paragraph-xs text-error-base">Deleting…</span>}
                             </div>
-                            <p className="mt-0.5 max-w-md truncate text-paragraph-xs text-text-sub-600" title={c.description ?? undefined} suppressHydrationWarning>
-                              {c.type === "PERSONAL" ? "Personal · " : ""}Created {shortDate(c.createdAt)}
+                            <p className="mt-0.5 max-w-md truncate text-paragraph-xs text-text-sub-600" title={c.description ?? undefined}>
+                              {c.type === "PERSONAL" ? "Personal · " : ""}Created <LocalTime value={c.createdAt} format={shortDate} />
                               {c.description ? ` · ${c.description}` : ""}
                             </p>
                           </div>

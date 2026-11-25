@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LocalTime } from "@/components/LocalTime";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import {
@@ -69,8 +70,8 @@ function rollupStatus(counts: Partial<Record<SearchQueryStatus, number>>): { lab
   return null;
 }
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+function formatDate(date: Date) {
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 }
 
 function networkLabel(d?: string | null) {
@@ -548,7 +549,7 @@ export function SearchBatchDetailClient({
         "Leads Fetched": q.leadsFetched,
         "Total Count": q.totalCount ?? "",
         "Last Error": q.lastError ?? "",
-        Created: formatDate(q.createdAt),
+        Created: formatDate(new Date(q.createdAt)),
       }));
       const ws = XLSX.utils.json_to_sheet(data);
       ws["!cols"] = [
@@ -811,8 +812,8 @@ export function SearchBatchDetailClient({
           )
         }
         description={
-          <span suppressHydrationWarning>
-            {detail.batch.kind === "SINGLE" ? "Single search URL" : "CSV of search URLs"} · Created {formatDate(detail.batch.createdAt)}
+          <span>
+            {detail.batch.kind === "SINGLE" ? "Single search URL" : "CSV of search URLs"} · Created <LocalTime value={detail.batch.createdAt} format={formatDate} />
           </span>
         }
         actions={
