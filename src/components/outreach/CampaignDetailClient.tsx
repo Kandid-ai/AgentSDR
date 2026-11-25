@@ -73,7 +73,7 @@ function createdAt(date: string | Date | null): string {
   });
 }
 
-/** "In 13m" / "In 2h" / "Overdue" — the countdown to the next queued send. */
+/** "In 13m" / "In 2h" / "Due now" — the countdown to the next queued send of an active campaign. */
 function untilNext(date: Date | string | null): string {
   if (!date) return "Nothing queued";
   const d = typeof date === "string" ? new Date(date) : date;
@@ -196,7 +196,7 @@ export default function CampaignDetailClient({
           { label: "Follow-ups today", value: pulse.followUpsToday.toLocaleString("en-US"), icon: RiMailSendLine, hint: "Later steps due to send today" },
           { label: "New leads reached today", value: pulse.newLeadsReachedToday.toLocaleString("en-US"), icon: RiUserAddLine, hint: "First emails sent today" },
           { label: "Sequence steps", value: String(pulse.activeSequences), icon: RiStackLine },
-          { label: "Next email", value: untilNext(pulse.nextSendAt), icon: RiTimeLine, hint: campaign.status === "active" ? "The next queued send" : "Sends run while the campaign is active" },
+          { label: "Next email", value: campaign.status === "active" ? untilNext(pulse.nextSendAt) : campaign.status === "paused" ? "Paused" : "—", icon: RiTimeLine, hint: campaign.status === "active" ? "The next queued send" : "Sends run while the campaign is active" },
         ]}
       />
 

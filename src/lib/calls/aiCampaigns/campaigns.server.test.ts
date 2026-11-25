@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { CallApiError } from "@/lib/calls/sessions";
 import { parseStationAiSettings } from "@/lib/calls/stationSettings";
 import { DEFAULT_CHASE_STEPS, DEFAULT_REACH_STEPS } from "./contract";
-import { foldStepRuns, normalizeSteps, parseAiLeadsQuery, parseStationIds, parseUpdateAiCampaignRequest, parseUpdateAiLeadRequest } from "./campaigns.server";
+import { currentStepLabel, foldStepRuns, normalizeSteps, parseAiLeadsQuery, parseStationIds, parseUpdateAiCampaignRequest, parseUpdateAiLeadRequest } from "./campaigns.server";
 
 const campaign = { aiSteps: DEFAULT_REACH_STEPS, aiChaseSteps: DEFAULT_CHASE_STEPS };
 
@@ -98,5 +98,19 @@ describe("parseUpdateAiCampaignRequest knowledgeIds", () => {
   test("refuses anything that is not a list of document ids", () => {
     expect(() => parseUpdateAiCampaignRequest({ knowledgeIds: ["nope"] })).toThrow(CallApiError);
     expect(() => parseUpdateAiCampaignRequest({ knowledgeIds: id })).toThrow(CallApiError);
+  });
+});
+
+describe("currentStepLabel", () => {
+  test("numbers a call-back as its step run does: the engine has already counted it", () => {
+    // The engine sets aiCallbacks to 1 when it schedules the first call-back (step run "callback:1").
+    expect(currentStepLabel({ aiStatus: "callback", aiStep: 0, aiCallbacks: 1 }, campaign)).toBe("Call back 1");
+    expect(currentStepLabel({ aiStatus: "callback", aiStep: 0, aiCallbacks: 2 }, campaign)).toBe("Call back 2");
+  });
+  test("never shows a call-back 0 for a lead set to call back by hand", () => {
+    expect(currentStepLabel({ aiStatus: "callback", aiStep: 0, aiCallbacks: 0 }, campaign)).toBe("Call back 1");
+  });
+  test("closed leads have no current step", () => {
+    expect(currentStepLabel({ aiStatus: "booked", aiStep: 0, aiCallbacks: 1 }, campaign)).toBeNull();
   });
 });

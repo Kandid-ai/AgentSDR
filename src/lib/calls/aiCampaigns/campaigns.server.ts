@@ -571,7 +571,16 @@ function personName(person: Pick<PersonRow, "fullName" | "firstName" | "lastName
   return person.fullName?.trim() || [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || null;
 }
 
-function currentStepLabel(row: ContactRow, campaign: Pick<CampaignRow, "aiSteps" | "aiChaseSteps">): string | null {
+/**
+ * The step a lead is on, as the lead list labels it. A call-back's number is
+ * the one its step run is keyed by (`callback:<n>`): the engine has already
+ * counted the call-back in `aiCallbacks` when it schedules it, so the first
+ * scheduled call-back is "Call back 1".
+ */
+export function currentStepLabel(
+  row: Pick<ContactRow, "aiStatus" | "aiStep" | "aiCallbacks">,
+  campaign: Pick<CampaignRow, "aiSteps" | "aiChaseSteps">,
+): string | null {
   switch (row.aiStatus) {
     case "queued":
     case "reaching":
@@ -579,7 +588,7 @@ function currentStepLabel(row: ContactRow, campaign: Pick<CampaignRow, "aiSteps"
     case "chasing":
       return aiStepLabel(campaign.aiChaseSteps, row.aiStep, true);
     case "callback":
-      return `Call back ${row.aiCallbacks + 1}`;
+      return `Call back ${Math.max(1, row.aiCallbacks)}`;
     default:
       return null;
   }

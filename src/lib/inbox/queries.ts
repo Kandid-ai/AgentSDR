@@ -6,7 +6,7 @@
  * since pending/queued sends live in the outreach schema. Inbox messages only
  * represent mail that was actually sent or received.
  */
-import { and, eq, or, ilike, desc, asc, gte, lte, count, sql, inArray } from "drizzle-orm";
+import { and, eq, or, ilike, desc, asc, gte, lte, count, sql, inArray, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { inboxContacts, inboxMessages, inboxDrafts, inboxContactCcs } from "@/lib/inbox/schema";
 import { outreachEmails, outreachLeads, outreachCampaigns, mailboxes } from "@/lib/outreach/schema";
@@ -100,6 +100,14 @@ export async function getMailsBySection(filters: InboxFilters): Promise<{ rows: 
     conditions.push(sql`(
       EXISTS (SELECT 1 FROM ${inboxDrafts} WHERE ${inboxDrafts.contactId} = ${inboxContacts.id})
       OR EXISTS (SELECT 1 FROM ${crmDrafts} WHERE ${crmDrafts.crmRecordId} = ${crmRecords.id} AND ${crmDrafts.status} = 'awaiting_review')
+    )`);
+    // A draft answers a thread, not a message: list each thread once, as its
+    // latest message, so the folder's count is the number of drafts to review.
+    conditions.push(sql`${inboxMessages.id} = (
+      SELECT latest.id FROM ${inboxMessages} latest
+      WHERE latest.lead_id = ${inboxContacts.id}
+      ORDER BY coalesce(latest.sent_at, latest.created_at) DESC, latest.id DESC
+      LIMIT 1
     )`);
   }
 
@@ -210,7 +218,7 @@ export async function getScheduledEmails(filters: {
   const page = Math.max(1, filters.page ?? 1);
   const pageSize = Math.min(100, Math.max(10, filters.pageSize ?? 25));
 
-  const conditions = [leadsInOrg(), inOrg(people), eq(outreachEmails.status, "scheduled")];
+  const conditions = [scheduledEmailsCondition()];
   if (filters.q) {
     const like = `%${filters.q}%`;
     conditions.push(or(ilike(outreachEmails.subject, like), ilike(people.email, like))!);
@@ -219,7 +227,7 @@ export async function getScheduledEmails(filters: {
 
   const where = and(...conditions);
 
-  const [rows, [{ total }]] = await Promise.all([
+  const [rows, total] = await Promise.all([
     db
       .select({
         id: outreachEmails.id,
@@ -244,15 +252,30 @@ export async function getScheduledEmails(filters: {
       .orderBy(asc(outreachLeads.nextSendAt))
       .limit(pageSize)
       .offset((page - 1) * pageSize),
-    db
-      .select({ total: count() })
-      .from(outreachEmails)
-      .innerJoin(outreachLeads, eq(outreachEmails.leadId, outreachLeads.id))
-      .innerJoin(people, eq(outreachLeads.personId, people.id))
-      .where(where),
+    countScheduledEmails(where),
   ]);
 
   return { rows, total };
+}
+
+/**
+ * What the Scheduled folder lists: this organization's queued campaign
+ * emails whose lead is still a Person here. The folder's badge counts with the
+ * same condition and joins (`countScheduledEmails`), so the two always agree.
+ */
+function scheduledEmailsCondition() {
+  return and(leadsInOrg(), inOrg(people), eq(outreachEmails.status, "scheduled"))!;
+}
+
+async function countScheduledEmails(where: SQL | undefined): Promise<number> {
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(outreachEmails)
+    .innerJoin(outreachLeads, eq(outreachEmails.leadId, outreachLeads.id))
+    .innerJoin(people, eq(outreachLeads.personId, people.id))
+    .innerJoin(outreachCampaigns, eq(outreachLeads.campaignId, outreachCampaigns.id))
+    .where(where);
+  return total;
 }
 
 /** Full thread for one inbox contact, ordered chronologically for the detail pane. */
@@ -311,17 +334,15 @@ export async function getThreadForLead(leadId: string) {
 
 /** Sidebar nav counts — same three AgentSDR-app actually computed (Inbox/Important/Scheduled), kept cheap. */
 export async function getInboxSidebarCounts() {
-  const [[inbox], [important], [scheduled]] = await Promise.all([
+  const [[inbox], [important], scheduled] = await Promise.all([
     db
       .select({ total: count() })
       .from(inboxMessages)
       .where(and(inArray(inboxMessages.contactId, orgContactIds()), eq(inboxMessages.direction, "inbound"), sql`${inboxMessages.openedAt} IS NULL`)),
     db.select({ total: count() }).from(inboxMessages).where(and(inArray(inboxMessages.contactId, orgContactIds()), eq(inboxMessages.important, true))),
-    db.select({ total: count() }).from(outreachEmails)
-      .innerJoin(outreachLeads, eq(outreachEmails.leadId, outreachLeads.id))
-      .where(and(leadsInOrg(), eq(outreachEmails.status, "scheduled"))),
+    countScheduledEmails(scheduledEmailsCondition()),
   ]);
-  return { inbox: inbox.total, important: important.total, scheduled: scheduled.total };
+  return { inbox: inbox.total, important: important.total, scheduled };
 }
 
 export async function markMessageOpened(id: string) {
