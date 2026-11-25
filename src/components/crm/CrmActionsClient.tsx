@@ -28,6 +28,7 @@ import {
   RiMailSendLine,
   RiMoreLine,
   RiPencilLine,
+  RiPhoneLine,
   RiPriceTag3Line,
   RiQuestionLine,
   RiRefreshLine,
@@ -612,10 +613,18 @@ function draftStateOf({ editable, draftFull, status, dnc, sendable, actionText }
     case "Classification review": return { label: "Needs classification", tone: "warning", icon: RiPriceTag3Line, hint: "Confirm the classification first" };
     case "No sequence assigned": return { label: "No sequence", tone: "neutral", icon: RiLinkUnlink, hint: "Nothing runs for this classification" };
     case "Delivery reconciliation": return { label: "Confirm delivery", tone: "warning", icon: RiQuestionLine, hint: "Open the record to confirm the last send" };
+    // A call-only record (calls/crmFollowUp.ts): nothing to draft, a call to make.
+    case "Follow-up call due": return { label: "Follow-up call due", tone: "info", icon: RiPhoneLine, hint: "Call them, or message them on WhatsApp" };
     case "Reply review":
     case "Human review": return { label: "Needs a reply", tone: "info", icon: RiReplyLine, hint: "No draft yet — write one on the record" };
     default: return { label: actionText, tone: "neutral", icon: RiTimeLine };
   }
+}
+
+/** The call a call-only row follows up (listCrmActions' lastCall), or null. */
+function asLastCall(value: unknown): { at: string; outcome: string; summary: string } | null {
+  const call = asObject(value);
+  return call.id ? { at: String(call.at ?? ""), outcome: String(call.outcome ?? ""), summary: String(call.summary ?? "").trim() } : null;
 }
 
 /** The meeting a "Did they show up?" row is about (listCrmActions' dueMeeting). */
@@ -695,6 +704,8 @@ export function describeAction(action: Action, categories: Data[], pipeline: boo
   const companyLabel = companyDomain || (company.name ? String(company.name) : "");
   const latestReplyFull = String(inbound.bodyText ?? action.latestInboundExcerpt ?? "").trim();
   const latestReply = String(action.latestInboundExcerpt ?? "").replace(/\s+/g, " ").trim();
+  // A call-only record has no reply to quote: the call it follows up stands in.
+  const lastCall = asLastCall(action.lastCall);
   // The draft is the thing a reviewer actually opens the row for, so it
   // takes the column the action type used to hold — the action type only
   // fills in for the rows that have no draft waiting.
@@ -725,7 +736,7 @@ export function describeAction(action: Action, categories: Data[], pipeline: boo
     dueLabel, dueDetail, dueColor, dueIcon, actionText, name, companyDomain, companyLabel,
     dueMeeting: asDueMeeting(action.dueMeeting),
     inboundAnswered: Boolean(action.inboundAnswered),
-    followUpNote, latestReplyFull, latestReply, draft, draftFull, draftReply, editable, repliedAt, sequenceLabel, stepLabel, sendableDraft, draftState,
+    followUpNote, latestReplyFull, latestReply, lastCall, draft, draftFull, draftReply, editable, repliedAt, sequenceLabel, stepLabel, sendableDraft, draftState,
     avatarUrl: person.profilePictureUrl ? String(person.profilePictureUrl) : null,
   };
 }
@@ -807,6 +818,7 @@ function ChannelMark({ channel, className }: { channel: string; className?: stri
 
 /** Their last message as a quote, with where and when it arrived underneath. */
 function ReplyQuote({ row, lines = 1 }: { row: Row; lines?: 1 | 2 }) {
+  if (row.lastCall) return <CallQuote call={row.lastCall} followUpNote={row.followUpNote} lines={lines} />;
   return <div className="min-w-0 border-l-2 border-stroke-soft-200 pl-2.5">
     <p className={cn("text-paragraph-sm", lines === 1 ? "truncate" : "line-clamp-2", row.latestReply ? "text-text-strong-950" : "italic text-text-soft-400")}>{row.latestReply || "No message text"}</p>
     <p className="mt-0.5 flex items-center gap-1.5 text-paragraph-xs text-text-sub-600">
@@ -814,6 +826,20 @@ function ReplyQuote({ row, lines = 1 }: { row: Row; lines?: 1 | 2 }) {
       <span title={formatDate(row.repliedAt)}>{timeAgo(row.repliedAt)}</span>
     </p>
     {row.followUpNote && <p className="mt-1 truncate text-paragraph-xs text-text-sub-600" title={row.followUpNote}><span className="text-label-xs text-text-strong-950">Your note</span> {row.followUpNote}</p>}
+  </div>;
+}
+
+/** A call-only row's last call in the reply's place: what was said (or how it ended), then when. */
+function CallQuote({ call, followUpNote, lines }: { call: NonNullable<Row["lastCall"]>; followUpNote: string; lines: 1 | 2 }) {
+  const text = call.summary || call.outcome;
+  return <div className="min-w-0 border-l-2 border-stroke-soft-200 pl-2.5">
+    <p className={cn("text-paragraph-sm", lines === 1 ? "truncate" : "line-clamp-2", text ? "text-text-strong-950" : "italic text-text-soft-400")}>{text || "No summary of the call"}</p>
+    <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-paragraph-xs text-text-sub-600">
+      <RiPhoneLine className="size-3.5 shrink-0" style={{ color: CHANNEL_META.whatsapp.color }} aria-hidden="true" />
+      <span className="truncate">Call{call.summary && call.outcome ? ` · ${call.outcome}` : ""}</span>
+      {call.at && <span className="shrink-0" title={formatDate(call.at)}>{timeAgo(call.at)}</span>}
+    </p>
+    {followUpNote && <p className="mt-1 truncate text-paragraph-xs text-text-sub-600" title={followUpNote}><span className="text-label-xs text-text-strong-950">Your note</span> {followUpNote}</p>}
   </div>;
 }
 
@@ -920,9 +946,11 @@ function ActionRow({ action, categories, busy, editing, pipeline, now, onOpen, o
         <ClassificationCell row={row} categories={categories} busy={busy} onClassify={onClassify} />
       </Table.Cell>
       <Table.Cell className="px-4 py-3">
-        <HoverPreview title={String(row.inbound.subject ?? "").trim() || row.name} meta={formatDate(row.inbound.sentAt ?? row.repliedAt)} body={row.latestReplyFull}>
+        {row.lastCall ? <HoverPreview title={`Last call${row.lastCall.outcome ? ` · ${row.lastCall.outcome}` : ""}`} meta={formatDate(row.lastCall.at)} body={row.lastCall.summary}>
           <ReplyQuote row={row} />
-        </HoverPreview>
+        </HoverPreview> : <HoverPreview title={String(row.inbound.subject ?? "").trim() || row.name} meta={formatDate(row.inbound.sentAt ?? row.repliedAt)} body={row.latestReplyFull}>
+          <ReplyQuote row={row} />
+        </HoverPreview>}
       </Table.Cell>
       <Table.Cell className="relative px-4 py-3">
         {/* Hover the text for the whole draft (with Edit and Send there too);
@@ -1088,7 +1116,8 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
       />}
     </div>
 
-    {row.latestReply && <HoverPreview title={String(row.inbound.subject ?? "").trim() || row.name} meta={formatDate(row.inbound.sentAt ?? row.repliedAt)} body={row.latestReplyFull} className="mt-3">
+    {row.lastCall ? <div className="mt-3"><ReplyQuote row={row} lines={2} /></div>
+      : row.latestReply && <HoverPreview title={String(row.inbound.subject ?? "").trim() || row.name} meta={formatDate(row.inbound.sentAt ?? row.repliedAt)} body={row.latestReplyFull} className="mt-3">
       <ReplyQuote row={row} lines={2} />
     </HoverPreview>}
 
@@ -1121,7 +1150,7 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
         <Badge.Icon as={chipRow.dueIcon} className="-ml-0.5 mr-0 size-3.5" /><span className="truncate">{chipRow.dueLabel === "—" ? "Nothing due" : chipRow.dueLabel}</span>
       </Badge.Root>
       {/* The quote above already says when they replied; this is the when of the chip. */}
-      <span className="shrink-0 text-paragraph-xs tabular-nums text-text-sub-600" title={formatDate(row.repliedAt)}>{row.dueDetail && row.dueDetail !== "—" ? row.dueDetail : row.latestReply ? "" : timeAgo(row.repliedAt)}</span>
+      <span className="shrink-0 text-paragraph-xs tabular-nums text-text-sub-600" title={formatDate(row.repliedAt)}>{row.dueDetail && row.dueDetail !== "—" ? row.dueDetail : row.latestReply || row.lastCall ? "" : timeAgo(row.repliedAt)}</span>
     </div>
     {row.sequenceLabel && <p className="mt-1.5 truncate text-paragraph-xs text-text-soft-400" title={row.sequenceLabel}>{row.sequenceLabel}</p>}
   </article>;

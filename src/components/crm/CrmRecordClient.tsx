@@ -61,6 +61,7 @@ import { takeRecordWorkspace } from "./recordPrefetch";
 import { announceRecordChanged } from "./recordEvents";
 import { setUnsavedReply } from "./recordQueue";
 import { ChannelAvatar } from "./CrmActionsClient";
+import { isCallFollowUpRecord } from "@/lib/crm/lastCall";
 
 /** A record action: resolves false when it failed. `onError` takes the failure's message instead of the page, for a dialog that shows it itself. */
 type RecordAction = (path: string, body?: Data, method?: string, success?: string, onError?: (message: string) => void) => Promise<boolean>;
@@ -217,6 +218,13 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
   const followUp = asObject(data.followUp);
   const lastInbound = data.lastInboundAt ? relativeDate(data.lastInboundAt).replace(" overdue", " ago") : "No reply yet";
   const nextAction = text(currentStep.name, data.nextActionAt ? relativeDate(data.nextActionAt) : "None scheduled");
+  // A call-only record (calls/crmFollowUp.ts): nobody has written, so there is
+  // no reply or thread to show; it follows up the lead's last call.
+  const callFollowUp = !conversations.length && isCallFollowUpRecord({ activeChannel: data.activeChannel, latestInboundMessageId: data.latestInboundMessageId });
+  const lastCall = asObject(data.lastCall);
+  const lastCallOutcome = text(lastCall.outcome);
+  const lastCallSummary = text(lastCall.summary);
+  const phone = text(person.phone) || null;
   // The message being answered: the newest inbound one on any channel.
   const lastMessage = ([...messages] as Data[]).filter((message) => message.direction === "inbound")
     .sort((a, b) => String(b.sentAt ?? b.createdAt).localeCompare(String(a.sentAt ?? a.createdAt)))[0];
@@ -240,8 +248,10 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
       {text(followUp.note) && <div className="flex items-start gap-2 rounded-xl bg-bg-weak-50 px-4 py-2.5 text-paragraph-sm text-text-sub-600 ring-1 ring-inset ring-stroke-soft-200"><RiCalendarScheduleLine className="mt-0.5 size-4 shrink-0 text-text-soft-400" aria-hidden="true" /><p className="min-w-0 flex-1"><span className="text-label-sm text-text-strong-950">Follow up {followUp.dueAt ? `on ${formatDate(followUp.dueAt)}` : "later"}:</span> {text(followUp.note)}{text(followUp.actorRef) ? <span className="text-text-soft-400"> — {text(followUp.actorRef)}</span> : null}</p></div>}
 
       <StatRow items={[
-        { label: "Last reply", value: lastInbound, icon: RiReplyLine, hint: data.lastInboundAt ? formatDate(data.lastInboundAt) : undefined },
-        { label: "Next step", value: nextAction, icon: RiTimerLine, hint: data.nextActionAt ? formatDate(data.nextActionAt) : undefined },
+        callFollowUp
+          ? { label: "Last call", value: lastCall.at ? [lastCallOutcome, relativeDate(lastCall.at).replace(" overdue", " ago")].filter(Boolean).join(" · ") : "No call yet", icon: RiPhoneLine, hint: lastCall.at ? [formatDate(lastCall.at), lastCallSummary].filter(Boolean).join(" — ") : undefined }
+          : { label: "Last reply", value: lastInbound, icon: RiReplyLine, hint: data.lastInboundAt ? formatDate(data.lastInboundAt) : undefined },
+        { label: callFollowUp ? "Follow-up call" : "Next step", value: nextAction, icon: RiTimerLine, hint: data.nextActionAt ? formatDate(data.nextActionAt) : undefined },
         { label: "Sequence", value: activeSequence.name ? `${String(activeSequence.name)}${activeRun.status === "paused" ? " · paused" : ""}` : "None running", icon: RiLoopLeftLine },
         { label: channels.length > 1 ? "Channels" : "Channel", value: channels.join(", ") || "—", icon: RiChat3Line },
       ]} />
@@ -265,6 +275,13 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
             stage={<ClassificationSelect record={data} categories={categories} onAction={mutate} />}
             activity={<ActivityDrawer events={events} drafts={drafts} sendAttempts={sendAttempts} />}
             stageNotice={<ProposedClassificationNotice record={data} categories={categories} onAction={mutate} />}
+            callFollowUp={callFollowUp ? <CallFollowUpNotice
+              dueAt={data.nextActionAt}
+              outcome={lastCallOutcome}
+              summary={lastCallSummary}
+              at={lastCall.at}
+              call={<CallButton personId={String(person.id ?? data.personId)} crmRecordId={String(data.id)} phone={phone} onCallStarted={() => setCallsRefreshKey((key) => key + 1)} numberMenu={false} />}
+            /> : undefined}
           />
         </div>
         <div className="min-w-0 xl:min-h-0">
@@ -575,8 +592,10 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
   );
 }
 
-function ReplyComposer({ record, personEmail, draft, conversations, citations, uncertainAttempt, lastMessage, onAction, stage, activity, stageNotice }: {
+function ReplyComposer({ record, personEmail, draft, conversations, citations, uncertainAttempt, lastMessage, onAction, stage, activity, stageNotice, callFollowUp }: {
   record: Data;
+  /** For a call-only record: what stands in for "no reply channel" — the follow-up call to make. */
+  callFollowUp?: React.ReactNode;
   /** The To of a reply that is not handed to a new contact. */
   personEmail: string | null;
   /** Their newest message, quoted above the reply when the thread is not beside it. */
@@ -661,7 +680,7 @@ function ReplyComposer({ record, personEmail, draft, conversations, citations, u
           </div>
         )}
         {stale && editingCurrentDraft && <InlineWarning tone="warning" title="This draft may be out of date" detail="A newer reply changed the conversation. Regenerate or carefully review before sending." />}
-        {!conversations.length && <InlineWarning tone="warning" title="No reply channel available" detail="Email or LinkedIn must be connected before a reply can be sent." />}
+        {!conversations.length && (callFollowUp ?? <InlineWarning tone="warning" title="No reply channel available" detail="Email or LinkedIn must be connected before a reply can be sent." />)}
 
         {/* Below xl the conversation stacks under this panel, so the message
             being answered is quoted here instead of a scroll away. */}
@@ -763,6 +782,27 @@ function SenderPicker({ conversations, value, onChange }: { conversations: Data[
       </Dropdown.Content>
     </Dropdown.Root>
   );
+}
+
+/**
+ * A call-only record's place in the reply panel: the follow-up is a call (it
+ * came from WhatsApp Calling), so say when it is due, what the last call
+ * left, and offer the call rather than warning that no reply channel exists.
+ */
+function CallFollowUpNotice({ dueAt, outcome, summary, at, call }: { dueAt: unknown; outcome: string; summary: string; at: unknown; call: React.ReactNode }) {
+  const due = dueAt ? relativeDate(dueAt) : "";
+  const title = !due ? "Follow-up call" : due.endsWith("overdue") ? "Follow-up call due" : `Follow-up call ${due}`;
+  return <div className="flex flex-wrap items-start gap-3 rounded-lg bg-information-lighter p-3 text-information-dark ring-1 ring-inset ring-information-light">
+    <RiPhoneLine className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+    <div className="min-w-0 flex-1">
+      <p className="text-label-sm">{title}</p>
+      <p className="mt-0.5 text-paragraph-xs">
+        {at ? <>Last call {formatDate(at)}{outcome ? <> · <span className="text-label-xs">{outcome}</span></> : null}{summary ? <>: {summary}</> : null}</> : "They have not replied in writing yet."}
+        {" "}Call them, or message them on WhatsApp.
+      </p>
+    </div>
+    <div className="shrink-0">{call}</div>
+  </div>;
 }
 
 function InlineWarning({ tone, title, detail }: { tone: "warning" | "danger"; title: string; detail: string }) {

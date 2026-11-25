@@ -34,6 +34,9 @@ import { FOLLOW_UP_EVENT, followUpFromEventData, isFollowUpNoteCurrent, type Fol
 import type { CrmActionGroup } from "./actionGroups";
 import { crmActionableSql, crmActionGroupSql } from "./actionGroups.server";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
+import { callSessions } from "@/lib/calls/schema";
+import { TERMINAL_CALL_STATUSES } from "@/lib/calls/contract";
+import { isCallFollowUpRecord, lastCallOf, type LastCall } from "./lastCall";
 
 /**
  * LinkedIn outreach predates the CRM: the invitation note, the acceptance
@@ -189,6 +192,35 @@ export async function latestFollowUpNotes(recordIds: readonly string[]): Promise
   return latest;
 }
 
+/**
+ * The call each person's call-only record follows up (`lastCallOf`), from
+ * their finished calls in this organization. Keyed by person id.
+ */
+export async function loadLastCalls(personIds: readonly string[]): Promise<Map<string, LastCall>> {
+  const byPerson = new Map<string, LastCall>();
+  if (!personIds.length) return byPerson;
+  const rows = await db.select({
+    personId: callSessions.personId,
+    id: callSessions.id,
+    status: callSessions.status,
+    disposition: callSessions.disposition,
+    agentOutcome: callSessions.agentOutcome,
+    transcriptSummary: sql<string | null>`${callSessions.transcript}->>'summary'`,
+    startedAt: callSessions.startedAt,
+    endedAt: callSessions.endedAt,
+    createdAt: callSessions.createdAt,
+  }).from(callSessions)
+    .where(and(inOrg(callSessions), inArray(callSessions.personId, [...personIds]), inArray(callSessions.status, [...TERMINAL_CALL_STATUSES])))
+    .orderBy(desc(sql`coalesce(${callSessions.endedAt}, ${callSessions.startedAt}, ${callSessions.createdAt})`));
+  const callsByPerson = new Map<string, typeof rows>();
+  for (const row of rows) callsByPerson.set(row.personId, [...(callsByPerson.get(row.personId) ?? []), row]);
+  for (const [personId, calls] of callsByPerson) {
+    const call = lastCallOf(calls);
+    if (call) byPerson.set(personId, call);
+  }
+  return byPerson;
+}
+
 export async function listCrmActions(input: CrmActionFilters = {}) {
   const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 50)));
   const offset = Math.max(0, Math.floor(input.offset ?? 0));
@@ -327,7 +359,11 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
   const policyByPerson = new Map(policies.map((policy) => [policy.personId, policy]));
   const lastRunByRecord = new Map(lastRuns.map((row) => [row.recordId, row]));
   const dueMeetingByRecord = new Map(dueMeetings.map((row) => [row.recordId, { id: row.id, startAt: row.startAt, endAt: row.endAt }]));
-  const followUpNotes = await latestFollowUpNotes(rows.map((row) => row.record.id));
+  // Call-only records (calls/crmFollowUp.ts) have no reply to quote; the row shows the call instead.
+  const [followUpNotes, lastCalls] = await Promise.all([
+    latestFollowUpNotes(rows.map((row) => row.record.id)),
+    loadLastCalls(rows.flatMap((row) => isCallFollowUpRecord(row.record) ? [row.record.personId] : [])),
+  ]);
   // Whether the rep already answered each latest reply from AgentSDR (the
   // rule of `inboundAnsweredFromCrm`); the stage picker defaults on it.
   const latestInboundIds = rows.flatMap((row) => row.record.latestInboundMessageId ? [row.record.latestInboundMessageId] : []);
@@ -386,8 +422,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
               // record, with no reply on it: the rep calls or messages them;
               // there is no draft to review. A WhatsApp reply makes the record
               // inbound-driven, and it is labelled like any other from then on.
-              ? row.record.activeChannel === "whatsapp" && !row.record.latestInboundMessageId
-                ? "WhatsApp follow-up"
+              ? isCallFollowUpRecord(row.record)
+                ? "Follow-up call due"
                 : "Due follow-up"
               : !run
                 ? "No sequence assigned"
@@ -421,6 +457,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       inboundAnswered: Boolean(row.record.latestInboundMessageId && answeredReplies.has(row.record.latestInboundMessageId)),
       latestInbound: latestInbound.get(row.record.id) ?? null,
       latestInboundExcerpt: latestInbound.get(row.record.id)?.bodyText.slice(0, 240) ?? "",
+      /** For a call-only record (no reply on any channel): the call it follows up, else null. */
+      lastCall: isCallFollowUpRecord(row.record) ? lastCalls.get(row.record.personId) ?? null : null,
       classification,
       aiChanged,
       activeRun: run,
@@ -544,6 +582,10 @@ export async function getCrmRecordWorkspace(recordId: string) {
   ]);
   const header = headers[0];
   if (!header) throw new CrmNotFoundError("CRM record", recordId);
+  // A call-only record (calls/crmFollowUp.ts) follows up a call, not a reply.
+  const lastCall = isCallFollowUpRecord(header.record)
+    ? (await loadLastCalls([header.record.personId])).get(header.record.personId) ?? null
+    : null;
 
   const latestClassification = classifications[0] ?? null;
   const currentDraft = drafts.find((draft) => ["awaiting_review", "failed", "delivery_uncertain"].includes(draft.status)) ?? null;
@@ -727,6 +769,8 @@ export async function getCrmRecordWorkspace(recordId: string) {
     citations,
     sendAttempts: attempts,
     meetings,
+    /** For a call-only record (no reply on any channel): the call it follows up, else null. */
+    lastCall,
   };
 }
 
