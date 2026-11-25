@@ -2,6 +2,7 @@
  * Fills a FRESH database with Northwind, a fictional company, and three
  * months of its sales team's work across every part of AgentSDR: the lead
  * database, email, LinkedIn and WhatsApp campaigns, calls with transcripts,
+ * AI calling campaigns on cloud calling numbers,
  * the CRM pipeline with AI drafts waiting for review, Tables and Analytics.
  * It is what the public demo (DEMO_MODE, src/lib/demo/mode.ts) shows, what a
  * contributor gets to click around in, and where screenshots are taken.
@@ -136,6 +137,7 @@ async function main() {
     const { seedEmail } = await import("./demo/email");
     const { seedLinkedin } = await import("./demo/linkedin");
     const { seedWhatsapp } = await import("./demo/whatsapp");
+    const { seedAiCalling } = await import("./demo/aiCalling");
     const { seedWorkspace } = await import("./demo/workspace");
     const { finalizeDemo } = await import("./demo/finalize");
 
@@ -145,6 +147,7 @@ async function main() {
     await step("email campaigns, mailboxes and replies", () => seedEmail(ctx));
     await step("LinkedIn accounts, campaigns and conversations", () => seedLinkedin(ctx));
     await step("WhatsApp numbers, chats, campaigns and calls", () => seedWhatsapp(ctx));
+    await step("AI calling: numbers, campaigns, calls and bookings", () => seedAiCalling(ctx));
     await step("CRM classifications, pipeline and drafts", () => seedCrmOutcomes(ctx));
     await step("Tables and prospecting", () => seedWorkspace(ctx));
     await step("finishing touches", () => finalizeDemo(ctx));
