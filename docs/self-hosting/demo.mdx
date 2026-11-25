@@ -57,7 +57,21 @@ The LinkedIn, WhatsApp, email and R2 integrations are stored with placeholder cr
   </Step>
 </Steps>
 
-To start over, drop and recreate the database, then run both commands again. Deploys of new code keep the data; the seed only needs re-running when you want a fresh one.
+To start over, drop and recreate the database, then run both commands again. Deploys of new code keep the data, and they keep its **schema** too: no migration runs on the demo's database, so after a release that changes the schema, the newer pages answer with server errors until the demo is rebuilt.
+
+## Rebuild after a schema change
+
+`bun run db:rebuild:demo` does the rebuild in one step. It builds a fresh demo in a throwaway database on a Postgres near you (seeding over the internet row by row is slow), then swaps it into the demo's database in a single transaction, after backing that up to `demo-backup-<time>.dump`. It refuses a database holding any organization that is not a seeded demo one, and without `--yes` it stops after the build.
+
+```sh
+export DEMO_DATABASE_URL=postgres://USER:PASSWORD@SERVER_IP:EXTERNAL_PORT/DATABASE?sslmode=disable
+export SCRATCH_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable
+export DEMO_INTEGRATION_CREDENTIALS_KEY=SAME_AS_THE_DEPLOYMENT
+export DEMO_BETTER_AUTH_SECRET=SAME_AS_THE_DEPLOYMENT
+bun run db:rebuild:demo --yes
+```
+
+The keys go under `DEMO_` names so the repository's `.env.local` can never supply its own. Visitors are signed out by the swap and signed straight back in. Remove the external port afterwards.
 
 ## Try it locally
 

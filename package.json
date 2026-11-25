@@ -26,6 +26,7 @@
     "test": "bun test --conditions=react-server",
     "db:setup": "bun scripts/db/setup.ts",
     "db:seed:demo": "bun --conditions=react-server scripts/db/seed-demo.ts",
+    "db:rebuild:demo": "bun scripts/db/rebuild-demo.ts",
     "db:schema:dump": "bun scripts/db/dump-schema.ts",
     "db:check": "bun scripts/check-organization-scope.ts --contract",
     "preflight:people": "bun --conditions=react-server scripts/preflight-people-migration.ts",
