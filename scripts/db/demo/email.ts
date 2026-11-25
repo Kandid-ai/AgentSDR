@@ -122,11 +122,13 @@ const CAMPAIGNS: CampaignDef[] = [
     status: "paused",
     region: "us",
     size: 35,
-    startDays: 34,
-    lastFirstTouchDays: 11,
+    // Ran between the webinar follow-up and the current campaigns, so the last
+    // weeks of Analytics are the two active campaigns at a steady pace.
+    startDays: 52,
+    lastFirstTouchDays: 30,
     contacted: 35,
     replyChance: 0.07,
-    pausedDaysAgo: 9,
+    pausedDaysAgo: 26,
     mailboxes: [0, 2, 3],
     score: () => 0,
     steps: [
@@ -146,13 +148,13 @@ const CAMPAIGNS: CampaignDef[] = [
   },
   {
     key: "emea",
-    ramp: 0.85,
+    ramp: 1,
     name: "Series B founders · EMEA",
     status: "active",
     region: "emea",
     size: 80,
     startDays: 24,
-    lastFirstTouchDays: 1.5,
+    lastFirstTouchDays: 0.3,
     contacted: 74,
     replyChance: 0.075,
     mailboxes: [3, 4, 1],
@@ -180,13 +182,13 @@ const CAMPAIGNS: CampaignDef[] = [
   },
   {
     key: "revops",
-    ramp: 1.5,
+    ramp: 1,
     name: "RevOps leaders · US mid-market",
     status: "active",
     region: "us",
     size: 110,
     startDays: 45,
-    lastFirstTouchDays: 3.5,
+    lastFirstTouchDays: 0.3,
     contacted: 104,
     replyChance: 0.085,
     mailboxes: [0, 1, 2, 5],
@@ -233,7 +235,8 @@ function slot(ctx: DemoContext, base: Date, region: Region, dir: 1 | -1): Date {
   const d = new Date(base);
   const dow = d.getUTCDay();
   if (dow === 6) d.setUTCDate(d.getUTCDate() + (dir === 1 && ctx.rand.chance(0.6) ? 2 : -1));
-  if (dow === 0) d.setUTCDate(d.getUTCDate() + (dir === 1 && ctx.rand.chance(0.7) ? 1 : -2));
+  // Sundays go to Monday either way, so Fridays do not collect both weekend days.
+  if (dow === 0) d.setUTCDate(d.getUTCDate() + (dir === -1 || ctx.rand.chance(0.7) ? 1 : -2));
   const [from, to] = region === "us" ? [13, 21] : [8, 16];
   d.setUTCHours(ctx.rand.int(from, to), ctx.rand.int(0, 59), ctx.rand.int(0, 59), 0);
   return d;
@@ -292,7 +295,8 @@ export async function seedEmail(ctx: DemoContext): Promise<void> {
     .values(
       MAILBOXES.map((m, i) => {
         const created = new Date(ctx.now.getTime() - (104 - i * 3) * DAY + rand.int(8, 17) * HOUR);
-        const day = (enabled: boolean) => ({ enabled, from: "08:30", to: "17:30" });
+        // 08:00-18:00 at the Sending rules' gap fits every daily limit (core.ts), so Settings shows no capacity warning.
+        const day = (enabled: boolean) => ({ enabled, from: "08:00", to: "18:00" });
         const team = TEAM[m.owner];
         return {
           organizationId: org,
@@ -456,6 +460,24 @@ export async function seedEmail(ctx: DemoContext): Promise<void> {
     .map((p) => ({ p, key: Math.pow(rand.next(), 1 / p.def.replyChance) }))
     .sort((x, y) => y.key - x.key)
     .map((x) => x.p);
+  // Spread the replies over the weeks in proportion to each week's first
+  // touches, so Analytics' week-over-week reply rate (replies in a week over
+  // leads first emailed that week) is steady instead of swinging on where a
+  // handful of replies happened to land.
+  const weekOf = (d: Date) => Math.floor((ctx.now.getTime() - d.getTime()) / (7 * DAY));
+  const weekQuota = new Map<number, number>();
+  {
+    const sizes = new Map<number, number>();
+    for (const p of contactedPlans) sizes.set(weekOf(p.sent[0].t), (sizes.get(weekOf(p.sent[0].t)) ?? 0) + 1);
+    let cumulative = 0;
+    let given = 0;
+    for (const [week, size] of [...sizes].sort((a, b) => a[0] - b[0])) {
+      cumulative += (size * replyTarget) / contactedPlans.length;
+      weekQuota.set(week, Math.round(cumulative) - given);
+      given = Math.round(cumulative);
+    }
+  }
+  const weekReplies = new Map<number, number>();
   for (const plan of candidates) {
     if (replyCount >= replyTarget) break;
     const upto = plan.sent.length;
@@ -467,9 +489,12 @@ export async function seedEmail(ctx: DemoContext): Promise<void> {
     if (hour < 7) at = new Date(at.getTime() + (7 - hour + rand.int(0, 2)) * HOUR);
     else if (hour >= 22) at = new Date(at.getTime() + (31 - hour) * HOUR);
     if (at.getTime() > ctx.now.getTime() - 2 * MINUTE || at.getTime() < step.t.getTime() + minutes(15)) continue;
+    const week = weekOf(at);
+    if ((weekReplies.get(week) ?? 0) >= (weekQuota.get(week) ?? 0)) continue;
     plan.sent = plan.sent.filter((s) => s.t.getTime() < at.getTime());
     plan.reply = { step, intent: "Other", at };
     replyCount += 1;
+    weekReplies.set(week, (weekReplies.get(week) ?? 0) + 1);
   }
   // Intents follow the reply mix exactly (largest remainder) rather than by independent draws,
   // so a small sample still looks like a healthy program.
@@ -565,7 +590,9 @@ export async function seedEmail(ctx: DemoContext): Promise<void> {
         }
       } else if (s === 0 && def.status === "active") {
         // Waiting for its first email: due over the next couple of days.
-        const due = slot(ctx, new Date(ctx.now.getTime() + rand.int(4, 52) * HOUR), def.region, 1);
+        let due = slot(ctx, new Date(ctx.now.getTime() + rand.int(4, 52) * HOUR), def.region, 1);
+        // slot() picks a time of day, which can land earlier today: keep it ahead of now.
+        while (due.getTime() < ctx.now.getTime() + 30 * MINUTE) due = slot(ctx, new Date(due.getTime() + DAY), def.region, 1);
         next = due;
         if (due.getTime() < horizon.getTime()) {
           const sched = renderStep(plan, 0);

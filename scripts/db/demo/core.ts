@@ -17,6 +17,9 @@ import { getPlatformIntegration, type PlatformKey } from "@/lib/platform/catalog
 import { ensureCrmDefaults } from "@/lib/crm/defaults";
 import { saveChannelRules } from "@/lib/channels/rules.server";
 import { UNIPILE_WEBHOOKS } from "@/lib/platform/unipileWebhooks";
+import { createApiKey } from "@/lib/publicApi/keys";
+import { apiKeys } from "@/lib/publicApi/schema";
+import type { ApiScope } from "@/lib/publicApi/scopes";
 import {
   CITY_FOR_COUNTRY,
   COMPANIES,
@@ -40,13 +43,62 @@ export async function seedCore(ctx: DemoContext, ownerId: string): Promise<void>
   await seedTeam(ctx, ownerId);
   await seedLeadDatabase(ctx);
   await seedPlatformIntegrations(ctx);
-  await saveChannelRules(
-    "email",
-    { sendingHours: { timezone: "America/New_York", days: [1, 2, 3, 4, 5], start: "08:30", end: "17:30" } },
-    ownerId,
-  );
+  await seedSendingRules(ownerId);
+  await seedApiKeys(ctx, ownerId);
   const { pipelineId } = await ensureCrmDefaults();
   ctx.pipelineId = pipelineId;
+}
+
+// ---------------------------------------------------------------------------
+// Sending rules: Northwind works on New York time
+// ---------------------------------------------------------------------------
+
+/** One Eastern-time setup across every channel, so no rule shows the registry's Asia/Kolkata default. */
+async function seedSendingRules(ownerId: string) {
+  // The organization's zone: the clock drafts are written against and the daily rollover.
+  await saveChannelRules("general", { timeZone: "America/New_York", defaultPhoneCountry: "US" }, ownerId);
+  // A healthy setup with no capacity warning: a 10-hour window at about 14 minutes apart fits
+  // 43 emails, above both the new-mailbox limit and every mailbox's own (email.ts, content.ts).
+  await saveChannelRules(
+    "email",
+    {
+      sendingHours: { timezone: "America/New_York", days: [1, 2, 3, 4, 5], start: "08:00", end: "18:00" },
+      sendGapMinutes: [12, 16],
+    },
+    ownerId,
+  );
+  await saveChannelRules(
+    "whatsapp",
+    {
+      sendingHours: { timezone: "America/New_York", days: [1, 2, 3, 4, 5], start: "09:00", end: "18:00" },
+      callingHours: { timezone: "America/New_York", days: [1, 2, 3, 4, 5], start: "09:30", end: "17:30" },
+    },
+    ownerId,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// API keys: two integrations calling the public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Created through the app's own createApiKey, so each holds the SHA-256 hash
+ * of a fresh random asdr_ key and its shown prefix. The key itself is never
+ * printed or kept: nothing in the demo calls the API.
+ */
+async function seedApiKeys(ctx: DemoContext, ownerId: string) {
+  const keys: { name: string; scopes?: ApiScope[]; createdDays: number; lastUsedMinutes: number }[] = [
+    { name: "Zapier", createdDays: 58, lastUsedMinutes: 47 },
+    { name: "Data warehouse sync", scopes: ["crm:read", "campaigns:read"], createdDays: 23, lastUsedMinutes: 9 * 60 + 12 },
+  ];
+  for (const k of keys) {
+    const { apiKey } = await createApiKey(k.name, ownerId, k.scopes);
+    await db
+      .update(apiKeys)
+      .set({ createdAt: daysAgo(ctx, k.createdDays), lastUsedAt: new Date(ctx.now.getTime() - k.lastUsedMinutes * 60_000) })
+      .where(eq(apiKeys.id, apiKey.id));
+  }
+  count(ctx, "API keys", keys.length);
 }
 
 // ---------------------------------------------------------------------------
@@ -78,8 +130,10 @@ async function seedTeam(ctx: DemoContext, ownerId: string) {
 
   const [outbound] = await db.insert(teams).values({ name: "Outbound", organizationId: orgId, createdAt: daysAgo(ctx, 110) }).returning({ id: teams.id });
   const [closers] = await db.insert(teams).values({ name: "Account Executives", organizationId: orgId, createdAt: daysAgo(ctx, 110) }).returning({ id: teams.id });
+  // Alex (the demo's signed-in owner) is in both: Better Auth lists a team's
+  // members only to someone in that team, so Settings → Teams shows 0 otherwise.
   const roster: [string, TeamKey][] = [
-    [outbound.id, "priya"], [outbound.id, "sam"], [outbound.id, "lena"],
+    [outbound.id, "alex"], [outbound.id, "priya"], [outbound.id, "sam"], [outbound.id, "lena"],
     [closers.id, "alex"], [closers.id, "jordan"],
   ];
   await db.insert(teamMembers).values(roster.map(([teamId, key]) => ({ teamId, userId: ctx.users[key].id, createdAt: daysAgo(ctx, 100) })));

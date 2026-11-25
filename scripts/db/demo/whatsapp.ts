@@ -73,6 +73,18 @@ function humanize(ctx: DemoContext, d: Date): Date {
   return x;
 }
 
+/**
+ * A pending send time that stays ahead of "now" for a full day. The demo runs
+ * no sender and its clock (src/lib/demo/clock.ts) moves timestamps forward
+ * only in whole days, so a step due in a few hours would read as overdue
+ * ("Next 18h ago") later the same day.
+ */
+function aheadOfClock(ctx: DemoContext, d: Date): Date {
+  let x = d;
+  while (x.getTime() < ctx.now.getTime() + 26 * HOUR) x = atBiz(ctx, new Date(x.getTime() + DAY));
+  return x;
+}
+
 const digitsOf = (phone: string) => phone.replace(/\D/g, "");
 const preview = (body: string) => {
   const text = body.replace(/\s+/g, " ").trim();
@@ -601,7 +613,7 @@ export async function seedWhatsapp(shared: DemoContext): Promise<void> {
       leadPlans[opts.key].push(lead);
       if (!start) {
         // Enrolled, not yet sent: the next tick of the sender picks it up.
-        lead.nextSendAt = atBiz(ctx, plusHours(now, rand.int(10, 20)));
+        lead.nextSendAt = aheadOfClock(ctx, atBiz(ctx, plusHours(now, rand.int(10, 20))));
         return;
       }
       const times: Date[] = [spaced(rep, start)];
@@ -678,7 +690,8 @@ export async function seedWhatsapp(shared: DemoContext): Promise<void> {
         lead.status = "completed";
       } else {
         lead.status = "in_sequence";
-        lead.nextSendAt = times[lead.sends.length] ?? null;
+        const next = times[lead.sends.length];
+        lead.nextSendAt = next ? aheadOfClock(ctx, next) : null;
       }
     });
   }

@@ -27,10 +27,10 @@ export const TEAM: Record<TeamKey, { name: string; first: string; email: string;
 /** Sending addresses (one per rep, plus a shared one). Alex's sends as alex@, not the demo login. */
 export const MAILBOXES: { email: string; name: string; owner: TeamKey; dailyLimit: number }[] = [
   { email: "alex@northwind.example", name: "Alex Morgan", owner: "alex", dailyLimit: 40 },
-  { email: "priya@northwind.example", name: "Priya Raman", owner: "priya", dailyLimit: 50 },
-  { email: "jordan@northwind.example", name: "Jordan Blake", owner: "jordan", dailyLimit: 40 },
-  { email: "sam@trynorthwind.example", name: "Sam Okafor", owner: "sam", dailyLimit: 50 },
-  { email: "lena@trynorthwind.example", name: "Lena Fischer", owner: "lena", dailyLimit: 50 },
+  { email: "priya@northwind.example", name: "Priya Raman", owner: "priya", dailyLimit: 40 },
+  { email: "jordan@northwind.example", name: "Jordan Blake", owner: "jordan", dailyLimit: 35 },
+  { email: "sam@trynorthwind.example", name: "Sam Okafor", owner: "sam", dailyLimit: 40 },
+  { email: "lena@trynorthwind.example", name: "Lena Fischer", owner: "lena", dailyLimit: 40 },
   { email: "hello@trynorthwind.example", name: "Northwind Team", owner: "priya", dailyLimit: 30 },
 ];
 

@@ -376,6 +376,14 @@ type CopyCtx = {
   subject: string | null;
   /** The moment the draft is written; time offers are relative to it. */
   at: Date;
+  /**
+   * Set for a draft still awaiting review: the seed's "now". Its offers must
+   * still lie ahead when someone opens it, and the demo clock
+   * (src/lib/demo/clock.ts) moves timestamps forward by whole days without
+   * rewriting text, so such a draft offers "tomorrow" / "the day after"
+   * rather than a weekday that would slide into the past.
+   */
+  pendingAt?: Date;
   variant: number;
   seats: number;
 };
@@ -448,7 +456,19 @@ function slots(c: CopyCtx) {
     return bank[(c.variant + offset) % bank.length];
   };
   let d1: Date, d2: Date, t1: string, t2: string;
-  const hasDay = preferred > 0 && preferred < 6;
+  // A day the lead named only counts while it is still ahead of whoever reads the draft.
+  const hasDay = preferred > 0 && preferred < 6 && (!c.pendingAt || nextWeekday(c.at, preferred).getTime() > c.pendingAt.getTime());
+  if (c.pendingAt && !hasDay) {
+    t1 = pickTime(0);
+    t2 = pickTime(3);
+    return {
+      sa: `tomorrow at ${t1} ${c.tz}`,
+      sb: `the day after at ${t2} ${c.tz}`,
+      sas: `tomorrow at ${t1}`,
+      sbs: `the day after at ${t2}`,
+      leadDay: "",
+    };
+  }
   if (hasDay) {
     d1 = nextWeekday(c.at, preferred);
     d2 = d1;
@@ -781,7 +801,10 @@ function fill(template: string, c: CopyCtx): string {
     .replaceAll("{when}", when)
     .replaceAll("{colleague}", named ?? COLLEAGUES[c.variant % COLLEAGUES.length])
     .replaceAll("{goal}", GOALS[c.variant % GOALS.length])
-    .replaceAll("{seats}", String(c.seats));
+    .replaceAll("{seats}", String(c.seats))
+    // Relative offers (a draft awaiting review) read naturally in every template.
+    .replace(/\bon (tomorrow|the day after)\b/g, "$1")
+    .replace(/(^|[.!?]\s+|\n)(tomorrow|the day after)\b/g, (_m, lead: string, word: string) => `${lead}${word.charAt(0).toUpperCase()}${word.slice(1)}`);
   return out;
 }
 
@@ -1350,7 +1373,7 @@ async function awaitingDraft(recordId: string) {
 }
 
 /** Write (and leave awaiting review) the draft the record's next step calls for. */
-async function writeDraftNow(env: Env, p: Plan, at: Date, key: CopyKey | null, stage?: "Meeting Done" | "Meeting No Show"): Promise<boolean> {
+async function writeDraftNow(env: Env, p: Plan, at: Date, key: CopyKey | null, stage?: "Meeting Done" | "Meeting No Show", awaitsReview = false): Promise<boolean> {
   const step = await openStep(p.reply.recordId);
   let copyKey = key;
   if (!copyKey) {
@@ -1359,7 +1382,7 @@ async function writeDraftNow(env: Env, p: Plan, at: Date, key: CopyKey | null, s
     else if (step && step.position > 1) copyKey = (FOLLOW_COPY[step.sequenceName] ?? [])[step.position - 2] ?? "book_f1";
     else copyKey = INTENT_COPY[p.reply.intent] ?? "info";
   }
-  const copy = writeCopy(copyCtx(env, p, at), copyKey);
+  const copy = writeCopy({ ...copyCtx(env, p, at), ...(awaitsReview ? { pendingAt: env.ctx.now } : {}) }, copyKey);
   const complete = drafter(env, p, copy.subject, copy.body);
   const made = await phase(p, at, async () => {
     if (step) {
@@ -1451,7 +1474,7 @@ async function drive(env: Env, p: Plan, cursor: Cursor, from: Date, until: Date,
       cur = tSkip;
       continue;
     }
-    const ok = await writeDraftNow(env, p, tDraft, null);
+    const ok = await writeDraftNow(env, p, tDraft, null, undefined, flaggedReview);
     if (!ok) return cur;
     if (flaggedReview) { reviews.n++; return tDraft; }
     const tEdit = editIt ? cap(env, mono(tDraft, atWork(p, new Date(tDraft.getTime() + humanDelay(cursor.next(), p) * MINUTE), cursor.next()))) : null;
@@ -1525,7 +1548,7 @@ async function runRecord(env: Env, p: Plan): Promise<void> {
 
   // 4. The reply draft.
   const tDraft = cap(env, new Date(tNow.getTime() + Math.round((1 + cursor.next() * 3) * MINUTE)));
-  const wrote = await writeDraftNow(env, p, tDraft, null);
+  const wrote = await writeDraftNow(env, p, tDraft, null, undefined, p.first === "awaiting");
   if (!wrote) throw new Error(`CRM outcomes: no draft for ${recordId} (${intent})`);
   if (p.first === "awaiting") return;
 
