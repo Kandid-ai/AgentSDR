@@ -11,7 +11,7 @@ import { db } from "@/lib/db";
 import { inboxContacts, inboxMessages, inboxDrafts, inboxContactCcs } from "@/lib/inbox/schema";
 import { outreachEmails, outreachLeads, outreachCampaigns, mailboxes } from "@/lib/outreach/schema";
 import { people } from "@/lib/leads/schema";
-import { crmPipelines, crmRecords, crmSubcategories } from "@/lib/crm/schema";
+import { crmDrafts, crmPipelines, crmRecords, crmSubcategories } from "@/lib/crm/schema";
 import type { InboxCrmSummary } from "@/lib/crm/inboxContext";
 import { loadInboxCrmSummariesForRecords } from "@/lib/crm/inboxContext.server";
 import { loadInboxEmailCrmContext } from "@/lib/inbox/crmContext.server";
@@ -95,7 +95,12 @@ export async function getMailsBySection(filters: InboxFilters): Promise<{ rows: 
   if (sectionCond) conditions.push(sectionCond);
 
   if (filters.section === "pendingApproval") {
-    conditions.push(sql`EXISTS (SELECT 1 FROM ${inboxDrafts} WHERE ${inboxDrafts.contactId} = ${inboxContacts.id})`);
+    // The CRM's reply drafts (crm_drafts awaiting review) are what the rows'
+    // "AI draft" chip shows; crm_email_drafts is the older inbox-only table.
+    conditions.push(sql`(
+      EXISTS (SELECT 1 FROM ${inboxDrafts} WHERE ${inboxDrafts.contactId} = ${inboxContacts.id})
+      OR EXISTS (SELECT 1 FROM ${crmDrafts} WHERE ${crmDrafts.crmRecordId} = ${crmRecords.id} AND ${crmDrafts.status} = 'awaiting_review')
+    )`);
   }
 
   if (filters.q) {

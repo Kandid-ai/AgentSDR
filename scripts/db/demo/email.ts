@@ -758,11 +758,16 @@ export async function seedEmail(ctx: DemoContext): Promise<void> {
     { intents: ["Not Required Right Now", "Already Using a Tool — Not Required"], due: "", done: true, make: (first, company) => ({ name: `Add ${first} to the next-fiscal-year re-engagement list`, description: `Budget is frozen at ${company} until the new fiscal year. Re-open the thread then with the pilot offer.` }) },
   ];
   const takenContacts = new Set<string>();
+  // An open task ("due today", "overdue") hangs off a reply from the last ten
+  // days, so its date agrees with its label; a done one can be older.
+  const recentCutoff = ctx.now.getTime() - 10 * DAY;
   const pickFor = (t: TaskTemplate) => {
     const ok = (r: (typeof replied)[number]) => !takenContacts.has(r.contactId);
-    const hit = rand.shuffle(replied.filter((r) => ok(r) && t.intents.includes(r.intent)))[0]
-      ?? rand.shuffle(positive.filter(ok))[0]
-      ?? rand.shuffle(replied.filter((r) => ok(r) && r.intent !== "Out of Office" && r.intent !== "Do Not Contact"))[0];
+    const pick = (pool: typeof replied) =>
+      rand.shuffle(pool.filter((r) => ok(r) && t.intents.includes(r.intent)))[0]
+      ?? rand.shuffle(pool.filter((r) => ok(r) && positive.includes(r)))[0]
+      ?? rand.shuffle(pool.filter((r) => ok(r) && r.intent !== "Out of Office" && r.intent !== "Do Not Contact"))[0];
+    const hit = (t.done ? undefined : pick(replied.filter((r) => r.at.getTime() >= recentCutoff))) ?? pick(replied);
     if (hit) takenContacts.add(hit.contactId);
     return hit;
   };
@@ -771,7 +776,8 @@ export async function seedEmail(ctx: DemoContext): Promise<void> {
     const r = pickFor(t);
     if (!r) continue;
     const { name, description } = t.make(r.plan.person.firstName, r.plan.person.company.name);
-    const created = new Date(Math.min(r.at.getTime() + rand.int(30, 360) * MINUTE, ctx.now.getTime() - 5 * MINUTE));
+    const afterReply = r.at.getTime() + rand.int(30, 360) * MINUTE;
+    const created = new Date(Math.min(t.done ? afterReply : Math.max(afterReply, ctx.now.getTime() - rand.int(1, 8) * DAY), ctx.now.getTime() - 5 * MINUTE));
     const task = await createTask({ leadId: r.contactId, name: t.due ? `${name} (${t.due})` : name, description });
     await db
       .update(inboxTasks)
