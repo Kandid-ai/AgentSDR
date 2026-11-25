@@ -6,7 +6,11 @@
 
 <h3>Find leads, reach them on email, LinkedIn and WhatsApp,<br>and let AI work every reply, from one workspace you run yourself.</h3>
 
+<p>The open-source alternative to Instantly, HeyReach and Clay, with an AI CRM on top.</p>
+
 <p>
+  <a href="https://demo.agentsdr.ai"><b>Live demo</b></a>
+  &nbsp;·&nbsp;
   <a href="https://agentsdr.ai"><b>Website</b></a>
   &nbsp;·&nbsp;
   <a href="https://docs.agentsdr.ai"><b>Docs</b></a>
@@ -39,6 +43,10 @@
   </a>
   <br>
   <sub>Replies from every channel land in one queue. AI classifies each and drafts the answer. <a href="docs/assets/video/agentsdr-film.mp4">Watch the 51-second film</a>. Every name in it is fictional.</sub>
+  <br><br>
+  <a href="https://demo.agentsdr.ai"><img src="https://img.shields.io/badge/Try_the_live_demo-no_sign--up-335cff?style=for-the-badge" alt="Try the live demo, no sign-up"></a>
+  <br>
+  <sub>Click through every page of a fictional company's workspace. Read-only, nothing to install.</sub>
 </div>
 
 ## Why AgentSDR
@@ -346,6 +354,17 @@ Yes. Invite teammates from Settings → Members with the owner, admin or member 
 ## Contributing
 
 Contributions are welcome: bug reports, fixes, enrichment providers, docs. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the checks a pull request must pass and the commit conventions; issues labelled [`good first issue`](https://github.com/Kandid-ai/AgentSDR/labels/good%20first%20issue) are a good way in. Also see the [Code of Conduct](CODE_OF_CONDUCT.md), [how the project is run](GOVERNANCE.md) and [what changed](CHANGELOG.md).
+
+## Star history
+
+If AgentSDR saves you a tool or two, [a star](https://github.com/Kandid-ai/AgentSDR/stargazers) is the easiest way to help other teams find it.
+
+<a href="https://star-history.com/#Kandid-ai/AgentSDR&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Kandid-ai/AgentSDR&type=Date&theme=dark">
+    <img src="https://api.star-history.com/svg?repos=Kandid-ai/AgentSDR&type=Date" alt="Star history of Kandid-ai/AgentSDR" width="600">
+  </picture>
+</a>
 
 ## License
 
