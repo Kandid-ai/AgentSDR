@@ -47,6 +47,8 @@ const AUTH_ALLOWED_POSTS = ["/api/auth/organization/set-active"];
 const READ_ONLY_POSTS: RegExp[] = [
   /^\/api\/grid\/tables\/[^/]+\/export$/,
   /^\/api\/grid\/tables\/[^/]+\/formula-preview$/,
+  // A campaign step rendered for one lead (merge fields filled in); nothing is saved.
+  /^\/api\/(outreach|linkedin|whatsapp)\/campaigns\/[^/]+\/preview$/,
 ];
 
 /**

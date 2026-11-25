@@ -65,5 +65,9 @@ describe("demoRequestBlock", () => {
     expect(demoRequestBlock("/api/grid/tables/t1/export", "POST", demo)).toBeNull();
     expect(demoRequestBlock("/api/grid/tables/t1/formula-preview", "POST", demo)).toBeNull();
     expect(demoRequestBlock("/api/grid/tables/t1/formula-generate", "POST", demo)).toEqual({ kind: "refuse" });
+    expect(demoRequestBlock("/api/whatsapp/campaigns/c1/preview", "POST", demo)).toBeNull();
+    expect(demoRequestBlock("/api/linkedin/campaigns/c1/preview", "POST", demo)).toBeNull();
+    expect(demoRequestBlock("/api/outreach/campaigns/c1/preview", "POST", demo)).toBeNull();
+    expect(demoRequestBlock("/api/whatsapp/campaigns/c1/launch", "POST", demo)).toEqual({ kind: "refuse" });
   });
 });
