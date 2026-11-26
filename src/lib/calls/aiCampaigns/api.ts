@@ -18,6 +18,7 @@ import {
   type AiContactStatus,
   type AiStepRunKind,
 } from "./contract";
+import type { AiCampaignCaller } from "./dialer";
 
 export const AI_CAMPAIGN_MAX_INSTRUCTIONS = 4_000;
 export const AI_CAMPAIGN_MAX_BOOKING_MESSAGE = 1_000;
@@ -46,6 +47,8 @@ export type AiCampaignSummary = {
   state: AiCampaignState;
   launchedAt: string | null;
   goal: AiCampaignGoal;
+  /** Who talks on its calls: the AI agent, or a rep through the dialer (dialer.ts). */
+  caller: AiCampaignCaller;
   createdAt: string;
   numbers: AiCampaignNumber[];
   leads: number;
@@ -69,7 +72,12 @@ export type AiCampaignDetail = AiCampaignSummary &
 
 export type ListAiCampaignsResponse = { campaigns: AiCampaignSummary[] };
 
-export type CreateAiCampaignRequest = { name: string; description?: string | null };
+export type CreateAiCampaignRequest = {
+  name: string;
+  description?: string | null;
+  /** Fixed at creation; default "agent". */
+  caller?: AiCampaignCaller;
+};
 
 export type UpdateAiCampaignRequest = {
   name?: string;
@@ -245,13 +253,15 @@ export type AiLaunchCheck = {
   goal: AiCampaignGoal;
   bookingUrl: string | null;
   leads: number;
+  /** A rep campaign needs no instructions: they are the rep's optional call script. */
+  caller?: AiCampaignCaller;
 };
 
 /** Why a campaign cannot launch yet, or null. The API runs the same check. */
 export function aiLaunchBlocker(input: AiLaunchCheck): string | null {
   if (input.numbers === 0) return "Choose at least one calling number";
   if (!input.steps.some((step) => step.kind === "call")) return "Add at least one call to the sequence";
-  if (!input.instructions.trim()) return "Write the campaign instructions (what every call is about)";
+  if (input.caller !== "rep" && !input.instructions.trim()) return "Write the campaign instructions (what every call is about)";
   if (input.goal !== "human_callback" && !input.bookingUrl) return "Add the booking link, or set the goal to hand over to the team";
   if (input.leads === 0) return "Add at least one lead";
   return null;

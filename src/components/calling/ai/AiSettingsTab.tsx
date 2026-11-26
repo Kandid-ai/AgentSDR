@@ -165,6 +165,7 @@ export function AiSettingsTab({
   }
 
   const launched = campaign.state !== "draft";
+  const rep = campaign.caller === "rep";
 
   return (
     <div className="space-y-4">
@@ -193,15 +194,19 @@ export function AiSettingsTab({
             })}
           </div>
 
-          <div className="mt-5">
-            <label className="mb-1.5 block text-label-sm text-text-strong-950">Knowledge</label>
-            <KnowledgePicker value={draft.knowledgeIds} onChange={(ids) => set("knowledgeIds", ids)} />
-          </div>
+          {!rep && (
+            <div className="mt-5">
+              <label className="mb-1.5 block text-label-sm text-text-strong-950">Knowledge</label>
+              <KnowledgePicker value={draft.knowledgeIds} onChange={(ids) => set("knowledgeIds", ids)} />
+            </div>
+          )}
 
           <div className="mt-5">
-            <label htmlFor="ai-instructions" className="mb-1.5 block text-label-sm text-text-strong-950">Campaign instructions</label>
+            <label htmlFor="ai-instructions" className="mb-1.5 block text-label-sm text-text-strong-950">{rep ? "Call script" : "Campaign instructions"}</label>
             <p className="mb-2 text-paragraph-xs text-text-sub-600">
-              What every call in this campaign is about, on top of the Knowledge above: who you are calling, what you offer them, what to find out. Each call step can add its own instructions on top.
+              {rep
+                ? "Shown to you while calling. Optional."
+                : "What every call in this campaign is about, on top of the Knowledge above: who you are calling, what you offer them, what to find out. Each call step can add its own instructions on top."}
             </p>
             <Textarea.Root
               id="ai-instructions"
@@ -217,73 +222,89 @@ export function AiSettingsTab({
         </FramePanel>
       </Frame>
 
-      <Frame>
-        <FrameHeader title="The agent" description="How the agent introduces itself. Every call in this campaign uses the same name and voice, so a lead hears one person." />
-        <FramePanel>
-          <div className="grid gap-4 sm:grid-cols-2">
+      {rep ? (
+        <Frame>
+          <FrameHeader title="Your name" description="Used as {{agentName}} in the messages this campaign sends." />
+          <FramePanel>
             <TextField
-              label="Agent name"
+              label="Your name"
               value={draft.agentName}
               onChange={(value) => set("agentName", value)}
               placeholder={DEFAULT_AGENT_NAME}
               maxLength={MAX_AGENT_NAME_CHARS + 10}
               aria-invalid={nameTooLong || undefined}
             />
-            <div>
-              <label className="mb-1.5 block text-label-sm text-text-strong-950">Voice engine</label>
-              <Select.Root size="small" value={draft.voiceEngine} onValueChange={(value) => set("voiceEngine", value as Draft["voiceEngine"])}>
-                <Select.Trigger aria-label="Voice engine"><Select.Value /></Select.Trigger>
-                <Select.Content>
-                  <Select.Item value="gemini">Gemini Live</Select.Item>
-                  <Select.Item value="elevenlabs" disabled={!elevenVoices && draft.voiceEngine !== "elevenlabs"}>ElevenLabs (fast, English)</Select.Item>
-                </Select.Content>
-              </Select.Root>
-              {elevenError && draft.voiceEngine === "gemini" ? (
-                <p className="mt-1 text-paragraph-xs text-text-sub-600">Connect ElevenLabs in Settings → AI provider to use it.</p>
-              ) : null}
-            </div>
-            {draft.voiceEngine === "gemini" ? (
+          </FramePanel>
+        </Frame>
+      ) : (
+        <Frame>
+          <FrameHeader title="The agent" description="How the agent introduces itself. Every call in this campaign uses the same name and voice, so a lead hears one person." />
+          <FramePanel>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TextField
+                label="Agent name"
+                value={draft.agentName}
+                onChange={(value) => set("agentName", value)}
+                placeholder={DEFAULT_AGENT_NAME}
+                maxLength={MAX_AGENT_NAME_CHARS + 10}
+                aria-invalid={nameTooLong || undefined}
+              />
               <div>
-                <label className="mb-1.5 block text-label-sm text-text-strong-950">Voice</label>
-                <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    <Select.Root size="small" value={draft.agentVoice} onValueChange={(value) => set("agentVoice", value)}>
-                      <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
-                      <Select.Content>
-                        <Select.Item value={DEFAULT_VOICE}>{accentFlag(null)} Default ({DEFAULT_AGENT_VOICE})</Select.Item>
-                        {AGENT_VOICES.map((voice) => <Select.Item key={voice.id} value={voice.id}>{accentFlag(null)} {voice.label}</Select.Item>)}
-                      </Select.Content>
-                    </Select.Root>
-                  </div>
-                  <VoicePreviewButton voice={draft.agentVoice} name={draft.agentName} />
-                </div>
-              </div>
-            ) : (
-              <div>
-                <label className="mb-1.5 block text-label-sm text-text-strong-950">ElevenLabs voice</label>
-                <Select.Root size="small" value={draft.elevenlabsVoice} onValueChange={(value) => set("elevenlabsVoice", value)} disabled={!elevenVoices}>
-                  <Select.Trigger aria-label="ElevenLabs voice"><Select.Value placeholder={elevenError ?? "Loading voices…"} /></Select.Trigger>
+                <label className="mb-1.5 block text-label-sm text-text-strong-950">Voice engine</label>
+                <Select.Root size="small" value={draft.voiceEngine} onValueChange={(value) => set("voiceEngine", value as Draft["voiceEngine"])}>
+                  <Select.Trigger aria-label="Voice engine"><Select.Value /></Select.Trigger>
                   <Select.Content>
-                    {!elevenVoices?.some((voice) => voice.id === DEFAULT_ELEVENLABS_VOICE) ? (
-                      <Select.Item value={DEFAULT_ELEVENLABS_VOICE}>{accentFlag("indian")} Monika Sogam (default)</Select.Item>
-                    ) : null}
-                    {(elevenVoices ?? []).map((voice) => (
-                      <Select.Item key={voice.id} value={voice.id}>{elevenLabsVoiceLabel(voice)}</Select.Item>
-                    ))}
+                    <Select.Item value="gemini">Gemini Live</Select.Item>
+                    <Select.Item value="elevenlabs" disabled={!elevenVoices && draft.voiceEngine !== "elevenlabs"}>ElevenLabs (fast, English)</Select.Item>
                   </Select.Content>
                 </Select.Root>
-                {(() => {
-                  const preview = elevenVoices?.find((voice) => voice.id === draft.elevenlabsVoice)?.previewUrl;
-                  return preview ? <audio key={preview} controls preload="none" src={preview} className="mt-2 h-9 w-full" aria-label="Voice preview" /> : null;
-                })()}
-                <p className="mt-1 text-paragraph-xs text-text-sub-600">
-                  ElevenLabs answers in English only. A newly picked voice takes about three minutes to get ready after you save; calls in those minutes use Monika Sogam instead.
-                </p>
+                {elevenError && draft.voiceEngine === "gemini" ? (
+                  <p className="mt-1 text-paragraph-xs text-text-sub-600">Connect ElevenLabs in Settings → AI provider to use it.</p>
+                ) : null}
               </div>
-            )}
-          </div>
-        </FramePanel>
-      </Frame>
+              {draft.voiceEngine === "gemini" ? (
+                <div>
+                  <label className="mb-1.5 block text-label-sm text-text-strong-950">Voice</label>
+                  <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <Select.Root size="small" value={draft.agentVoice} onValueChange={(value) => set("agentVoice", value)}>
+                        <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
+                        <Select.Content>
+                          <Select.Item value={DEFAULT_VOICE}>{accentFlag(null)} Default ({DEFAULT_AGENT_VOICE})</Select.Item>
+                          {AGENT_VOICES.map((voice) => <Select.Item key={voice.id} value={voice.id}>{accentFlag(null)} {voice.label}</Select.Item>)}
+                        </Select.Content>
+                      </Select.Root>
+                    </div>
+                    <VoicePreviewButton voice={draft.agentVoice} name={draft.agentName} />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="mb-1.5 block text-label-sm text-text-strong-950">ElevenLabs voice</label>
+                  <Select.Root size="small" value={draft.elevenlabsVoice} onValueChange={(value) => set("elevenlabsVoice", value)} disabled={!elevenVoices}>
+                    <Select.Trigger aria-label="ElevenLabs voice"><Select.Value placeholder={elevenError ?? "Loading voices…"} /></Select.Trigger>
+                    <Select.Content>
+                      {!elevenVoices?.some((voice) => voice.id === DEFAULT_ELEVENLABS_VOICE) ? (
+                        <Select.Item value={DEFAULT_ELEVENLABS_VOICE}>{accentFlag("indian")} Monika Sogam (default)</Select.Item>
+                      ) : null}
+                      {(elevenVoices ?? []).map((voice) => (
+                        <Select.Item key={voice.id} value={voice.id}>{elevenLabsVoiceLabel(voice)}</Select.Item>
+                      ))}
+                    </Select.Content>
+                  </Select.Root>
+                  {(() => {
+                    const preview = elevenVoices?.find((voice) => voice.id === draft.elevenlabsVoice)?.previewUrl;
+                    return preview ? <audio key={preview} controls preload="none" src={preview} className="mt-2 h-9 w-full" aria-label="Voice preview" /> : null;
+                  })()}
+                  <p className="mt-1 text-paragraph-xs text-text-sub-600">
+                    ElevenLabs answers in English only. A newly picked voice takes about three minutes to get ready after you save; calls in those minutes use Monika Sogam instead.
+                  </p>
+                </div>
+              )}
+            </div>
+          </FramePanel>
+        </Frame>
+      )}
 
       {!handover && (
         <Frame>
@@ -308,7 +329,7 @@ export function AiSettingsTab({
       )}
 
       <Frame>
-        <FrameHeader title="Call-backs" description="When a lead asks to be called later, the agent calls back at the time they gave." />
+        <FrameHeader title="Call-backs" description={rep ? "When a lead asks to be called later, they come back to your dialer at the time they gave." : "When a lead asks to be called later, the agent calls back at the time they gave."} />
         <FramePanel>
           <label className="mb-1.5 block text-label-sm text-text-strong-950" htmlFor="ai-callbacks">Most call-backs per lead</label>
           <Select.Root size="small" value={String(draft.maxCallbacks)} onValueChange={(value) => set("maxCallbacks", Number(value))}>

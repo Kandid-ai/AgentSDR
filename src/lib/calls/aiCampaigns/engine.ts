@@ -15,6 +15,10 @@ import "server-only";
  *      most urgent due lead's next step (a call through startCall, or a
  *      WhatsApp through queueStationMessage).
  *
+ * A rep's campaign (ai_caller 'rep', dialer.ts) is settled and sends its
+ * WhatsApp steps here too, but its calls are never placed by the tick: only
+ * the rep's dialer places them (dialer.server.ts), through claimStep below.
+ *
  * Safety: a step is claimed by inserting its call_campaign_step_runs row
  * (unique per lead and step key) before anything happens, and the number is
  * reserved by moving its next_call_at in the same transaction, so a crash or
@@ -48,6 +52,7 @@ import {
   bookingLinkFor,
   callResultFor,
   dailyCallLimit,
+  REP_OUTCOME_GRACE_MS,
   isOpenAiStatus,
   newBookingCode,
   plannedAction,
@@ -56,6 +61,7 @@ import {
   type AiDecision,
   type AiEngineCampaign,
   type AiEngineContact,
+  type AiPlannedAction,
 } from "./engineRules";
 
 export type AiCallingTickResult = {
@@ -66,9 +72,9 @@ export type AiCallingTickResult = {
   failed: number;
 };
 
-type CampaignRow = typeof callCampaigns.$inferSelect;
-type ContactRow = typeof callCampaignContacts.$inferSelect;
-type StationRow = typeof callingStations.$inferSelect;
+export type CampaignRow = typeof callCampaigns.$inferSelect;
+export type ContactRow = typeof callCampaignContacts.$inferSelect;
+export type StationRow = typeof callingStations.$inferSelect;
 type RunRow = typeof callCampaignStepRuns.$inferSelect;
 
 /** A step started this long ago with no call or message recorded on it crashed mid-start. */
@@ -123,15 +129,20 @@ export async function aiCallingOrganizationIds(): Promise<string[]> {
 }
 
 async function tickOrganization(result: AiCallingTickResult, now: Date): Promise<void> {
+  await settleOrganization(result);
+  await act(result, now);
+}
+
+/** Steps 1 and 2 of the tick, in the current organization: the dialer runs them before it picks the next call. */
+export async function settleOrganization(result: AiCallingTickResult = { organizations: 0, settled: 0, calls: 0, messages: 0, failed: 0 }): Promise<void> {
   await expireStaleCalls();
   await settleOpenRuns(result, new Date());
-  await act(result, now);
 }
 
 // --- shared helpers -------------------------------------------------------------------
 
 /** call_campaign_contacts belongs to its campaign's organization. */
-function contactInScope() {
+export function contactInScope() {
   return inArray(callCampaignContacts.campaignId, db.select({ id: callCampaigns.id }).from(callCampaigns).where(inOrg(callCampaigns)));
 }
 
@@ -145,8 +156,9 @@ function liveAiCampaign() {
   );
 }
 
-function engineCampaign(campaign: CampaignRow): AiEngineCampaign {
+export function engineCampaign(campaign: CampaignRow): AiEngineCampaign {
   return {
+    caller: campaign.aiCaller,
     goal: campaign.aiGoal,
     bookingUrl: campaign.aiBookingUrl?.trim() || null,
     maxCallbacks: campaign.aiMaxCallbacks,
@@ -155,7 +167,7 @@ function engineCampaign(campaign: CampaignRow): AiEngineCampaign {
   };
 }
 
-async function bookingLinkSent(contactId: string): Promise<boolean> {
+export async function bookingLinkSent(contactId: string): Promise<boolean> {
   const [row] = await db
     .select({ id: callCampaignStepRuns.id })
     .from(callCampaignStepRuns)
@@ -164,7 +176,7 @@ async function bookingLinkSent(contactId: string): Promise<boolean> {
   return !!row;
 }
 
-function engineContact(contact: ContactRow, linkSent: boolean, status: AiContactStatus = contact.aiStatus ?? "queued"): AiEngineContact {
+export function engineContact(contact: ContactRow, linkSent: boolean, status: AiContactStatus = contact.aiStatus ?? "queued"): AiEngineContact {
   return {
     status,
     step: contact.aiStep,
@@ -195,7 +207,7 @@ function reopensLead(decision: AiDecision): boolean {
   return Boolean(decision.sendBookingLink || decision.status === "callback" || decision.handoff);
 }
 
-async function writeDecision(
+export async function writeDecision(
   executor: Pick<typeof db, "update">,
   contactId: string,
   decision: AiDecision,
@@ -229,15 +241,15 @@ async function writeDecision(
   return rows.length > 0;
 }
 
-async function setDoNotContact(personId: string): Promise<void> {
+async function setDoNotContact(personId: string, byRep: boolean): Promise<void> {
   try {
     await withCrmTransaction((tx) =>
       setPersonDoNotContactInTransaction(tx, {
         personId,
-        reason: "Asked on an AI campaign call not to be contacted",
+        reason: byRep ? "Asked on a call not to be contacted (marked by the rep)" : "Asked on an AI campaign call not to be contacted",
         source: "inbound_request",
-        actorType: "ai",
-        actorRef: "ai-calling-campaign",
+        actorType: byRep ? "human" : "ai",
+        actorRef: byRep ? "rep-dialer" : "ai-calling-campaign",
       }),
     );
   } catch (error) {
@@ -371,7 +383,8 @@ async function settleCall(row: OpenRun, now: Date): Promise<boolean> {
     return settled !== null;
   }
 
-  const result = callResultFor(call, now);
+  // A rep writes the outcome after hanging up (dialer.ts): give the wrap-up time before reading the call as unreviewed.
+  const result = callResultFor(call, now, campaign.aiCaller === "rep" ? { outcomeGraceMs: REP_OUTCOME_GRACE_MS } : {});
   if (result === "wait") {
     // The lead stopped (a reply, a booking) while its call still waits for a worker: do not place it.
     if (!isOpenAiStatus(contact.aiStatus) && call.status === "pending" && !call.claimedAt) {
@@ -389,7 +402,7 @@ async function settleCall(row: OpenRun, now: Date): Promise<boolean> {
   const inbound = isOffSequenceCallKey(run.stepKey);
   const settled = await finishRun(
     row,
-    { status: result === "error" ? "failed" : "done", result, error: call.error },
+    { status: result === "error" || result === "cancelled" ? "failed" : "done", result, error: call.error },
     (state) => (inbound && result !== "conversation" ? null : afterCall(state, result, outcome, engineCampaign(campaign), now, call.error)),
     now,
     { reopen: inbound && result === "conversation" },
@@ -397,7 +410,7 @@ async function settleCall(row: OpenRun, now: Date): Promise<boolean> {
   if (!settled) return false;
 
   // A fact about the person whatever the lead's status now.
-  if (result === "conversation" && outcome?.outcome === "do_not_contact") await setDoNotContact(contact.personId);
+  if (result === "conversation" && outcome?.outcome === "do_not_contact") await setDoNotContact(contact.personId, campaign.aiCaller === "rep");
   // Always: the call's own finish (applyCallResultToContact) may have moved the follow-up.
   await syncCallFollowUpSafely(contact.personId);
   if (settled.decision?.sendBookingLink) {
@@ -612,38 +625,75 @@ export async function candidateStations(campaignIds: string[], dayStart: Date, n
 }
 
 /**
+ * Whether a lead's next action is a call: a call-back, or its sequence's
+ * current step is a call. Read in SQL beside call_campaigns (aliased `own_campaign`).
+ */
+export const nextActionIsCall = sql`(${callCampaignContacts.aiStatus} = 'callback'
+  or coalesce((case when ${callCampaignContacts.aiStatus} = 'chasing' then own_campaign.ai_chase_steps else own_campaign.ai_steps end)
+       -> ${callCampaignContacts.aiStep} ->> 'kind', '') = 'call')`;
+
+/** The conditions every due lead a number may act for meets, the engine's and the dialer's alike. */
+function dueContactConditions(stationId: string, campaignIds: string[], now: Date, exclude: string[]) {
+  return and(
+    inArray(callCampaignContacts.campaignId, campaignIds),
+    contactInScope(),
+    inArray(callCampaignContacts.aiStatus, [...AI_OPEN_STATUSES]),
+    lte(callCampaignContacts.aiNextAt, now),
+    exclude.length ? notInArray(callCampaignContacts.id, exclude) : undefined,
+    sql`exists (select 1 from ${callCampaignStations} own
+                 where own.campaign_id = ${callCampaignContacts.campaignId} and own.station_id = ${stationId})`,
+    sql`(${callCampaignContacts.aiStationId} is null
+         or ${callCampaignContacts.aiStationId} = ${stationId}
+         or not exists (select 1 from ${callCampaignStations} kept
+                         join ${callingStations} kept_station on kept_station.id = kept.station_id
+                        where kept.campaign_id = ${callCampaignContacts.campaignId}
+                          and kept.station_id = ${callCampaignContacts.aiStationId}
+                          and kept_station.status <> 'banned'))`,
+    sql`not exists (select 1 from ${callCampaignStepRuns} running
+                     where running.contact_id = ${callCampaignContacts.id} and running.status = 'started')`,
+    // A trial call placed by hand from the lead's side sheet is still open.
+    sql`not exists (select 1 from ${callSessions} trial
+                     where trial.campaign_contact_id = ${callCampaignContacts.id} and trial.status in ('pending', 'in_progress'))`,
+  );
+}
+
+/** Call-backs, then the chase, then the reach sequence, then new leads. */
+const urgency = sql`case ${callCampaignContacts.aiStatus} when 'callback' then 0 when 'chasing' then 1 when 'reaching' then 2 else 3 end`;
+
+/**
  * The most urgent due lead this number may act for: call-backs, then the
  * chase, then the reach sequence, then new leads; oldest due first. A lead
  * keeps the number that first called it, unless that number was banned or
- * taken off the campaign.
+ * taken off the campaign. A rep's campaign's calls are left to its dialer.
  */
 export async function pickDueContact(stationId: string, campaignIds: string[], now: Date, exclude: string[]): Promise<ContactRow | null> {
   const [row] = await db
     .select({ contact: callCampaignContacts })
     .from(callCampaignContacts)
+    .innerJoin(sql`${callCampaigns} own_campaign`, sql`own_campaign.id = ${callCampaignContacts.campaignId}`)
     .where(and(
-      inArray(callCampaignContacts.campaignId, campaignIds),
-      contactInScope(),
-      inArray(callCampaignContacts.aiStatus, [...AI_OPEN_STATUSES]),
-      lte(callCampaignContacts.aiNextAt, now),
-      exclude.length ? notInArray(callCampaignContacts.id, exclude) : undefined,
-      sql`exists (select 1 from ${callCampaignStations} own
-                   where own.campaign_id = ${callCampaignContacts.campaignId} and own.station_id = ${stationId})`,
-      sql`(${callCampaignContacts.aiStationId} is null
-           or ${callCampaignContacts.aiStationId} = ${stationId}
-           or not exists (select 1 from ${callCampaignStations} kept
-                           join ${callingStations} kept_station on kept_station.id = kept.station_id
-                          where kept.campaign_id = ${callCampaignContacts.campaignId}
-                            and kept.station_id = ${callCampaignContacts.aiStationId}
-                            and kept_station.status <> 'banned'))`,
-      sql`not exists (select 1 from ${callCampaignStepRuns} running
-                       where running.contact_id = ${callCampaignContacts.id} and running.status = 'started')`,
-      // A trial call placed by hand from the lead's side sheet is still open.
-      sql`not exists (select 1 from ${callSessions} trial
-                       where trial.campaign_contact_id = ${callCampaignContacts.id} and trial.status in ('pending', 'in_progress'))`,
+      dueContactConditions(stationId, campaignIds, now, exclude),
+      sql`not (own_campaign.ai_caller = 'rep' and ${nextActionIsCall})`,
     ))
+    .orderBy(urgency, asc(callCampaignContacts.aiNextAt), asc(callCampaignContacts.createdAt))
+    .limit(1);
+  return row?.contact ?? null;
+}
+
+/**
+ * The dialer's next call on this number (dialer.server.ts): the most urgent
+ * due lead of the campaign whose next action is a call — `prefer` first (the
+ * lead just called, for an instant redial).
+ */
+export async function pickDialerContact(stationId: string, campaignId: string, now: Date, exclude: string[], prefer: string | null): Promise<ContactRow | null> {
+  const [row] = await db
+    .select({ contact: callCampaignContacts })
+    .from(callCampaignContacts)
+    .innerJoin(sql`${callCampaigns} own_campaign`, sql`own_campaign.id = ${callCampaignContacts.campaignId}`)
+    .where(and(dueContactConditions(stationId, [campaignId], now, exclude), nextActionIsCall))
     .orderBy(
-      sql`case ${callCampaignContacts.aiStatus} when 'callback' then 0 when 'chasing' then 1 when 'reaching' then 2 else 3 end`,
+      prefer ? sql`(${callCampaignContacts.id} = ${prefer}) desc` : sql`1`,
+      urgency,
       asc(callCampaignContacts.aiNextAt),
       asc(callCampaignContacts.createdAt),
     )
@@ -653,7 +703,7 @@ export async function pickDueContact(stationId: string, campaignIds: string[], n
 
 type PickOutcome = "acted" | "continue" | "stop";
 
-async function actForStation(
+export async function actForStation(
   station: StationRow,
   campaigns: Map<string, CampaignRow>,
   callsAllowed: boolean,
@@ -741,69 +791,12 @@ async function actForContact(
 
   // Claim: reserve the number (its next_call_at), lock the lead, insert the step run.
   const gapMs = plan.kind === "call" ? pickInRange(gapMinutes) * 60_000 : MESSAGE_GAP_MS;
-  const claim = await db.transaction(async (tx) => {
-    const [reserved] = await tx
-      .select({ id: callingStations.id })
-      .from(callingStations)
-      .where(and(
-        inOrg(callingStations),
-        eq(callingStations.id, station.id),
-        or(isNull(callingStations.nextCallAt), lte(callingStations.nextCallAt, now)),
-      ))
-      .for("update", { skipLocked: true });
-    if (!reserved) return { kind: "station_taken" as const };
-    const [locked] = await tx
-      .select({ id: callCampaignContacts.id })
-      .from(callCampaignContacts)
-      .where(and(
-        contactInScope(),
-        eq(callCampaignContacts.id, contact.id),
-        eq(callCampaignContacts.aiStatus, state.status),
-        eq(callCampaignContacts.aiStep, contact.aiStep),
-        eq(callCampaignContacts.aiFailures, contact.aiFailures),
-        eq(callCampaignContacts.aiCallbacks, contact.aiCallbacks),
-        lte(callCampaignContacts.aiNextAt, now),
-      ))
-      .for("update", { skipLocked: true });
-    if (!locked) return { kind: "lost" as const };
-    const [run] = await tx
-      .insert(callCampaignStepRuns)
-      .values({ contactId: contact.id, stepKey: plan.stepKey, kind: plan.kind, stationId: station.id })
-      .onConflictDoNothing()
-      .returning();
-    if (!run) {
-      const [existing] = await tx
-        .select()
-        .from(callCampaignStepRuns)
-        .where(and(eq(callCampaignStepRuns.contactId, contact.id), eq(callCampaignStepRuns.stepKey, plan.stepKey)))
-        .limit(1);
-      return { kind: "existing" as const, run: existing ?? null };
-    }
-    await tx
-      .update(callingStations)
-      .set({
-        nextCallAt: new Date(now.getTime() + gapMs),
-        ...(plan.kind === "call" && !station.automationStartedAt ? { automationStartedAt: now } : {}),
-        updatedAt: now,
-      })
-      .where(and(inOrg(callingStations), eq(callingStations.id, station.id)));
-    await tx
-      .update(callCampaignContacts)
-      .set({ aiStatus: statusWhenStarted(state.status), aiStationId: station.id, updatedAt: now })
-      .where(and(contactInScope(), eq(callCampaignContacts.id, contact.id)));
-    return { kind: "claimed" as const, run };
-  });
+  const claim = await claimStep({ station, contact, state, plan, now, reserve: { nextCallAt: new Date(now.getTime() + gapMs) } });
 
   if (claim.kind === "station_taken") return "stop";
   if (claim.kind === "lost") return "continue";
   if (claim.kind === "existing") {
-    // The step already ran but the lead was not moved past it (edited back, or a crash): move it on, never repeat it.
-    if (claim.run && claim.run.status !== "started") {
-      const decision = claim.run.kind === "call"
-        ? afterCall(state, "no_answer", null, settings, now)
-        : afterMessage(state, true, settings, now);
-      if (await writeDecision(db, contact.id, decision, now)) await syncCallFollowUpSafely(contact.personId);
-    }
+    await moveOnFromExistingRun(claim.run, contact, state, settings, now);
     return "continue";
   }
 
@@ -839,12 +832,119 @@ async function actForContact(
   return "acted";
 }
 
-function decisionOf(state: AiEngineContact): AiDecision {
+export type StepClaim =
+  | { kind: "station_taken" }
+  | { kind: "lost" }
+  | { kind: "existing"; run: RunRow | null }
+  | { kind: "claimed"; run: RunRow };
+
+/**
+ * Claims a lead's next step on a number in one transaction: locks the number
+ * (the engine also needs its gap to have passed, and moves it on by
+ * `reserve.nextCallAt`; the dialer instead needs it free of calls), locks the
+ * lead in the state it was read in, inserts the step run (unique per lead and
+ * step key) and pins the lead to the number.
+ */
+export async function claimStep(input: {
+  station: StationRow;
+  contact: ContactRow;
+  state: AiEngineContact;
+  plan: Extract<AiPlannedAction, { stepKey: string }>;
+  now: Date;
+  /** The engine: the number's gap must have passed, and it is moved on to this. */
+  reserve?: { nextCallAt: Date };
+  /** The dialer: the number must have no cloud call open or call step running (it ignores the gap). */
+  requireIdle?: boolean;
+}): Promise<StepClaim> {
+  const { station, contact, state, plan, now } = input;
+  return db.transaction(async (tx) => {
+    const [reserved] = await tx
+      .select({ id: callingStations.id })
+      .from(callingStations)
+      .where(and(
+        inOrg(callingStations),
+        eq(callingStations.id, station.id),
+        input.reserve ? or(isNull(callingStations.nextCallAt), lte(callingStations.nextCallAt, now)) : undefined,
+      ))
+      .for("update", { skipLocked: true });
+    if (!reserved) return { kind: "station_taken" as const };
+    if (input.requireIdle) {
+      const [busy] = await tx
+        .select({ id: callSessions.id })
+        .from(callSessions)
+        .where(and(
+          inOrg(callSessions),
+          eq(callSessions.stationId, station.id),
+          eq(callSessions.mode, "agent_cloud"),
+          inArray(callSessions.status, ["pending", "in_progress"]),
+        ))
+        .limit(1);
+      const [running] = busy
+        ? [busy]
+        : await tx
+            .select({ id: callCampaignStepRuns.id })
+            .from(callCampaignStepRuns)
+            .where(and(eq(callCampaignStepRuns.stationId, station.id), eq(callCampaignStepRuns.status, "started"), eq(callCampaignStepRuns.kind, "call")))
+            .limit(1);
+      if (running) return { kind: "station_taken" as const };
+    }
+    const [locked] = await tx
+      .select({ id: callCampaignContacts.id })
+      .from(callCampaignContacts)
+      .where(and(
+        contactInScope(),
+        eq(callCampaignContacts.id, contact.id),
+        eq(callCampaignContacts.aiStatus, state.status),
+        eq(callCampaignContacts.aiStep, contact.aiStep),
+        eq(callCampaignContacts.aiFailures, contact.aiFailures),
+        eq(callCampaignContacts.aiCallbacks, contact.aiCallbacks),
+        lte(callCampaignContacts.aiNextAt, now),
+      ))
+      .for("update", { skipLocked: true });
+    if (!locked) return { kind: "lost" as const };
+    const [run] = await tx
+      .insert(callCampaignStepRuns)
+      .values({ contactId: contact.id, stepKey: plan.stepKey, kind: plan.kind, stationId: station.id })
+      .onConflictDoNothing()
+      .returning();
+    if (!run) {
+      const [existing] = await tx
+        .select()
+        .from(callCampaignStepRuns)
+        .where(and(eq(callCampaignStepRuns.contactId, contact.id), eq(callCampaignStepRuns.stepKey, plan.stepKey)))
+        .limit(1);
+      return { kind: "existing" as const, run: existing ?? null };
+    }
+    await tx
+      .update(callingStations)
+      .set({
+        ...(input.reserve ? { nextCallAt: input.reserve.nextCallAt } : {}),
+        ...(plan.kind === "call" && !station.automationStartedAt ? { automationStartedAt: now } : {}),
+        ...(plan.kind === "call" && input.requireIdle ? { lastCallAt: now } : {}),
+        updatedAt: now,
+      })
+      .where(and(inOrg(callingStations), eq(callingStations.id, station.id)));
+    await tx
+      .update(callCampaignContacts)
+      .set({ aiStatus: statusWhenStarted(state.status), aiStationId: station.id, updatedAt: now })
+      .where(and(contactInScope(), eq(callCampaignContacts.id, contact.id)));
+    return { kind: "claimed" as const, run };
+  });
+}
+
+/** A claimed step that already ran but the lead was not moved past it (edited back, or a crash): move it on, never repeat it. */
+export async function moveOnFromExistingRun(run: RunRow | null, contact: ContactRow, state: AiEngineContact, settings: AiEngineCampaign, now: Date): Promise<void> {
+  if (!run || run.status === "started") return;
+  const decision = run.kind === "call" ? afterCall(state, "no_answer", null, settings, now) : afterMessage(state, true, settings, now);
+  if (await writeDecision(db, contact.id, decision, now)) await syncCallFollowUpSafely(contact.personId);
+}
+
+export function decisionOf(state: AiEngineContact): AiDecision {
   return { status: state.status, step: state.step, nextAt: null, callbacks: state.callbacks, failures: state.failures };
 }
 
 /** The step could not even start: the run fails, and the lead retries (or fails on a bad number). */
-async function failStart(
+export async function failStart(
   runId: string,
   contact: ContactRow,
   state: AiEngineContact,

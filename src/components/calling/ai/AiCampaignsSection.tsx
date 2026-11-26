@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RiAddLine, RiRobot2Line } from "@remixicon/react";
+import { RiAddLine, RiPhoneLine, RiRobot2Line } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Table from "@/components/alignui/table";
 import { ErrorState } from "@/components/analytics/kit/ErrorState";
@@ -15,9 +15,10 @@ import type { AiCampaignSummary } from "@/lib/calls/aiCampaigns/api";
 import { listAiCampaigns } from "@/lib/calls/aiCampaigns/client";
 import { AI_CAMPAIGN_GOAL_LABELS } from "@/lib/calls/aiCampaigns/contract";
 import { cn } from "@/utils/cn";
-import { AiAgentBadge, AiCampaignStateBadge, errorText } from "./aiShared";
+import { AiCallerBadge, AiCampaignStateBadge, errorText } from "./aiShared";
 
 export const NEW_AI_CAMPAIGN_HREF = "/calling/campaigns/ai/new";
+export const NEW_REP_CAMPAIGN_HREF = "/calling/campaigns/ai/new?caller=rep";
 const num = "text-paragraph-sm tabular-nums text-text-strong-950";
 
 /** The AI agent campaigns: the Call campaigns page's list. */
@@ -45,13 +46,19 @@ export function AiCampaignsSection() {
   return (
     <Frame className="mt-5">
       <FrameHeader
-        title="AI agent campaigns"
-        description="The agent calls the leads itself from your calling numbers, follows up on WhatsApp, and hands over interested people."
+        title="Calling campaigns"
+        description="Either the AI agent or you call the leads from your calling numbers; WhatsApp follow-ups go out by themselves."
         actions={
-          <Button.Root variant="primary" mode="filled" size="small" onClick={() => router.push(NEW_AI_CAMPAIGN_HREF)}>
-            <Button.Icon as={RiAddLine} />
-            New AI campaign
-          </Button.Root>
+          <div className="flex flex-wrap gap-2">
+            <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => router.push(NEW_REP_CAMPAIGN_HREF)}>
+              <Button.Icon as={RiPhoneLine} />
+              New rep campaign
+            </Button.Root>
+            <Button.Root variant="primary" mode="filled" size="small" onClick={() => router.push(NEW_AI_CAMPAIGN_HREF)}>
+              <Button.Icon as={RiAddLine} />
+              New AI campaign
+            </Button.Root>
+          </div>
         }
       />
       <FramePanel className="overflow-x-auto p-2 sm:p-2">
@@ -66,8 +73,8 @@ export function AiCampaignsSection() {
           <EmptyState
             compact
             icon={RiRobot2Line}
-            title="No AI campaigns yet"
-            description="Set a goal, pick calling numbers and add leads. The agent follows your sequence of calls and WhatsApp messages."
+            title="No calling campaigns yet"
+            description="Set a goal, pick calling numbers and add leads. The AI agent or you follow your sequence of calls and WhatsApp messages."
             action={
               <Button.Root variant="primary" mode="filled" size="small" onClick={() => router.push(NEW_AI_CAMPAIGN_HREF)}>
                 <Button.Icon as={RiAddLine} />
@@ -98,7 +105,7 @@ export function AiCampaignsSection() {
                   <Table.Cell className="h-16 px-4">
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="truncate text-label-sm text-text-strong-950" title={campaign.name}>{campaign.name}</span>
-                      <AiAgentBadge />
+                      <AiCallerBadge caller={campaign.caller} />
                       <AiCampaignStateBadge state={campaign.state} size="small" />
                     </div>
                     <p className="mt-0.5 truncate text-paragraph-xs text-text-sub-600">{AI_CAMPAIGN_GOAL_LABELS[campaign.goal].label} · {campaign.stepCount} {campaign.stepCount === 1 ? "step" : "steps"}</p>

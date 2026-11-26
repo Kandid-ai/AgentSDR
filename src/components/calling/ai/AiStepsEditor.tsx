@@ -25,6 +25,7 @@ import {
   type AiCampaignStep,
 } from "@/lib/calls/aiCampaigns/contract";
 import { AI_MESSAGE_FIELDS, previewAiMessage, type AiStepStat } from "@/lib/calls/aiCampaigns/api";
+import type { AiCampaignCaller } from "@/lib/calls/aiCampaigns/dialer";
 import { formatDelay } from "@/components/whatsapp/campaigns/metrics";
 import { cn } from "@/utils/cn";
 
@@ -52,7 +53,9 @@ export function AiStepsEditor({
   stats,
   statsPhase,
   emptyText,
+  caller = "agent",
 }: {
+  caller?: AiCampaignCaller;
   steps: AiCampaignStep[];
   onChange: (steps: AiCampaignStep[]) => void;
   allowEmpty?: boolean;
@@ -64,6 +67,7 @@ export function AiStepsEditor({
   statsPhase: "reach" | "chase";
   emptyText: string;
 }) {
+  const rep = caller === "rep";
   const [units, setUnits] = useState<Record<string, Unit>>({});
   const [rehearsing, setRehearsing] = useState<{ stepId: string; mode: "voice" | "text" } | null>(null);
   const toggleRehearsal = (stepId: string, mode: "voice" | "text") =>
@@ -132,7 +136,7 @@ export function AiStepsEditor({
                   <Select.Root size="xsmall" value={step.kind} onValueChange={(value) => changeKind(step, value as AiCampaignStep["kind"])}>
                     <Select.Trigger className="w-44" aria-label={`Step ${index + 1} type`}><Select.Value /></Select.Trigger>
                     <Select.Content>
-                      <Select.Item value="call">AI call</Select.Item>
+                      <Select.Item value="call">{rep ? "Call" : "AI call"}</Select.Item>
                       <Select.Item value="message">WhatsApp message</Select.Item>
                     </Select.Content>
                   </Select.Root>
@@ -191,7 +195,7 @@ export function AiStepsEditor({
 
                 {step.kind === "call" ? (
                   <div className="mt-3">
-                    <label className="mb-1.5 block text-label-sm text-text-strong-950" htmlFor={`${step.id}-instructions`}>What is this call for?</label>
+                    <label className="mb-1.5 block text-label-sm text-text-strong-950" htmlFor={`${step.id}-instructions`}>{rep ? "Note for you on this call" : "What is this call for?"}</label>
                     <Textarea.Root
                       id={`${step.id}-instructions`}
                       simple
@@ -199,34 +203,40 @@ export function AiStepsEditor({
                       maxLength={AI_CAMPAIGN_MAX_INSTRUCTIONS_CHARS}
                       value={step.instructions}
                       onChange={(event) => patch(step.id, { instructions: event.target.value })}
-                      placeholder="On top of the campaign instructions: e.g. “Second try: mention you called yesterday.”"
+                      placeholder={rep ? "Shown to you before the call: e.g. “Second try: mention you called yesterday.”" : "On top of the campaign instructions: e.g. “Second try: mention you called yesterday.”"}
                     />
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button.Root
-                          variant="neutral"
-                          mode="stroke"
-                          size="xsmall"
-                          onClick={() => toggleRehearsal(step.id, "voice")}
-                          aria-expanded={rehearsing?.stepId === step.id && rehearsing.mode === "voice"}
-                        >
-                          <Button.Icon as={RiPhoneLine} />
-                          {rehearsing?.stepId === step.id && rehearsing.mode === "voice" ? "Close rehearsal call" : "Rehearsal call"}
-                        </Button.Root>
-                        <Button.Root
-                          variant="neutral"
-                          mode="ghost"
-                          size="xsmall"
-                          onClick={() => toggleRehearsal(step.id, "text")}
-                          aria-expanded={rehearsing?.stepId === step.id && rehearsing.mode === "text"}
-                        >
-                          <Button.Icon as={RiVoiceprintLine} />
-                          {rehearsing?.stepId === step.id && rehearsing.mode === "text" ? "Close" : "Rehearse by typing"}
-                        </Button.Root>
+                    {rep ? (
+                      <div className="mt-2 flex justify-end">
+                        <span className="text-paragraph-xs tabular-nums text-text-soft-400">{step.instructions.length}/{AI_CAMPAIGN_MAX_INSTRUCTIONS_CHARS}</span>
                       </div>
-                      <span className="text-paragraph-xs tabular-nums text-text-soft-400">{step.instructions.length}/{AI_CAMPAIGN_MAX_INSTRUCTIONS_CHARS}</span>
-                    </div>
-                    {rehearsing?.stepId === step.id && (
+                    ) : (
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button.Root
+                            variant="neutral"
+                            mode="stroke"
+                            size="xsmall"
+                            onClick={() => toggleRehearsal(step.id, "voice")}
+                            aria-expanded={rehearsing?.stepId === step.id && rehearsing.mode === "voice"}
+                          >
+                            <Button.Icon as={RiPhoneLine} />
+                            {rehearsing?.stepId === step.id && rehearsing.mode === "voice" ? "Close rehearsal call" : "Rehearsal call"}
+                          </Button.Root>
+                          <Button.Root
+                            variant="neutral"
+                            mode="ghost"
+                            size="xsmall"
+                            onClick={() => toggleRehearsal(step.id, "text")}
+                            aria-expanded={rehearsing?.stepId === step.id && rehearsing.mode === "text"}
+                          >
+                            <Button.Icon as={RiVoiceprintLine} />
+                            {rehearsing?.stepId === step.id && rehearsing.mode === "text" ? "Close" : "Rehearse by typing"}
+                          </Button.Root>
+                        </div>
+                        <span className="text-paragraph-xs tabular-nums text-text-soft-400">{step.instructions.length}/{AI_CAMPAIGN_MAX_INSTRUCTIONS_CHARS}</span>
+                      </div>
+                    )}
+                    {!rep && rehearsing?.stepId === step.id && (
                       <div className="mt-3 rounded-xl bg-bg-weak-50 p-3 ring-1 ring-inset ring-stroke-soft-200">
                         {!savedIds.has(step.id) && (
                           <p className="mb-2 text-paragraph-xs text-warning-dark">This step is new: save the sequence first so the rehearsal uses it.</p>

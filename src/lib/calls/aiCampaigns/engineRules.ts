@@ -13,6 +13,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { WeeklyHours } from "@/lib/channels/rules";
 import { isWithinWorkingHours, mailboxHoursFromWeekly } from "@/lib/outreach/workingHours";
 import type { AgentOutcome, CallStatus } from "../contract";
+import type { AiCampaignCaller } from "./dialer";
 import {
   AI_OPEN_STATUSES,
   type AiCallResult,
@@ -40,6 +41,11 @@ export const CALLBACK_DEFAULT_MS = 24 * HOUR_MS;
 export const CALLBACK_MIN_MS = 15 * MINUTE_MS;
 /** A recorded call without the agent's outcome yet: the outcome POST may still be on its way. */
 export const OUTCOME_GRACE_MS = 90_000;
+/**
+ * A rep's call (dialer.ts) the lead picked up, without the rep's wrap-up yet:
+ * they may still be writing it. Past this it goes to a person as unreviewed.
+ */
+export const REP_OUTCOME_GRACE_MS = 30 * MINUTE_MS;
 /** After the last chase message, how long they get to book before a person takes over. */
 export const CHASE_GRACE_MS = 24 * HOUR_MS;
 /**
@@ -60,6 +66,8 @@ export function isOpenAiStatus(status: AiContactStatus | null | undefined): bool
 // --- what the engine knows -----------------------------------------------------
 
 export type AiEngineCampaign = {
+  /** Who talks: a rep's campaign (dialer.ts) runs its steps with no minimum gap, so a redial can be instant. Default "agent". */
+  caller?: AiCampaignCaller;
   goal: AiCampaignGoal;
   bookingUrl: string | null;
   maxCallbacks: number;
@@ -149,18 +157,29 @@ function handoff(contact: AiEngineContact, followUpAt: Date, note?: string | nul
   return { ...settled(contact, "handoff", note), handoff: { followUpAt } };
 }
 
-function dueAfter(step: AiCampaignStep, from: Date): Date {
-  return new Date(from.getTime() + Math.max(MIN_STEP_GAP_MS, Math.max(0, step.delayHours) * HOUR_MS));
+/** The least time between two steps: none in a rep's campaign, where the rep is at the dialer and a redial is instant. */
+export function minStepGapMs(campaign: Pick<AiEngineCampaign, "caller">): number {
+  return campaign.caller === "rep" ? 0 : MIN_STEP_GAP_MS;
+}
+
+function dueAfter(step: AiCampaignStep, from: Date, campaign: Pick<AiEngineCampaign, "caller">): Date {
+  return new Date(from.getTime() + Math.max(minStepGapMs(campaign), Math.max(0, step.delayHours) * HOUR_MS));
 }
 
 /** Step `index` of a sequence, due its delay after `from`; null when there is none. */
-function stepAt(contact: AiEngineContact, status: "reaching" | "chasing", steps: readonly AiCampaignStep[], index: number, from: Date): AiDecision | null {
-  const step = steps[index];
+function stepAt(
+  contact: AiEngineContact,
+  status: "reaching" | "chasing",
+  campaign: AiEngineCampaign,
+  index: number,
+  from: Date,
+): AiDecision | null {
+  const step = (status === "chasing" ? campaign.chaseSteps : campaign.steps)[index];
   if (!step) return null;
   return {
     status,
     step: index,
-    nextAt: dueAfter(step, from),
+    nextAt: dueAfter(step, from, campaign),
     callbacks: contact.callbacks,
     failures: 0,
     note: null,
@@ -172,12 +191,12 @@ function stepAt(contact: AiEngineContact, status: "reaching" | "chasing", steps:
 function advance(contact: AiEngineContact, campaign: AiEngineCampaign, now: Date, ranMessage: boolean): AiDecision {
   if (contact.status === "chasing") {
     return (
-      stepAt(contact, "chasing", campaign.chaseSteps, contact.step + 1, now) ??
+      stepAt(contact, "chasing", campaign, contact.step + 1, now) ??
       // After a last message they get a day to book from it; after an unanswered call a person takes over now.
       handoff(contact, ranMessage ? new Date(now.getTime() + CHASE_GRACE_MS) : now, "Said yes, but has not booked")
     );
   }
-  return stepAt(contact, "reaching", campaign.steps, contact.step + 1, now) ?? settled(contact, "unreached", "The sequence ran out without a conversation");
+  return stepAt(contact, "reaching", campaign, contact.step + 1, now) ?? settled(contact, "unreached", "The sequence ran out without a conversation");
 }
 
 /** A worker error: the same step again in a while, or failed after MAX_STEP_FAILURES. */
@@ -194,6 +213,23 @@ function afterError(contact: AiEngineContact, now: Date, error: string | null): 
     callbacks: contact.callbacks,
     failures,
     note: message,
+    ...(contact.status === "chasing" ? { reviewAt: contact.reviewAt } : {}),
+  };
+}
+
+/**
+ * A call withdrawn before any number dialed it: no attempt was made, so the
+ * same step is due again at once. `failures` moves on only so the retry gets
+ * a fresh step key (retryKey); it is reset when the step settles.
+ */
+function notPlaced(contact: AiEngineContact, now: Date): AiDecision {
+  return {
+    status: statusWhenStarted(contact.status),
+    step: contact.step,
+    nextAt: now,
+    callbacks: contact.callbacks,
+    failures: contact.failures + 1,
+    note: "Cancelled before it rang",
     ...(contact.status === "chasing" ? { reviewAt: contact.reviewAt } : {}),
   };
 }
@@ -223,6 +259,7 @@ export function afterCall(
   error: string | null = null,
 ): AiDecision {
   if (result === "error") return afterError(contact, now, error);
+  if (result === "cancelled") return notPlaced(contact, now);
   if (result === "not_on_whatsapp") return settled(contact, "failed", "Not on WhatsApp");
 
   const kind = result === "conversation" ? outcome?.outcome ?? null : "no_response";
@@ -240,7 +277,7 @@ export function afterCall(
       }
       if (contact.bookingLinkSent) return handoff(contact, now, "Did not pick up the call-backs");
       return (
-        stepAt(contact, "reaching", campaign.steps, contact.step, now) ??
+        stepAt(contact, "reaching", campaign, contact.step, now) ??
         settled(contact, "unreached", "Did not pick up the call-backs")
       );
     }
@@ -254,7 +291,7 @@ export function afterCall(
       // They had the link already: keep chasing (a call-back during the chase returns to its step).
       if (contact.status === "chasing") return advance(contact, campaign, now, false);
       if (contact.bookingLinkSent) {
-        return stepAt(contact, "chasing", campaign.chaseSteps, contact.step, now) ?? handoff(contact, now, "Said yes, but has not booked");
+        return stepAt(contact, "chasing", campaign, contact.step, now) ?? handoff(contact, now, "Said yes, but has not booked");
       }
       if (campaign.goal === "human_callback") return handoff(contact, when ?? now, "Interested: wants to talk to the team");
       if (!campaign.bookingUrl) return handoff(contact, when ?? now, "Agreed to a meeting; the campaign has no booking link to send");
@@ -314,7 +351,7 @@ export function afterMessage(
     return {
       status: "chasing",
       step: 0,
-      nextAt: dueAfter(first, now),
+      nextAt: dueAfter(first, now, campaign),
       callbacks: contact.callbacks,
       failures: 0,
       note: "Booking link sent",
@@ -344,7 +381,12 @@ export type SettledCall = {
   agentOutcome: AgentOutcome | null;
   endedAt: Date | null;
   updatedAt: Date;
+  /** When a call worker took it; null: no number ever started it. */
+  claimedAt?: Date | null;
 };
+
+/** sessions.ts cancelCall's error on a call withdrawn before it connected. */
+export const CANCELLED_BEFORE_CONNECTED = /^Cancelled from AgentSDR before it connected/;
 
 /**
  * "wait" while the call is still open, or recorded but its outcome may still
@@ -352,7 +394,7 @@ export type SettledCall = {
  * "isn't on WhatsApp" as a failed call, and an upload that failed after the
  * lead picked up still means they spoke.
  */
-export function callResultFor(call: SettledCall, now: Date): AiCallResult | "wait" {
+export function callResultFor(call: SettledCall, now: Date, options: { outcomeGraceMs?: number } = {}): AiCallResult | "wait" {
   switch (call.status) {
     case "pending":
     case "in_progress":
@@ -361,9 +403,11 @@ export function callResultFor(call: SettledCall, now: Date): AiCallResult | "wai
       if (call.agentOutcome?.outcome === "no_response") return "no_answer";
       if (call.agentOutcome) return "conversation";
       const ended = (call.endedAt ?? call.updatedAt).getTime();
-      return now.getTime() - ended < OUTCOME_GRACE_MS ? "wait" : "conversation";
+      return now.getTime() - ended < (options.outcomeGraceMs ?? OUTCOME_GRACE_MS) ? "wait" : "conversation";
     }
     case "no_recording":
+      // Withdrawn before a worker took it: it never rang, so it is not an attempt.
+      if (call.claimedAt === null && call.error && CANCELLED_BEFORE_CONNECTED.test(call.error)) return "cancelled";
       return "no_answer";
     case "failed":
       if (call.error && /isn't on WhatsApp/i.test(call.error)) return "not_on_whatsapp";

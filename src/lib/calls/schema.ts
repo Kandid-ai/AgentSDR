@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { WeeklyHours } from "@/lib/channels/rules";
 import type { AiCallResult, AiCampaignGoal, AiCampaignStep, AiContactStatus, AiStepRunKind, AiStepRunStatus } from "./aiCampaigns/contract";
+import type { AiCampaignCaller } from "./aiCampaigns/dialer";
 import { crmRecords } from "@/lib/crm/schema";
 import { people } from "@/lib/leads/schema";
 import type {
@@ -185,6 +186,12 @@ export const callCampaigns = pgTable(
     aiVoiceEngine: text("ai_voice_engine").notNull().default("gemini").$type<"gemini" | "elevenlabs">(),
     /** The ElevenLabs voice id when the engine is ElevenLabs; null = the default voice. */
     aiElevenlabsVoice: text("ai_elevenlabs_voice"),
+    /**
+     * Who talks on its calls: the AI agent ('agent'), or a rep working it
+     * through the dialer ('rep'; src/lib/calls/aiCampaigns/dialer.ts). Fixed
+     * at creation. scripts/add-ai-campaign-caller.ts.
+     */
+    aiCaller: text("ai_caller").notNull().default("agent").$type<AiCampaignCaller>(),
     aiSteps: jsonb("ai_steps").$type<AiCampaignStep[]>().notNull().default([]),
     aiChaseSteps: jsonb("ai_chase_steps").$type<AiCampaignStep[]>().notNull().default([]),
     aiBookingUrl: text("ai_booking_url"),
@@ -209,6 +216,7 @@ export const callCampaigns = pgTable(
     check("call_campaigns_run_by_chk", sql`${table.runBy} IN ('rep', 'ai')`),
     check("call_campaigns_ai_goal_chk", sql`${table.aiGoal} IN ('book_meeting', 'human_callback', 'either')`),
     check("call_campaigns_ai_max_callbacks_chk", sql`${table.aiMaxCallbacks} BETWEEN 0 AND 3`),
+    check("call_campaigns_ai_caller_check", sql`${table.aiCaller} IN ('agent', 'rep')`),
   ],
 );
 

@@ -30,30 +30,36 @@ import { StatRow } from "@/components/page/StatRow";
 import type { AiCampaignDetail, AiCampaignStats } from "@/lib/calls/aiCampaigns/api";
 import { archiveAiCampaign, getAiCampaign, getAiCampaignStats, launchAiCampaign, updateAiCampaign } from "@/lib/calls/aiCampaigns/client";
 import { cn } from "@/utils/cn";
-import { AiAgentBadge, AiCampaignStateBadge, errorText } from "./aiShared";
+import { AiCallerBadge, AiCampaignStateBadge, errorText } from "./aiShared";
+import { DialerTab } from "./DialerTab";
 import { AiCampaignOverview } from "./AiCampaignOverview";
 import { AiLeadsTab } from "./AiLeadsTab";
 import { AiSequenceTab } from "./AiSequenceTab";
 import { AiSettingsTab } from "./AiSettingsTab";
 import { VoiceCompareTab } from "./VoiceCompareTab";
-import type { AiCampaignTab } from "./tabs";
+import { aiCampaignTabAvailable, defaultAiCampaignTab, type AiCampaignTab } from "./tabs";
 
 const REFRESH_MS = 30_000;
 const LIST = { href: "/calling/campaigns", label: "Call campaigns" };
 
-export function AiCampaignDetailClient({ campaignId, initialTab }: { campaignId: string; initialTab: AiCampaignTab }) {
+export function AiCampaignDetailClient({ campaignId, initialTab }: { campaignId: string; initialTab: AiCampaignTab | null }) {
   const router = useRouter();
   const pathname = usePathname();
   const dialogs = useDialogs();
-  const [tab, setTabState] = useState<AiCampaignTab>(initialTab);
+  const [requestedTab, setTabState] = useState<AiCampaignTab | null>(initialTab);
   const [campaign, setCampaign] = useState<AiCampaignDetail | null>(null);
   const [stats, setStats] = useState<AiCampaignStats | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // A rep's campaign opens on the Dialer, an agent's on the Overview; a tab the campaign does not have falls back to that.
+  const caller = campaign?.caller ?? "agent";
+  const home = defaultAiCampaignTab(caller);
+  const tab = requestedTab && aiCampaignTabAvailable(requestedTab, caller) ? requestedTab : home;
+
   const setTab = (next: AiCampaignTab) => {
     setTabState(next);
-    router.replace(next === "overview" ? pathname : `${pathname}?tab=${next}`, { scroll: false });
+    router.replace(next === home ? pathname : `${pathname}?tab=${next}`, { scroll: false });
   };
 
   const load = useCallback(async () => {
@@ -126,7 +132,7 @@ export function AiCampaignDetailClient({ campaignId, initialTab }: { campaignId:
     if (loadError) {
       return (
         <div className="mx-auto w-full max-w-[1440px]">
-          <PageHeader back={LIST} title="AI calling campaign" />
+          <PageHeader back={LIST} title="Calling campaign" />
           <EmptyState icon={RiErrorWarningLine} title="Could not load the campaign" description={loadError} action={<Button.Root variant="neutral" mode="stroke" size="small" onClick={() => void load()}>Try again</Button.Root>} />
         </div>
       );
@@ -142,6 +148,7 @@ export function AiCampaignDetailClient({ campaignId, initialTab }: { campaignId:
 
   const draft = campaign.state === "draft";
   const canLaunch = draft && !campaign.blocker;
+  const rep = campaign.caller === "rep";
   const numberNames = campaign.numbers.map((number) => number.name).join(", ");
 
   return (
@@ -152,7 +159,7 @@ export function AiCampaignDetailClient({ campaignId, initialTab }: { campaignId:
         badge={
           <>
             <AiCampaignStateBadge state={campaign.state} />
-            <AiAgentBadge />
+            <AiCallerBadge caller={campaign.caller} />
           </>
         }
         description={<span suppressHydrationWarning>{`Created ${new Date(campaign.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · ${campaign.stepCount} ${campaign.stepCount === 1 ? "step" : "steps"} in the sequence${campaign.description ? ` · ${campaign.description}` : ""}`}</span>}
@@ -202,10 +209,11 @@ export function AiCampaignDetailClient({ campaignId, initialTab }: { campaignId:
         value={tab}
         onChange={setTab}
         tabs={[
+          ...(rep ? [{ value: "dialer" as const, label: "Dialer", icon: RiPhoneLine }] : []),
           { value: "overview", label: "Overview", icon: RiBarChart2Line },
           { value: "leads", label: "Leads", icon: RiTeamLine, count: campaign.leads },
           { value: "sequence", label: "Sequence", icon: RiListOrdered2, count: campaign.stepCount },
-          { value: "compare", label: "Compare voices", icon: RiSpeakLine },
+          ...(rep ? [] : [{ value: "compare" as const, label: "Compare voices", icon: RiSpeakLine }]),
           { value: "settings", label: "Settings", icon: RiSettings3Line },
         ]}
       />
@@ -214,11 +222,17 @@ export function AiCampaignDetailClient({ campaignId, initialTab }: { campaignId:
       <div role="tabpanel" className="mt-6">
         {tab === "overview" && <AiCampaignOverview campaign={campaign} stats={stats} />}
         <div hidden={tab !== "leads"}>
-          <AiLeadsTab campaignId={campaign.id} counts={stats?.byStatus ?? null} total={campaign.leads} onChanged={() => void load()} />
+          <AiLeadsTab caller={campaign.caller} campaignId={campaign.id} counts={stats?.byStatus ?? null} total={campaign.leads} onChanged={() => void load()} />
         </div>
         <div hidden={tab !== "sequence"}>
           <AiSequenceTab campaign={campaign} stats={stats?.perStep} onSaved={() => void load()} />
         </div>
+        {/* Stays mounted so a running dialer is not stopped by a look at another tab. */}
+        {rep && (
+          <div hidden={tab !== "dialer"}>
+            <DialerTab campaign={campaign} onChanged={() => void load()} />
+          </div>
+        )}
         {tab === "compare" && <VoiceCompareTab campaign={campaign} />}
         <div hidden={tab !== "settings"}>
           <AiSettingsTab campaign={campaign} onSaved={() => void load()} onToggle={() => void toggle()} onArchive={() => void archive()} toggling={busy} />

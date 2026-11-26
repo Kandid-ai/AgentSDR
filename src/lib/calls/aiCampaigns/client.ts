@@ -23,6 +23,15 @@ import type {
 } from "./api";
 
 import type { BookingLinksResponse } from "./bookingLinks";
+import type {
+  DialerMessageRequest,
+  DialerMessageResponse,
+  DialerNextRequest,
+  DialerNextResponse,
+  DialerOverview,
+  DialerWrapUpRequest,
+  DialerWrapUpResponse,
+} from "./dialer";
 
 const BASE = "/api/calling/ai-campaigns";
 
@@ -73,3 +82,11 @@ export const aiLeadsUploadEndpoint = (id: string) => `${BASE}/${id}/leads/import
 export const listStationAiSettings = () => aiApi<StationAiSettingsResponse>("/api/calling/stations/ai-settings");
 export const updateStationAiSettings = (stationId: string, request: UpdateStationAiSettingsRequest) =>
   aiApi<{ settings: StationAiSettings }>(`/api/calling/stations/${stationId}/ai-settings`, json("PATCH", request));
+
+// --- the rep dialer (dialer.ts) ------------------------------------------------------------
+
+export const getDialerOverview = (id: string) => aiApi<DialerOverview>(`${BASE}/${id}/dialer`);
+/** Claims and queues the next call (talked on from this tab); see DialerNextResponse. */
+export const dialNext = (id: string, request: DialerNextRequest = {}) => aiApi<DialerNextResponse>(`${BASE}/${id}/dialer/next`, json("POST", request));
+export const wrapUpDialerCall = (id: string, request: DialerWrapUpRequest) => aiApi<DialerWrapUpResponse>(`${BASE}/${id}/dialer/wrap-up`, json("POST", request));
+export const sendDialerMessage = (id: string, request: DialerMessageRequest) => aiApi<DialerMessageResponse>(`${BASE}/${id}/dialer/message`, json("POST", request));

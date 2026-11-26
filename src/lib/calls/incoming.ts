@@ -72,6 +72,17 @@ async function decide(station: StationRow, { workerId, call }: WorkerIncomingCal
   // default persona, with none of that campaign's instructions (3–4 Nov 2026).
   const lastCall = await lastAgentCallTo(personId);
   const contact = await aiContactFor(personId, lastCall?.campaignContactId ?? null);
+  // A rep's campaign (aiCampaigns/dialer.ts): the agent never talks to its leads. It rings out,
+  // and the lead goes to the front of the rep's dialer as a call-back due now.
+  if (contact?.campaign.aiCaller === "rep") {
+    if (contact.campaign.aiLaunchedAt && isOpen(contact.contact.aiStatus)) {
+      await db
+        .update(callCampaignContacts)
+        .set({ aiStatus: "callback", aiCallbacks: sql`${callCampaignContacts.aiCallbacks} + 1`, aiNextAt: now, aiNote: "Called us back; call them first", updatedAt: now })
+        .where(and(eq(callCampaignContacts.id, contact.contact.id), sql`${callCampaignContacts.aiStatus} IN ${AI_OPEN_STATUSES}`));
+    }
+    return no("a rep's campaign lead: the rep calls them back");
+  }
   const persona = lastCall?.agentName
     ? { name: lastCall.agentName, voice: lastCall.agentVoice }
     : { name: contact?.campaign.aiAgentName ?? null, voice: contact?.campaign.aiAgentVoice ?? null };

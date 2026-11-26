@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/page/Skeletons";
 import { relativeTime } from "@/components/whatsapp/campaigns/metrics";
 import { AGENT_OUTCOME_LABELS } from "@/lib/calls/contract";
 import type { AiCampaignLead, AiLeadsImportResponse, ListAiLeadsResponse } from "@/lib/calls/aiCampaigns/api";
+import type { AiCampaignCaller } from "@/lib/calls/aiCampaigns/dialer";
 import { aiLeadsEndpoint, aiLeadsUploadEndpoint, listAiLeads, removeAiLead, updateAiLead } from "@/lib/calls/aiCampaigns/client";
 import { AI_CONTACT_STATUSES, AI_CONTACT_STATUS_LABELS, AI_OPEN_STATUSES, type AiContactStatus } from "@/lib/calls/aiCampaigns/contract";
 import { cn } from "@/utils/cn";
@@ -51,7 +52,9 @@ export function AiLeadsTab({
   counts,
   total,
   onChanged,
+  caller = "agent",
 }: {
+  caller?: AiCampaignCaller;
   campaignId: string;
   /** Leads per status, when the stats are loaded. */
   counts: Record<AiContactStatus, number> | null;
@@ -325,7 +328,7 @@ export function AiLeadsTab({
           }}
         />
       )}
-      {openId && <AiLeadDrawer campaignId={campaignId} contactId={openId} onClose={() => setOpenId(null)} onChanged={refreshAll} />}
+      {openId && <AiLeadDrawer caller={caller} campaignId={campaignId} contactId={openId} onClose={() => setOpenId(null)} onChanged={refreshAll} />}
     </Frame>
   );
 }

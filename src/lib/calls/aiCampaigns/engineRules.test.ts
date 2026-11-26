@@ -19,6 +19,9 @@ import {
   MIN_STEP_GAP_MS,
   parseCalcomEvent,
   plannedAction,
+  REP_OUTCOME_GRACE_MS,
+  retryKey,
+  reachKey,
   statusWhenStarted,
   withinCallingHours,
   type AiEngineCampaign,
@@ -483,5 +486,73 @@ describe("composeAgentBrief", () => {
     const long = composeAgentBrief({ campaignInstructions: "a".repeat(3_990), purpose: "reach", stepInstructions: "b".repeat(1_000) });
     expect(long.length).toBeLessThanOrEqual(4_000);
     expect(long.endsWith("b".repeat(1_000))).toBe(true);
+  });
+});
+
+describe("a rep's campaign (dialer)", () => {
+  const redial: AiCampaignStep[] = [
+    { id: "call-1", kind: "call", delayHours: 0, instructions: "" },
+    { id: "call-2", kind: "call", delayHours: 0, instructions: "Redial" },
+    { id: "message-1", kind: "message", delayHours: 0, body: "Hi {{firstName}}" },
+    { id: "call-3", kind: "call", delayHours: 24, instructions: "Next day" },
+  ];
+  const rep = campaign({ caller: "rep", steps: redial });
+
+  test("an unanswered call makes the redial due at once", () => {
+    const decision = afterCall(contact({ step: 0 }), "no_answer", null, rep, NOW);
+    expect(decision.step).toBe(1);
+    expect(decision.nextAt?.getTime()).toBe(NOW.getTime());
+  });
+
+  test("an agent's campaign keeps the minimum gap between steps", () => {
+    const decision = afterCall(contact({ step: 0 }), "no_answer", null, campaign({ steps: redial }), NOW);
+    expect(decision.nextAt?.getTime()).toBe(NOW.getTime() + MIN_STEP_GAP_MS);
+  });
+
+  test("the Hi goes out right after the second miss, and the next call is a day after it", () => {
+    const afterRedial = afterCall(contact({ step: 1 }), "no_answer", null, rep, NOW);
+    expect(afterRedial).toMatchObject({ step: 2, nextAt: NOW });
+    const afterHi = afterMessage(contact({ step: 2 }), true, rep, NOW);
+    expect(afterHi).toMatchObject({ step: 3, nextAt: at(24 * HOUR) });
+  });
+
+  test("a call withdrawn before it rang is not an attempt: same step, due now, with a fresh key", () => {
+    const decision = afterCall(contact({ step: 1 }), "cancelled", null, rep, NOW);
+    expect(decision).toMatchObject({ status: "reaching", step: 1, nextAt: NOW, failures: 1 });
+    const plan = plannedAction({ ...contact(), step: decision.step, failures: decision.failures }, rep, NOW);
+    expect(plan.kind === "call" && plan.stepKey).toBe(retryKey(reachKey(redial[1]!), 1));
+  });
+
+  test("a queued lead whose call was withdrawn starts reaching", () => {
+    expect(afterCall(contact({ status: "queued" }), "cancelled", null, rep, NOW).status).toBe("reaching");
+  });
+
+  test("the rep's wrap-up outcome is applied like the agent's", () => {
+    const callBack = afterCall(contact({ step: 0 }), "conversation", outcome("call_back", { when: "Fri 16:00", whenAt: at(5 * HOUR).toISOString() }), rep, NOW);
+    expect(callBack).toMatchObject({ status: "callback", nextAt: at(5 * HOUR) });
+    expect(afterCall(contact(), "conversation", outcome("human_callback"), rep, NOW).status).toBe("handoff");
+    expect(afterCall(contact({ step: 1 }), "conversation", outcome("no_response"), rep, NOW)).toMatchObject({ step: 2, nextAt: NOW });
+  });
+});
+
+describe("callResultFor, for a rep's calls", () => {
+  const base = { error: null, agentOutcome: null, endedAt: NOW, updatedAt: NOW };
+
+  test("a call cancelled before any number took it is cancelled, not unanswered", () => {
+    const call = { ...base, status: "no_recording" as const, error: "Cancelled from AgentSDR before it connected", claimedAt: null };
+    expect(callResultFor(call, NOW)).toBe("cancelled");
+  });
+
+  test("cancelled after a number took it still counts as unanswered", () => {
+    const call = { ...base, status: "no_recording" as const, error: "Cancelled from AgentSDR before it connected", claimedAt: NOW };
+    expect(callResultFor(call, NOW)).toBe("no_answer");
+  });
+
+  test("a picked-up call waits for the rep's wrap-up up to the longer grace", () => {
+    const call = { ...base, status: "recorded" as const };
+    const later = at(10 * 60_000);
+    expect(callResultFor(call, later)).toBe("conversation");
+    expect(callResultFor(call, later, { outcomeGraceMs: REP_OUTCOME_GRACE_MS })).toBe("wait");
+    expect(callResultFor(call, at(REP_OUTCOME_GRACE_MS + 1), { outcomeGraceMs: REP_OUTCOME_GRACE_MS })).toBe("conversation");
   });
 });

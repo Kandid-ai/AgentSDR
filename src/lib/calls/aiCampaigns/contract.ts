@@ -125,8 +125,12 @@ export const AI_CONTACT_STATUS_LABELS: Record<AiContactStatus, string> = {
  */
 export type AiStepRunKind = "call" | "message";
 export type AiStepRunStatus = "started" | "done" | "failed";
-/** What a finished call amounted to, for the sequence. */
-export type AiCallResult = "conversation" | "no_answer" | "not_on_whatsapp" | "error";
+/**
+ * What a finished call amounted to, for the sequence. `cancelled`: a rep
+ * withdrew it before a number took it (dialer.ts) — never an attempt, the
+ * step runs again.
+ */
+export type AiCallResult = "conversation" | "no_answer" | "not_on_whatsapp" | "error" | "cancelled";
 
 /** Campaign settings beyond the sequences (call_campaigns ai_* columns). */
 export type AiCampaignSettings = {

@@ -609,8 +609,8 @@ agreed to a meeting but have not booked. Leads are `call_campaign_contacts`
 with `ai_*` columns; the rep-campaign code (`contactCallStatus.ts`,
 `leadStage.ts`) leaves their stage and follow-up date to the engine.
 
-Rep campaigns (`run_by = 'rep'`, worked by hand) are no longer listed or
-created (2 Nov 2026): the Call campaigns page shows AI campaigns only, and a
+The old rep campaigns (`run_by = 'rep'`, worked by hand, a plain list) are no
+longer listed or created (2 Nov 2026; the rep dialer below replaced them): the Call campaigns page shows AI campaigns only, and a
 rep talks to a lead with "Call now". Their data, API and pages remain for
 old links; the shared calling code (`mode = 'rep'` calls from the CRM's Call
 button) is unaffected.
@@ -665,6 +665,40 @@ reopens a closed lead (replied, handed off, not interested, unreached,
 failed — never booked or stopped) when it agreed to something: a yes (link
 and chase), a call-back, or a person. A call that fails after the agent
 recorded its outcome keeps that outcome; it is never retried as an error.
+
+### The rep dialer: a person works the campaign
+
+A campaign with `call_campaigns.ai_caller = 'rep'` (fixed at creation, "New
+rep campaign"; `scripts/add-ai-campaign-caller.ts`) is an AI campaign that a
+rep talks on. It has the same sequence, leads, numbers, Sending rules and
+outcome rules. Spec: `src/lib/calls/aiCampaigns/dialer.ts`; server half:
+`dialer.server.ts`; page: the campaign's Dialer tab (`DialerTab.tsx`,
+`dialerMachine.ts`).
+
+- **Who places what.** The engine never places a rep campaign's calls
+  (`pickDueContact` skips a lead whose next action is a call). It still
+  sends its WhatsApp steps and settles its calls. Calls go out only while a
+  rep has pressed Start: `POST …/dialer/next` settles what has finished, sends
+  any due WhatsApp step from each number, then claims the most urgent due call
+  on the least recently used free number (`claimStep` with `requireIdle`). It
+  queues the call with `remoteRep`, so the rep talks from their tab through
+  the station's relay.
+- **Numbers.** A lead keeps the number that first called it (`ai_station_id`).
+  Numbers rotate across leads, never within one.
+- **Timing.** Rep campaigns have no 10-minute minimum between steps, so the
+  default "call → redial at once → Hi {{firstName}} → call next day" works.
+- **Ending a call.**
+  - A call the lead picked up opens the wrap-up: an outcome, notes, an optional
+    WhatsApp from the lead's number, then Next lead or Pause. The outcome is
+    stored as `call_sessions.agent_outcome` (`REP_OUTCOME_AS_AGENT`), and
+    `afterCall` applies it like the agent's `record_outcome`. The engine waits
+    `REP_OUTCOME_GRACE_MS` (30 min) for it before handing the call to a person.
+  - The rep hanging up before the lead answers pauses the dialer.
+  - A call withdrawn before any number took it is `cancelled`, not an attempt:
+    the same step runs again.
+- **Incoming calls.** A rep campaign's lead who calls a station back is never
+  answered by the AI. It rings out and becomes a call-back due now, at the
+  front of the dialer.
 
 ### WhatsApp messaging through a station (no Unipile)
 

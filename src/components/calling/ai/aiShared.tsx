@@ -6,6 +6,7 @@ import * as Badge from "@/components/alignui/badge";
 import * as Checkbox from "@/components/alignui/checkbox";
 import { AI_CONTACT_STATUS_LABELS, type AiContactStatus } from "@/lib/calls/aiCampaigns/contract";
 import { AI_CAMPAIGN_STATE_LABELS, type AiCampaignState } from "@/lib/calls/aiCampaigns/api";
+import type { AiCampaignCaller } from "@/lib/calls/aiCampaigns/dialer";
 import type { CallingStation, StationStatus } from "@/lib/calls/stationContract";
 import { cn } from "@/utils/cn";
 
@@ -50,6 +51,16 @@ export function AiAgentBadge() {
   return (
     <Badge.Root size="small" variant="light" color="purple" className="shrink-0">
       AI agent
+    </Badge.Root>
+  );
+}
+
+/** Marks who works a campaign's calls: the AI agent, or a rep through the dialer. */
+export function AiCallerBadge({ caller }: { caller: AiCampaignCaller }) {
+  if (caller === "agent") return <AiAgentBadge />;
+  return (
+    <Badge.Root size="small" variant="light" color="blue" className="shrink-0">
+      Rep dialer
     </Badge.Root>
   );
 }

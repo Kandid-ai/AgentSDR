@@ -46,6 +46,7 @@ import {
   updateAiCampaign,
 } from "@/lib/calls/aiCampaigns/client";
 import { AI_CAMPAIGN_GOALS, AI_CAMPAIGN_GOAL_LABELS, type AiCampaignGoal, type AiCampaignStep } from "@/lib/calls/aiCampaigns/contract";
+import { AI_CAMPAIGN_CALLERS, AI_CAMPAIGN_CALLER_LABELS, type AiCampaignCaller } from "@/lib/calls/aiCampaigns/dialer";
 import { listCallingStations } from "@/lib/calls/client";
 import { AGENT_VOICES, DEFAULT_AGENT_NAME, DEFAULT_AGENT_VOICE, MAX_AGENT_NAME_CHARS } from "@/lib/calls/contract";
 import type { CallingStation } from "@/lib/calls/stationContract";
@@ -64,10 +65,11 @@ const STEPS = [
 
 const DEFAULT_VOICE = "default";
 
-export function AiCampaignWizard() {
+export function AiCampaignWizard({ initialCaller = "agent" }: { initialCaller?: AiCampaignCaller }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(0);
+  const [caller, setCaller] = useState<AiCampaignCaller>(initialCaller);
   const [campaign, setCampaign] = useState<AiCampaignDetail | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -110,9 +112,10 @@ export function AiCampaignWizard() {
     return () => { cancelled = true; };
   }, [step, campaignId]);
 
+  const rep = caller === "rep";
   const handover = goal === "human_callback";
   const blocker = campaign
-    ? aiLaunchBlocker({ numbers: campaign.numbers.length, steps: campaign.steps, instructions: campaign.instructions, goal: campaign.goal, bookingUrl: campaign.bookingUrl, leads: campaign.leads })
+    ? aiLaunchBlocker({ numbers: campaign.numbers.length, steps: campaign.steps, instructions: campaign.instructions, goal: campaign.goal, bookingUrl: campaign.bookingUrl, leads: campaign.leads, caller: campaign.caller })
     : "Save the details first";
 
   async function run(action: () => Promise<void>) {
@@ -132,7 +135,7 @@ export function AiCampaignWizard() {
     if (campaign) {
       setCampaign(await updateAiCampaign(campaign.id, { name: name.trim(), description: description.trim() || null, goal }));
     } else {
-      const created = await createAiCampaign({ name: name.trim(), description: description.trim() || null });
+      const created = await createAiCampaign({ name: name.trim(), description: description.trim() || null, caller });
       const withGoal = goal === created.goal ? created : await updateAiCampaign(created.id, { goal });
       setCampaign(withGoal);
       setInstructions(withGoal.instructions);
@@ -160,9 +163,9 @@ export function AiCampaignWizard() {
     setCampaign(
       await updateAiCampaign(campaign.id, {
         instructions,
-        knowledgeIds,
+        ...(rep ? {} : { knowledgeIds }),
         agentName: agentName.trim() || null,
-        agentVoice: agentVoice === DEFAULT_VOICE ? null : agentVoice,
+        ...(rep ? {} : { agentVoice: agentVoice === DEFAULT_VOICE ? null : agentVoice }),
         bookingUrl: handover ? null : bookingUrl.trim() || null,
         bookingMessage,
         steps,
@@ -182,8 +185,10 @@ export function AiCampaignWizard() {
     <div className="mx-auto w-full max-w-[1440px]">
       <PageHeader
         back={{ href: "/calling/campaigns", label: "Call campaigns" }}
-        title="New AI calling campaign"
-        description="The AI agent calls your leads by itself from your calling numbers, follows up on WhatsApp, and hands over interested people. It stays a draft until you launch it."
+        title={rep ? "New rep dialer campaign" : "New AI calling campaign"}
+        description={rep
+          ? "You press Start and the system calls your leads one after another from your calling numbers; when someone picks up, you talk to them. WhatsApp follow-ups go out by themselves. It stays a draft until you launch it."
+          : "The AI agent calls your leads by itself from your calling numbers, follows up on WhatsApp, and hands over interested people. It stays a draft until you launch it."}
       />
 
       <div className="mt-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-5">
@@ -219,6 +224,7 @@ export function AiCampaignWizard() {
               <p className="text-paragraph-xs text-text-soft-400">Summary</p>
               <dl className="mt-2 space-y-2 text-paragraph-sm">
                 <SummaryRow label="Name" value={name || "Not named yet"} truncate />
+                <SummaryRow label="Calls by" value={AI_CAMPAIGN_CALLER_LABELS[caller].label} />
                 <SummaryRow label="Goal" value={AI_CAMPAIGN_GOAL_LABELS[goal].label} truncate />
                 <SummaryRow label="Numbers" value={numberIds.length.toLocaleString()} />
                 <SummaryRow label="Leads" value={leadCount.toLocaleString()} />
@@ -234,6 +240,29 @@ export function AiCampaignWizard() {
               <div className="mx-auto max-w-2xl">
                 <Heading title="Name and goal" description="Name the campaign and say what its calls are for." />
                 <div className="mt-6 space-y-5">
+                  <fieldset>
+                    <legend className="mb-2 block text-label-sm text-text-strong-950">Who talks on the calls</legend>
+                    <div role="radiogroup" aria-label="Who talks on the calls" className="grid gap-2 sm:grid-cols-2">
+                      {AI_CAMPAIGN_CALLERS.map((value) => {
+                        const active = caller === value;
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            disabled={campaign !== null && !active}
+                            onClick={() => setCaller(value)}
+                            className={cn("rounded-xl p-3.5 text-left outline-none ring-1 ring-inset transition focus-visible:ring-2 focus-visible:ring-primary-base disabled:cursor-default disabled:opacity-50", active ? "bg-bg-weak-50 ring-primary-base" : "ring-stroke-soft-200 hover:bg-bg-weak-50")}
+                          >
+                            <span className="block text-label-sm text-text-strong-950">{AI_CAMPAIGN_CALLER_LABELS[value].label}</span>
+                            <span className="mt-1 block text-paragraph-xs text-text-sub-600">{AI_CAMPAIGN_CALLER_LABELS[value].help}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {campaign && <p className="mt-1.5 text-paragraph-xs text-text-sub-600">This is fixed once the campaign is created.</p>}
+                  </fieldset>
                   <label className="block">
                     <span className="mb-1.5 block text-label-sm text-text-strong-950">Campaign name</span>
                     <Input.Root hasError={Boolean(error && !name.trim())}>
@@ -336,35 +365,44 @@ export function AiCampaignWizard() {
 
             {step === 3 && campaign && (
               <div>
-                <Heading title="Script and sequence" description="What every call is about, who the agent is, and the calls and messages to send. The defaults are a sensible start." />
+                <Heading title={rep ? "Script and sequence" : "Script and sequence"} description={rep ? "Your call script, your name for the messages, and the calls and WhatsApp messages to send. The defaults are a sensible start." : "What every call is about, who the agent is, and the calls and messages to send. The defaults are a sensible start."} />
                 <div className="mt-6 grid gap-6">
-                  <div>
-                    <label className="mb-1.5 block text-label-sm text-text-strong-950">Knowledge</label>
-                    <KnowledgePicker value={knowledgeIds} onChange={setKnowledgeIds} />
-                  </div>
-                  <div>
-                    <label htmlFor="wiz-instructions" className="mb-1.5 block text-label-sm text-text-strong-950">Campaign instructions</label>
-                    <p className="mb-2 text-paragraph-xs text-text-sub-600">What every call is about, on top of the Knowledge above: who you are calling, what you offer, what to find out.</p>
-                    <Textarea.Root id="wiz-instructions" simple rows={6} maxLength={AI_CAMPAIGN_MAX_INSTRUCTIONS} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="You are calling founders of D2C brands who run Meta ads. We help them …" hasError={!instructions.trim()} />
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <TextField label="Agent name" value={agentName} onChange={setAgentName} placeholder={DEFAULT_AGENT_NAME} maxLength={MAX_AGENT_NAME_CHARS + 10} />
+                  {!rep && (
                     <div>
-                      <label className="mb-1.5 block text-label-sm text-text-strong-950">Voice</label>
-                      <div className="flex items-center gap-2">
-                        <div className="min-w-0 flex-1">
-                          <Select.Root size="small" value={agentVoice} onValueChange={setAgentVoice}>
-                            <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
-                            <Select.Content>
-                              <Select.Item value={DEFAULT_VOICE}>Default ({DEFAULT_AGENT_VOICE})</Select.Item>
-                              {AGENT_VOICES.map((voice) => <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>)}
-                            </Select.Content>
-                          </Select.Root>
+                      <label className="mb-1.5 block text-label-sm text-text-strong-950">Knowledge</label>
+                      <KnowledgePicker value={knowledgeIds} onChange={setKnowledgeIds} />
+                    </div>
+                  )}
+                  <div>
+                    <label htmlFor="wiz-instructions" className="mb-1.5 block text-label-sm text-text-strong-950">{rep ? "Call script" : "Campaign instructions"}</label>
+                    <p className="mb-2 text-paragraph-xs text-text-sub-600">{rep ? "Shown to you while calling. Optional." : "What every call is about, on top of the Knowledge above: who you are calling, what you offer, what to find out."}</p>
+                    <Textarea.Root id="wiz-instructions" simple rows={6} maxLength={AI_CAMPAIGN_MAX_INSTRUCTIONS} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="You are calling founders of D2C brands who run Meta ads. We help them …" hasError={!rep && !instructions.trim()} />
+                  </div>
+                  {rep ? (
+                    <div>
+                      <TextField label="Your name" value={agentName} onChange={setAgentName} placeholder={DEFAULT_AGENT_NAME} maxLength={MAX_AGENT_NAME_CHARS + 10} />
+                      <p className="mt-1 text-paragraph-xs text-text-sub-600">Used as {"{{agentName}}"} in messages.</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <TextField label="Agent name" value={agentName} onChange={setAgentName} placeholder={DEFAULT_AGENT_NAME} maxLength={MAX_AGENT_NAME_CHARS + 10} />
+                      <div>
+                        <label className="mb-1.5 block text-label-sm text-text-strong-950">Voice</label>
+                        <div className="flex items-center gap-2">
+                          <div className="min-w-0 flex-1">
+                            <Select.Root size="small" value={agentVoice} onValueChange={setAgentVoice}>
+                              <Select.Trigger aria-label="Voice"><Select.Value /></Select.Trigger>
+                              <Select.Content>
+                                <Select.Item value={DEFAULT_VOICE}>Default ({DEFAULT_AGENT_VOICE})</Select.Item>
+                                {AGENT_VOICES.map((voice) => <Select.Item key={voice.id} value={voice.id}>{voice.label}</Select.Item>)}
+                              </Select.Content>
+                            </Select.Root>
+                          </div>
+                          <VoicePreviewButton voice={agentVoice} name={agentName} />
                         </div>
-                        <VoicePreviewButton voice={agentVoice} name={agentName} />
                       </div>
                     </div>
-                  </div>
+                  )}
                   {!handover && (
                     <div className="space-y-3">
                       <BookingLinkField label="Booking link (Cal.com)" value={bookingUrl} onChange={setBookingUrl} />
@@ -377,13 +415,13 @@ export function AiCampaignWizard() {
                   )}
                   <div>
                     <h3 className="mb-3 text-label-md text-text-strong-950">Reach them</h3>
-                    <AiStepsEditor steps={steps} onChange={setSteps} campaignId={campaign.id} agentName={agentName.trim() || null} agentVoice={agentVoice === DEFAULT_VOICE ? null : agentVoice} statsPhase="reach" emptyText="Add at least one call." />
+                    <AiStepsEditor caller={caller} steps={steps} onChange={setSteps} campaignId={campaign.id} agentName={agentName.trim() || null} agentVoice={agentVoice === DEFAULT_VOICE ? null : agentVoice} statsPhase="reach" emptyText="Add at least one call." />
                   </div>
                   {!handover && (
                     <div>
                       <h3 className="text-label-md text-text-strong-950">If they said yes but haven&apos;t booked</h3>
                       <p className="mb-3 mt-1 text-paragraph-xs text-text-sub-600">Runs after the booking message, until they book, reply, or the steps run out and a person takes over.</p>
-                      <AiStepsEditor steps={chaseSteps} onChange={setChaseSteps} allowEmpty campaignId={campaign.id} agentName={agentName.trim() || null} agentVoice={agentVoice === DEFAULT_VOICE ? null : agentVoice} statsPhase="chase" emptyText="No follow-ups." />
+                      <AiStepsEditor caller={caller} steps={chaseSteps} onChange={setChaseSteps} allowEmpty campaignId={campaign.id} agentName={agentName.trim() || null} agentVoice={agentVoice === DEFAULT_VOICE ? null : agentVoice} statsPhase="chase" emptyText="No follow-ups." />
                     </div>
                   )}
                 </div>
@@ -399,7 +437,11 @@ export function AiCampaignWizard() {
                   <SummaryCard label="Campaign" value={campaign.name} detail={AI_CAMPAIGN_GOAL_LABELS[campaign.goal].label} />
                   <SummaryCard label="Leads" value={campaign.leads.toLocaleString()} detail="queued to be called" />
                   <SummaryCard label="Numbers" value={campaign.numbers.length.toLocaleString()} detail={`${campaign.numbers.filter((n) => n.status === "active").length} active`} />
-                  <SummaryCard label="Agent" value={campaign.agentName || DEFAULT_AGENT_NAME} detail={campaign.agentVoice || DEFAULT_AGENT_VOICE} />
+                  {rep ? (
+                    <SummaryCard label="Calls by" value="You" detail="Rep dialer" />
+                  ) : (
+                    <SummaryCard label="Agent" value={campaign.agentName || DEFAULT_AGENT_NAME} detail={campaign.agentVoice || DEFAULT_AGENT_VOICE} />
+                  )}
                 </div>
                 <div className="mt-4 rounded-2xl bg-bg-weak-50 p-1 ring-1 ring-inset ring-stroke-soft-200">
                   <h3 className="px-3 pb-2 pt-2 text-label-sm text-text-strong-950">Sequence</h3>
@@ -407,8 +449,8 @@ export function AiCampaignWizard() {
                     {campaign.steps.map((item, index) => (
                       <li key={item.id} className="flex items-center justify-between gap-4 py-2.5 text-paragraph-sm">
                         <span className="min-w-0">
-                          <span className="block text-text-sub-600">{item.kind === "call" ? "AI call" : "WhatsApp message"}{index > 0 ? ` · after ${formatDelay(item.delayHours)}` : " · first"}</span>
-                          <span className="block max-w-md truncate text-paragraph-xs text-text-soft-400">{item.kind === "call" ? item.instructions || "No extra instructions" : item.body}</span>
+                          <span className="block text-text-sub-600">{item.kind === "call" ? (rep ? "Call" : "AI call") : "WhatsApp message"}{index > 0 ? ` · after ${formatDelay(item.delayHours)}` : " · first"}</span>
+                          <span className="block max-w-md truncate text-paragraph-xs text-text-soft-400">{item.kind === "call" ? item.instructions || (rep ? "No note" : "No extra instructions") : item.body}</span>
                         </span>
                         <RiCheckLine className="size-4 shrink-0 text-success-base" aria-hidden="true" />
                       </li>
@@ -418,7 +460,7 @@ export function AiCampaignWizard() {
                     <p className="px-3 py-2 text-paragraph-xs text-text-sub-600">Then {campaign.chaseSteps.length} follow-up {campaign.chaseSteps.length === 1 ? "step" : "steps"} for leads who say yes but do not book.</p>
                   )}
                 </div>
-                <p className="mt-4 text-paragraph-xs text-text-sub-600">Calls start within the numbers&apos; calling hours, spaced out and capped per day. A reply on any channel stops the sequence and lands in CRM → Action required.</p>
+                <p className="mt-4 text-paragraph-xs text-text-sub-600">{rep ? "Nothing is called until you press Start in the campaign's Dialer tab. Calls respect the numbers' calling hours and daily limits. A reply on any channel stops the sequence and lands in CRM → Action required." : "Calls start within the numbers' calling hours, spaced out and capped per day. A reply on any channel stops the sequence and lands in CRM → Action required."}</p>
                 {blocker && <p className="mt-4 rounded-xl bg-warning-lighter p-3 text-paragraph-sm text-warning-dark">{blocker} before launching. You can save it as a draft and finish later.</p>}
                 <Footer error={error} onBack={() => setStep(3)} busy={busy} secondaryLabel="Save as draft" onSecondary={() => void finish(false)} nextLabel="Launch campaign" onNext={() => void finish(true)} nextDisabled={Boolean(blocker)} nextIcon={RiRocketLine} />
               </div>

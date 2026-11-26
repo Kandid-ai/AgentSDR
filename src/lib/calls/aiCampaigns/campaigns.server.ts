@@ -70,6 +70,7 @@ import {
   AI_LEAD_MAX_INSTRUCTIONS,
 } from "./api";
 import { loadLeadActivity } from "./leadActivity";
+import { AI_CAMPAIGN_CALLERS, DEFAULT_REP_CHASE_STEPS, DEFAULT_REP_STEPS, type AiCampaignCaller } from "./dialer";
 
 /**
  * AI calling campaigns: everything the pages and /api/calling/ai-campaigns
@@ -217,6 +218,7 @@ async function loadSummaries(rows: CampaignRow[]): Promise<AiCampaignSummary[]> 
     state: aiCampaignState({ launchedAt: row.aiLaunchedAt, status: row.status }),
     launchedAt: iso(row.aiLaunchedAt),
     goal: row.aiGoal,
+    caller: row.aiCaller,
     createdAt: row.createdAt.toISOString(),
     numbers: numbers.get(row.id) ?? [],
     leads: Number(leadsBy.get(row.id)?.leads ?? 0),
@@ -252,6 +254,7 @@ async function toDetail(row: CampaignRow): Promise<AiCampaignDetail> {
           goal: row.aiGoal,
           bookingUrl: row.aiBookingUrl,
           leads: summary.leads,
+          caller: row.aiCaller,
         })
       : null;
   return {
@@ -291,8 +294,11 @@ function parseDescription(value: unknown): string | null {
 }
 
 export function parseCreateAiCampaignRequest(value: unknown): CreateAiCampaignRequest {
-  const body = asObject(value, ["name", "description"]);
-  return { name: parseName(body.name), description: parseDescription(body.description) };
+  const body = asObject(value, ["name", "description", "caller"]);
+  if (body.caller !== undefined && !(AI_CAMPAIGN_CALLERS as readonly unknown[]).includes(body.caller)) {
+    throw new CallApiError(400, `caller must be one of ${AI_CAMPAIGN_CALLERS.join(", ")}`);
+  }
+  return { name: parseName(body.name), description: parseDescription(body.description), caller: (body.caller as AiCampaignCaller | undefined) ?? "agent" };
 }
 
 const UPDATE_KEYS = [
@@ -381,6 +387,7 @@ export function parseUpdateAiCampaignRequest(value: unknown): UpdateAiCampaignRe
 }
 
 export async function createAiCampaign(input: CreateAiCampaignRequest): Promise<AiCampaignDetail> {
+  const rep = input.caller === "rep";
   const [row] = await db
     .insert(callCampaigns)
     .values({
@@ -388,11 +395,12 @@ export async function createAiCampaign(input: CreateAiCampaignRequest): Promise<
       name: input.name,
       description: input.description ?? null,
       runBy: "ai",
+      aiCaller: rep ? "rep" : "agent",
       // A draft: paused and never launched, so nothing acts on it.
       status: "paused",
       aiGoal: "book_meeting",
-      aiSteps: DEFAULT_REACH_STEPS.map((step) => ({ ...step })),
-      aiChaseSteps: DEFAULT_CHASE_STEPS.map((step) => ({ ...step })),
+      aiSteps: (rep ? DEFAULT_REP_STEPS : DEFAULT_REACH_STEPS).map((step) => ({ ...step })),
+      aiChaseSteps: (rep ? DEFAULT_REP_CHASE_STEPS : DEFAULT_CHASE_STEPS).map((step) => ({ ...step })),
       aiBookingMessage: DEFAULT_BOOKING_MESSAGE,
       // Starts from what a call placed by hand knows; the campaign then picks its own.
       aiKnowledgeIds: (
@@ -543,6 +551,7 @@ export async function launchAiCampaign(campaignId: string): Promise<AiCampaignDe
     goal: row.aiGoal,
     bookingUrl: row.aiBookingUrl,
     leads: detail.leads,
+    caller: row.aiCaller,
   });
   if (blocker) throw new CallApiError(409, blocker);
   const settings = aiSettingsError({
@@ -1156,6 +1165,7 @@ export async function callAiLeadNow(campaignId: string, contactId: string, reque
     .orderBy(asc(callingStations.name));
   const station = stations.find((candidate) => candidate.id === contact.aiStationId) ?? stations[0];
   if (!station) throw new CallApiError(409, "Choose an active calling number for this campaign first");
+  if (!request.remoteRep && campaign.aiCaller === "rep") throw new CallApiError(409, "This campaign's calls are made by a rep: use Call now or the dialer");
   if (request.remoteRep) {
     const started = await startCall({
       personId: contact.personId,

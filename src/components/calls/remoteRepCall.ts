@@ -51,6 +51,8 @@ export type RemoteRepCallState = {
   unstable: boolean;
   /** The browser held back the lead's audio until a click (autoplay rules). */
   audioBlocked: boolean;
+  /** Who ended it: "rep" when the rep pressed hang up here; null otherwise (null while it runs). */
+  endedBy: "rep" | null;
 };
 
 /** Until the number joins: quick, so the bar keeps up. */
@@ -140,7 +142,7 @@ export async function startRemoteRepCall({ leadName, numberName, place }: StartR
   // A finished call still on the bar: drop it, so its late reads cannot touch this one.
   if (session) clearTimeout(session.timer);
   session = null;
-  emit({ callId: null, leadName, numberName, stage: "mic", answeredAt: null, message: null, muted: false, unstable: false, audioBlocked: false });
+  emit({ callId: null, leadName, numberName, stage: "mic", answeredAt: null, message: null, muted: false, unstable: false, audioBlocked: false, endedBy: null });
 
   if (typeof AudioContext === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof ReadableStream === "undefined") {
     emit({ ...state!, stage: "error", message: "This browser can't place calls — use a recent Chrome, Edge or Firefox." });
@@ -255,6 +257,7 @@ export async function hangUpRemoteRepCall(): Promise<void> {
   if (!s || s.ended || !state) return;
   const connected = state.stage === "on-call";
   const callId = s.callId;
+  patch(s, { endedBy: "rep" });
   if (callId) await hangUpRelayedCall(callId).catch(() => {});
   await finish(s, { stage: "ended", message: connected ? "You hung up" : "Call cancelled" }, { settle: connected });
   if (!connected && callId) await cancelCall(callId).catch(() => {});

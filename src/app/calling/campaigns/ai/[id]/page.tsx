@@ -11,5 +11,5 @@ export default async function AiCallCampaignPage({
   searchParams: Promise<{ tab?: string | string[] }>;
 }) {
   const [{ id }, { tab }] = await Promise.all([params, searchParams]);
-  return <AiCampaignDetailClient campaignId={id} initialTab={isAiCampaignTab(tab) ? tab : "overview"} />;
+  return <AiCampaignDetailClient campaignId={id} initialTab={isAiCampaignTab(tab) ? tab : null} />;
 }

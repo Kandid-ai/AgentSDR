@@ -25,6 +25,7 @@ import { formatOffset } from "@/components/calls/formatElapsed";
 import { Skeleton } from "@/components/page/Skeletons";
 import { AI_LEAD_MAX_INSTRUCTIONS, type AiActivityCallResult, type AiLeadActivity, type AiLeadDetail } from "@/lib/calls/aiCampaigns/api";
 import { callAiLead, getAiLead, updateAiLead } from "@/lib/calls/aiCampaigns/client";
+import type { AiCampaignCaller } from "@/lib/calls/aiCampaigns/dialer";
 import { getCall } from "@/lib/calls/client";
 import type { CallDetail } from "@/lib/calls/contract";
 import { cn } from "@/utils/cn";
@@ -74,13 +75,16 @@ export function AiLeadDrawer({
   contactId,
   onClose,
   onChanged,
+  caller = "agent",
 }: {
+  caller?: AiCampaignCaller;
   campaignId: string;
   contactId: string;
   onClose: () => void;
   onChanged: () => void;
 }) {
   const dialogs = useDialogs();
+  const rep = caller === "rep";
   const [detail, setDetail] = useState<AiLeadDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -272,23 +276,25 @@ export function AiLeadDrawer({
               <section className="space-y-2">
                 <h3 className="text-label-sm text-text-strong-950">Try a call</h3>
                 <p className="text-paragraph-xs text-text-sub-600">
-                  Rehearse talks to the agent in your browser as if you were {firstName}: their name, company, history and the instructions below. Call now places a real WhatsApp call to them from the campaign&apos;s number with you on the line, through your microphone; AI call has the agent make it instead. Both are recorded and transcribed.
+                  {rep
+                    ? "Call now places a real WhatsApp call to them from the campaign's number with you on the line, through your microphone. It is recorded and transcribed."
+                    : `Rehearse talks to the agent in your browser as if you were ${firstName}: their name, company, history and the instructions below. Call now places a real WhatsApp call to them from the campaign's number with you on the line, through your microphone; AI call has the agent make it instead. Both are recorded and transcribed.`}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Button.Root variant="neutral" mode="stroke" size="xsmall" aria-expanded={rehearsing} onClick={() => setRehearsing((current) => !current)}>
+                  {!rep && <Button.Root variant="neutral" mode="stroke" size="xsmall" aria-expanded={rehearsing} onClick={() => setRehearsing((current) => !current)}>
                     <Button.Icon as={RiVoiceprintLine} />
                     {rehearsing ? "Close rehearsal" : "Rehearse with this lead"}
-                  </Button.Root>
+                  </Button.Root>}
                   <Button.Root variant="primary" mode="filled" size="xsmall" disabled={busy !== null || live || repCallOn} onClick={() => void callNow()}>
                     <Button.Icon as={busy === "call" ? RiLoader4Line : RiPhoneLine} className={cn(busy === "call" && "animate-spin")} />
                     {live || repCallOn ? "A call is on" : "Call now"}
                   </Button.Root>
-                  <Button.Root variant="neutral" mode="stroke" size="xsmall" disabled={busy !== null || live} onClick={() => void aiCall()}>
+                  {!rep && <Button.Root variant="neutral" mode="stroke" size="xsmall" disabled={busy !== null || live} onClick={() => void aiCall()}>
                     <Button.Icon as={busy === "ai-call" ? RiLoader4Line : RiRobot2Line} className={cn(busy === "ai-call" && "animate-spin")} />
                     AI call
-                  </Button.Root>
+                  </Button.Root>}
                 </div>
-                {rehearsing && (
+                {!rep && rehearsing && (
                   <div className="pt-1">
                     {instructionsDirty && <p className="mb-2 text-paragraph-xs text-warning-dark">Save the instructions below first so the rehearsal uses them.</p>}
                     <AgentVoiceRehearsal campaignId={campaignId} contactId={contactId} />

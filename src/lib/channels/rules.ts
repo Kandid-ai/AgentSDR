@@ -312,14 +312,15 @@ export const CHANNEL_RULES = {
       safe: { below: 15 },
       warning: "Follow-ups less than 15 minutes apart from one number look automated.",
     },
-    // AI calling campaigns (src/lib/calls/aiCampaigns/engine.ts): calls the AI
-    // agent places by itself from calling stations. Calls a rep or the AI
-    // places by hand are never limited by these.
+    // Calling campaigns on calling stations (src/lib/calls/aiCampaigns/): the
+    // calls the AI agent places by itself, and a rep's dialer calls (dialer.ts;
+    // not the gap — a redial is instant). A single call placed by hand is
+    // never limited by these.
     {
       key: "callsPerDay",
       kind: "number",
-      label: "AI campaign calls per day, per number",
-      help: "How many calls AI campaigns place from one calling number a day, once its warm-up is over.",
+      label: "Campaign calls per day, per number",
+      help: "How many calls AI campaigns and the rep dialer place from one calling number a day, once its warm-up is over.",
       unit: "calls / day",
       default: 30,
       min: 1,

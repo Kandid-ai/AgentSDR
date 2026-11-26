@@ -84,6 +84,7 @@ export function AiSequenceTab({
           <AiStepsEditor
             steps={steps}
             onChange={change(setSteps)}
+            caller={campaign.caller}
             campaignId={campaign.id}
             agentName={campaign.agentName}
             agentVoice={campaign.agentVoice}
@@ -108,6 +109,7 @@ export function AiSequenceTab({
               steps={chaseSteps}
               onChange={change(setChaseSteps)}
               allowEmpty
+              caller={campaign.caller}
               campaignId={campaign.id}
               agentName={campaign.agentName}
               agentVoice={campaign.agentVoice}
