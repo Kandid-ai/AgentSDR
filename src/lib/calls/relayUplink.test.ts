@@ -83,7 +83,7 @@ function fakeRelay(behaviour: (attempt: number) => StreamBehaviour) {
     posts,
     steps,
     open(timing: ConstructorParameters<typeof RelayUplink>[0]["timing"] = {}) {
-      uplink = new RelayUplink({ url: "u", headers: { Authorization: "Bearer t" }, log: (step) => steps.push(step), fetch, canStream: true, timing: { backoffMs: [5], ackMs: 100, ...timing } });
+      uplink = new RelayUplink({ url: "u", headers: { Authorization: "Bearer t" }, log: (step) => steps.push(step), fetch, tryStreaming: true, canStream: true, timing: { backoffMs: [5], ackMs: 100, ...timing } });
       uplink.start();
       return uplink;
     },
@@ -137,6 +137,27 @@ describe("RelayUplink", () => {
     uplink.close();
   });
 
+  test("by default it never tries a stream: chunks from the first audio", async () => {
+    const steps: string[] = [];
+    const posts: number[] = [];
+    const uplink = new RelayUplink({
+      url: "u",
+      log: (step) => steps.push(step),
+      canStream: true,
+      fetch: async (_url, init) => {
+        expect((init.headers as Record<string, string>)["X-Relay-Stream"]).toBeUndefined();
+        posts.push((init.body as Uint8Array).byteLength / 2);
+        return new Response(null, { status: 204 });
+      },
+    });
+    uplink.start();
+    expect(uplink.mode).toBe("chunked");
+    expect(steps).toEqual(["uplink: chunked"]);
+    uplink.send(block(1));
+    await waitFor(() => posts.length === 1);
+    uplink.close();
+  });
+
   test("after a fallback, the page's next call sends chunks from the start, without probing", async () => {
     const first = fakeRelay(() => "refused");
     const uplink = first.open();
@@ -182,6 +203,7 @@ describe("RelayUplink", () => {
     const uplink = new RelayUplink({
       url: "u",
       log: (step) => steps.push(step),
+      tryStreaming: true,
       canStream: false,
       fetch: async (_url, init) => {
         bodies.push((init.body as Uint8Array).byteLength / 2);

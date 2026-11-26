@@ -6,6 +6,10 @@
  * imports the contract). Client-safe; imports only the contract and
  * relayPcm.ts.
  *
+ * Chunked is the default. Streaming is tried only with `tryStreaming`:
+ * production's path has never let a stream through (see below), so trying
+ * one only cost audio.
+ *
  *   streaming  ONE long POST whose body is a stream (REP_RELAY_STREAM_HEADER):
  *              each read of it takes everything queued, so audio goes as
  *              soon as the network takes it, with no round trip per chunk.
@@ -73,7 +77,13 @@ export type RelayUplinkOptions = {
   log: (step: string) => void;
   /** For tests; the global fetch otherwise. */
   fetch?: Fetch;
-  /** Whether this browser can stream a request body; detected when unset. */
+  /**
+   * Try a streaming upload before chunks. Off by default: nothing in front of
+   * production lets a stream through (26 Nov 2026), so a try only delays the
+   * audio. Turn it on where streams are known to arrive.
+   */
+  tryStreaming?: boolean;
+  /** Whether this browser can stream a request body; detected when unset (and only when tryStreaming). */
   canStream?: boolean;
   /** For tests. */
   timing?: Partial<RelayUplinkTiming>;
@@ -213,6 +223,11 @@ export class RelayUplink {
     this.fetch = options.fetch ?? ((url, init) => fetch(url, init));
     this.timing = { ...DEFAULT_TIMING, ...options.timing };
     this.trips = new RoundTrips(this.timing.statsMs);
+    if (!options.tryStreaming) {
+      this.current = "chunked";
+      options.log("uplink: chunked");
+      return;
+    }
     const canStream = options.canStream ?? canStreamRequests();
     const fellBackRecently = streamingFellBackAt > 0 && Date.now() - streamingFellBackAt < STREAMING_RETRY_AFTER_MS;
     this.current = canStream && !fellBackRecently ? "streaming" : "chunked";
