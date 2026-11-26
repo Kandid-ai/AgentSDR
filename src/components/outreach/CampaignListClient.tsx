@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LocalTime } from "@/components/LocalTime";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -70,10 +71,11 @@ const EMAIL = CHANNEL_META.email.color;
 
 const toDate = (date: string | Date) => (typeof date === "string" ? new Date(date) : date);
 
-/** "Sep 14" — the created-at line under each campaign name. */
-function shortDate(date: string | Date | null): string {
-  if (!date) return "—";
-  return toDate(date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+/** "Sep 14" — the created-at line under each campaign name, in the viewer's time zone. */
+const formatShortDate = (date: Date) => date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+function ShortDate({ value }: { value: string | Date | null }) {
+  return value ? <LocalTime value={toDate(value)} format={formatShortDate} /> : "—";
 }
 
 /** "3h ago" / "2d ago" — when the campaign last sent. */
@@ -313,7 +315,7 @@ export default function CampaignListClient({ campaigns }: { campaigns: Campaign[
                             </Badge.Root>
                           </div>
                           <p className="mt-0.5 truncate text-paragraph-xs text-text-sub-600">
-                            {c.sequence.length} {c.sequence.length === 1 ? "step" : "steps"} · Created {shortDate(c.createdAt)}
+                            {c.sequence.length} {c.sequence.length === 1 ? "step" : "steps"} · Created <ShortDate value={c.createdAt} />
                           </p>
                         </div>
                       </div>
