@@ -153,3 +153,16 @@ export function nextPlayTime(now: number, playhead: number, jitterS: number, max
   if (playhead - now > maxBufferS) return null;
   return playhead;
 }
+
+/**
+ * How fast to play a chunk so the queue drains back to `targetS` ahead of
+ * now. Audio arrives as fast as it plays, so once a burst has queued extra,
+ * that extra delay stayed for the rest of the call (up to maxBufferS, 0.4 s:
+ * the rep heard the lead late; 26 Nov 2026). Over the target it plays 5%
+ * faster, well over it 10% — a slight lift in pitch while it catches up,
+ * instead of dropping audio.
+ */
+export function catchUpRate(aheadS: number, targetS: number): number {
+  if (aheadS <= targetS) return 1;
+  return aheadS <= targetS + 0.1 ? 1.05 : 1.1;
+}

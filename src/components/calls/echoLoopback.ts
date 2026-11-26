@@ -95,6 +95,16 @@ async function loopback(
       }
     };
     receiver.ontrack = (event) => {
+      // A loopback inside the page has no network jitter: ask for the smallest
+      // jitter buffer (Chrome otherwise holds some tens of ms more of the lead's voice).
+      try {
+        const rtp = event.receiver as unknown as { jitterBufferTarget?: number | null; playoutDelayHint?: number | null };
+        // jitterBufferTarget (ms) where supported (null until set), else the older playoutDelayHint (s).
+        if (rtp.jitterBufferTarget !== undefined) rtp.jitterBufferTarget = 0;
+        else rtp.playoutDelayHint = 0;
+      } catch {
+        // Not supported: the default buffer.
+      }
       audio.srcObject = new MediaStream([event.track]);
       void play();
     };

@@ -32,7 +32,7 @@ import {
   type CallDetail,
   type RepRelayEvent,
 } from "@/lib/calls/contract";
-import { base64ToBytes, createDownsampler, leBytesToFloat32, nextPlayTime } from "@/lib/calls/relayPcm";
+import { base64ToBytes, catchUpRate, createDownsampler, leBytesToFloat32, nextPlayTime } from "@/lib/calls/relayPcm";
 import { RelayUplink } from "@/lib/calls/relayUplink";
 import { clearBackgroundTimeout, setBackgroundTimeout } from "./backgroundTimer";
 import { routePlayback, type PlaybackRoute } from "./echoLoopback";
@@ -58,6 +58,8 @@ export type RemoteRepCallState = {
   endedBy: "rep" | null;
 };
 
+/** Queued audio past the jitter buffer that is tolerated before playback speeds up to drain it (catchUpRate). */
+const PLAYBACK_SLACK_S = 0.05;
 /** Until the number joins: quick, so the bar keeps up. */
 const POLL_WAITING_MS = 1_000;
 const POLL_LIVE_MS = 2_000;
@@ -436,14 +438,19 @@ function play(s: Session, base64: string) {
   // 16 kHz buffers; the context resamples them to its own rate.
   const buffer = s.context.createBuffer(1, samples.length, REP_RELAY_SAMPLE_RATE);
   buffer.copyToChannel(samples, 0);
-  const at = nextPlayTime(s.context.currentTime, s.playhead, REP_RELAY_JITTER_MS / 1000, REP_RELAY_MAX_BUFFER_MS / 1000);
+  const now = s.context.currentTime;
+  const at = nextPlayTime(now, s.playhead, REP_RELAY_JITTER_MS / 1000, REP_RELAY_MAX_BUFFER_MS / 1000);
   // Too far behind (a stall): drop this to catch up.
   if (at == null) return;
+  // More queued than the jitter buffer needs: play a little faster until it drains, so a burst's
+  // extra delay does not stay for the rest of the call.
+  const rate = catchUpRate(at - now, REP_RELAY_JITTER_MS / 1000 + PLAYBACK_SLACK_S);
   const node = s.context.createBufferSource();
   node.buffer = buffer;
+  node.playbackRate.value = rate;
   node.connect(s.playback);
   node.start(at);
-  s.playhead = at + buffer.duration;
+  s.playhead = at + buffer.duration / rate;
 }
 
 function refreshUnstable(s: Session) {

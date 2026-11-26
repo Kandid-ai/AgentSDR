@@ -6,6 +6,7 @@ import {
   int16ToLeBytes,
   leBytesToFloat32,
   MAX_OUTBOX_SAMPLES,
+  catchUpRate,
   nextPlayTime,
   PcmOutbox,
 } from "./relayPcm";
@@ -103,5 +104,31 @@ describe("nextPlayTime", () => {
   test("plays back to back, and drops to catch up past the limit", () => {
     expect(nextPlayTime(10, 10.25, 0.1, 0.4)).toBe(10.25);
     expect(nextPlayTime(10, 10.45, 0.1, 0.4)).toBeNull();
+  });
+});
+
+describe("catchUpRate", () => {
+  test("plays at normal speed while the queue is at or under the target", () => {
+    expect(catchUpRate(0.1, 0.15)).toBe(1);
+    expect(catchUpRate(0.15, 0.15)).toBe(1);
+  });
+
+  test("speeds up a little over the target, more when well over, so a burst's delay drains", () => {
+    expect(catchUpRate(0.2, 0.15)).toBe(1.05);
+    expect(catchUpRate(0.35, 0.15)).toBe(1.1);
+  });
+
+  test("drains: 0.25 s of extra delay is gone within a few seconds of continuous audio", () => {
+    let ahead = 0.4;
+    const target = 0.15;
+    const chunk = 0.04;
+    let elapsed = 0;
+    while (ahead > target && elapsed < 10) {
+      // A 40 ms chunk arrives every 40 ms; it plays for chunk / rate.
+      ahead += chunk / catchUpRate(ahead, target) - chunk;
+      elapsed += chunk;
+    }
+    expect(ahead).toBeLessThanOrEqual(target + 0.01);
+    expect(elapsed).toBeLessThan(5);
   });
 });

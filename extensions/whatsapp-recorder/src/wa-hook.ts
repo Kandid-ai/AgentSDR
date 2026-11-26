@@ -150,8 +150,12 @@ type AgentRig = {
 const AGENT_INPUT_RATE = 16_000;
 /** ScriptProcessor block size: ~85 ms at 48 kHz, within the 20–100 ms chunks Live wants. */
 const AGENT_CAPTURE_FRAMES = 4096;
-/** A rep call's: ~43 ms at 48 kHz, about one relay chunk (REP_RELAY_CHUNK_MS) — less delay to the rep. */
-const RELAY_CAPTURE_FRAMES = 2048;
+/**
+ * A rep call's: ~21 ms at 48 kHz (23 at 44.1). A ScriptProcessor holds about
+ * two blocks, so 2048 kept ~90 ms of the lead's voice before it left for the
+ * rep; 1024 halves that. Chunks still go at REP_RELAY_CHUNK_MS.
+ */
+const RELAY_CAPTURE_FRAMES = 1024;
 /** Small lead so the first chunk of a reply does not start mid-render. */
 const AGENT_PLAY_LEAD_S = 0.03;
 /** After the agent's goodbye has played, this long before End call is pressed. */
