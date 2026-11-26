@@ -134,8 +134,23 @@ type Relay = {
   idle: TimerHandle | null;
 };
 
+/** A sequence number this far behind the newest is a sender whose clock went back, not a late chunk: start over from it. */
+const SEQ_RESTART_MS = 5_000;
+
+/**
+ * Whether a chunk with sequence number `seq` plays, given the newest one
+ * played (`last`): only newer chunks do. Null either side (an older sender
+ * without seq, or the first chunk): it plays.
+ */
+export function relaySeqPlays(last: number | null, seq: number | null): boolean {
+  if (seq == null || last == null) return true;
+  return seq > last || last - seq > SEQ_RESTART_MS;
+}
+
 export class RepRelayHub {
   private readonly relays = new Map<string, Relay>();
+  /** The newest chunk's sequence number per call and side (`<callId>:<side>`). */
+  private readonly seqs = new Map<string, number>();
 
   constructor(
     private readonly timers: RelayTimers = SYSTEM_TIMERS,
@@ -219,8 +234,16 @@ export class RepRelayHub {
     return this.relays.get(callId)?.sides[side]?.credential === credential;
   }
 
-  /** Forwards `side`'s audio to the other side. False when dropped: nobody there, or their stream is behind. */
-  up(callId: string, side: RepRelaySide, pcm: Uint8Array): boolean {
+  /**
+   * Forwards `side`'s audio to the other side. False when dropped: nobody
+   * there, their stream is behind, or (`seq`) a newer chunk already played.
+   */
+  up(callId: string, side: RepRelaySide, pcm: Uint8Array, seq: number | null = null): boolean {
+    if (seq != null) {
+      const key = `${callId}:${side}`;
+      if (!relaySeqPlays(this.seqs.get(key) ?? null, seq)) return false;
+      this.seqs.set(key, seq);
+    }
     const target = this.relays.get(callId)?.sides[otherRelaySide(side)];
     if (!target || !pcm.byteLength) return false;
     const line = encodeRelayEvent(relayAudioEvent(pcm));
@@ -245,6 +268,8 @@ export class RepRelayHub {
 
   /** The call is over: both streams end and the call is forgotten. */
   end(callId: string): void {
+    this.seqs.delete(`${callId}:rep`);
+    this.seqs.delete(`${callId}:station`);
     const relay = this.relays.get(callId);
     if (!relay) return;
     this.relays.delete(callId);

@@ -5,6 +5,7 @@ import {
   assertRelayable,
   isRelayUploadStream,
   readRelayPcm,
+  readRelaySeq,
   receiveRelayUpload,
   relayStreamResponse,
   stationRelayCredential,
@@ -78,7 +79,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       await withRecorderScope(request, id, async (row) => assertRelayable(row));
     }
     if (streaming) await receiveRelayUpload(request, id, "station");
-    else repRelay().up(id, "station", await readRelayPcm(request));
+    else repRelay().up(id, "station", await readRelayPcm(request), readRelaySeq(request));
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   } catch (error) {
     return withCors(callApiErrorResponse(error));

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { REP_RELAY_STREAM_HEADER } from "./contract";
-import { forgetStreamingFallback, RelayUplink, RoundTrips, STREAM_FAILURES_BEFORE_FALLBACK, streamDecision } from "./relayUplink";
+import { forgetStreamingFallback, MAX_CHUNKS_IN_FLIGHT, RelayUplink, RoundTrips, STREAM_FAILURES_BEFORE_FALLBACK, streamDecision } from "./relayUplink";
 
 describe("streamDecision", () => {
   const fresh = { worked: false, failures: 0 };
@@ -196,35 +196,52 @@ describe("RelayUplink", () => {
     uplink.close();
   });
 
-  test("a browser that cannot stream sends chunks from the start, one request in flight", async () => {
+  test("a browser that cannot stream sends chunks from the start", async () => {
     const steps: string[] = [];
-    const bodies: number[] = [];
-    const gate = { release: () => {} };
     const uplink = new RelayUplink({
       url: "u",
       log: (step) => steps.push(step),
       tryStreaming: true,
       canStream: false,
-      fetch: async (_url, init) => {
-        bodies.push((init.body as Uint8Array).byteLength / 2);
-        await new Promise<void>((resolve) => (gate.release = resolve));
-        return new Response(null, { status: 204 });
-      },
+      fetch: async () => new Response(null, { status: 204 }),
     });
     uplink.start();
     expect(steps).toEqual(["uplink: chunked (fallback: this browser cannot stream a request body)"]);
+    expect(uplink.mode).toBe("chunked");
+    uplink.close();
+  });
+
+  test("chunks go out without waiting for the previous answer, numbered in order, at most MAX_CHUNKS_IN_FLIGHT at once", async () => {
+    const urls: string[] = [];
+    const bodies: number[] = [];
+    const gates: Array<() => void> = [];
+    const uplink = new RelayUplink({
+      url: "/api/calls/c/relay",
+      log: () => {},
+      fetch: async (url, init) => {
+        urls.push(url);
+        bodies.push((init.body as Uint8Array).byteLength / 2);
+        await new Promise<void>((resolve) => gates.push(resolve));
+        return new Response(null, { status: 204 });
+      },
+    });
     // Less than REP_RELAY_CHUNK_MS (640 samples) waits for more.
     uplink.send(block(1, 600));
     expect(bodies).toHaveLength(0);
     uplink.send(block(1, 100));
-    await waitFor(() => bodies.length === 1);
-    uplink.send(block(2, 400));
-    uplink.send(block(2, 400));
-    expect(bodies).toEqual([700]);
-    gate.release();
-    await waitFor(() => bodies.length === 2);
-    expect(bodies).toEqual([700, 800]);
-    gate.release();
+    uplink.send(block(2, 700));
+    // The second goes while the first is still out.
+    expect(bodies).toEqual([700, 700]);
+    const seqs = urls.map((url) => Number(new URL(url, "https://x").searchParams.get("seq")));
+    expect(seqs[1]!).toBeGreaterThan(seqs[0]!);
+    expect(urls[0]!.startsWith("/api/calls/c/relay?seq=")).toBe(true);
+    for (let i = 0; i < MAX_CHUNKS_IN_FLIGHT; i++) uplink.send(block(3, 700));
+    expect(bodies).toHaveLength(MAX_CHUNKS_IN_FLIGHT);
+    // At the cap, audio gathers and goes in the next free slot.
+    gates.shift()!();
+    await waitFor(() => bodies.length === MAX_CHUNKS_IN_FLIGHT + 1);
+    expect(bodies.at(-1)).toBe(700 * 2);
+    for (const release of gates) release();
     uplink.close();
   });
 });

@@ -6,6 +6,7 @@ import {
   assertProxyRules,
   isRelayUploadStream,
   readRelayPcm,
+  readRelaySeq,
   receiveRelayUpload,
   relayStreamResponse,
   repRelayCredential,
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       await runInOrganization(ctx.organizationId, () => requireRelayableCall(id));
     }
     if (streaming) await receiveRelayUpload(request, id, "rep");
-    else repRelay().up(id, "rep", await readRelayPcm(request));
+    else repRelay().up(id, "rep", await readRelayPcm(request), readRelaySeq(request));
     return new Response(null, { status: 204 });
   } catch (error) {
     return callApiErrorResponse(error);

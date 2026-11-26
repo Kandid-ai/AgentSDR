@@ -8,6 +8,7 @@ import {
   type RepRelayEvent,
 } from "./contract";
 import {
+  relaySeqPlays,
   encodeRelayEvent,
   PcmStreamSplitter,
   receiveUploadStream,
@@ -466,5 +467,22 @@ describe("receiveUploadStream", () => {
     const upload = uploadBody();
     await expect(receiveUploadStream(hub, CALL, "rep", upload.body, new AbortController().signal, timers)).rejects.toBeInstanceOf(RelayFullError);
     expect(upload.cancelled).toBe(true);
+  });
+});
+
+describe("relaySeqPlays (chunks under way at once)", () => {
+  test("only a newer chunk plays; a late or repeated one is dropped", () => {
+    expect(relaySeqPlays(null, 1_000)).toBe(true);
+    expect(relaySeqPlays(1_000, 1_040)).toBe(true);
+    expect(relaySeqPlays(1_040, 1_000)).toBe(false);
+    expect(relaySeqPlays(1_040, 1_040)).toBe(false);
+  });
+
+  test("a sender without seq (an older extension) always plays", () => {
+    expect(relaySeqPlays(1_040, null)).toBe(true);
+  });
+
+  test("a sender whose clock went back more than 5 s starts over instead of going silent", () => {
+    expect(relaySeqPlays(10_000, 4_000)).toBe(true);
   });
 });

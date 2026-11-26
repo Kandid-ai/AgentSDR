@@ -16,9 +16,13 @@
  *              The relay answers its first audio with an `uplink` event on
  *              this side's down stream (heard()). Every rotateMs a new
  *              stream starts and the old one's body ends.
- *   chunked    the fallback: one POST at a time of at least REP_RELAY_CHUNK_MS,
- *              what gathered meanwhile in the next; its round trips are
- *              logged every statsMs.
+ *   chunked    a POST as soon as REP_RELAY_CHUNK_MS has gathered, up to
+ *              MAX_CHUNKS_IN_FLIGHT at once, so audio never waits for the
+ *              previous POST's answer (a round trip to production is
+ *              ~280 ms; one at a time held the voice ~0.4 s on average
+ *              before it even left, each way). Each carries `seq` (its send
+ *              time, strictly increasing), and the relay drops one that
+ *              arrives after a newer one. Round trips are logged every statsMs.
  *
  * Streaming falls back for the rest of the call when this browser cannot
  * stream a request body (Firefox), or when the first stream fails before any
@@ -36,7 +40,7 @@
  * up quickly heard nobody.
  */
 
-import { REP_RELAY_CHUNK_MS, REP_RELAY_SAMPLE_RATE, REP_RELAY_STREAM_HEADER, REP_RELAY_STREAM_ROTATE_MS } from "./contract";
+import { REP_RELAY_CHUNK_MS, REP_RELAY_SAMPLE_RATE, REP_RELAY_SEQ_PARAM, REP_RELAY_STREAM_HEADER, REP_RELAY_STREAM_ROTATE_MS } from "./contract";
 import { PcmOutbox } from "./relayPcm";
 
 export type RelayUplinkMode = "streaming" | "chunked";
@@ -67,6 +71,13 @@ const ROTATED_ABORT_MS = 10_000;
 /** A stream that ended this soon, even cleanly, waits before the next. */
 const QUICK_END_MS = 1_000;
 const CHUNK_SAMPLES = Math.round((REP_RELAY_SAMPLE_RATE * REP_RELAY_CHUNK_MS) / 1000);
+/** Chunked POSTs under way at once: a round trip's worth of 40 ms chunks (~280 / 40), with room. */
+export const MAX_CHUNKS_IN_FLIGHT = 8;
+
+/** The chunk's URL with its sequence number: a query parameter, not a header, so no CORS preflight changes. */
+export function withRelaySeq(url: string, seq: number): string {
+  return `${url}${url.includes("?") ? "&" : "?"}${REP_RELAY_SEQ_PARAM}=${seq}`;
+}
 
 export type RelayUplinkOptions = {
   /** The side's relay URL (…/relay). */
@@ -213,8 +224,10 @@ export class RelayUplink {
   private upload: Upload | null = null;
   private state: StreamState = { worked: false, failures: 0 };
   private announced = false;
-  /** Chunked: a POST is out. */
-  private sending = false;
+  /** Chunked: POSTs under way. */
+  private inFlight = 0;
+  /** Chunked: the last POST's sequence number. */
+  private lastSeq = 0;
   /** Chunked: the last POST failed (logged once until one works). */
   private failing = false;
   private droppedSamples = 0;
@@ -253,7 +266,7 @@ export class RelayUplink {
       this.droppedSamples += dropped;
     }
     if (this.current === "streaming") wake(this.upload);
-    else void this.postChunks();
+    else this.postChunks();
   }
 
   /** Drops what is waiting (muted, or nobody to hear it). */
@@ -404,25 +417,24 @@ export class RelayUplink {
     const upload = this.upload;
     this.upload = null;
     upload?.abort.abort();
-    void this.postChunks();
+    this.postChunks();
   }
 
   // --- chunked ---
 
-  /** POSTs what is queued, one request at a time, while there is at least a chunk of it. */
-  private async postChunks(): Promise<void> {
-    if (this.sending) return;
-    this.sending = true;
-    try {
-      while (!this.closed && this.outbox.size >= CHUNK_SAMPLES) {
-        const body = this.outbox.take()!;
-        const started = Date.now();
-        try {
-          const response = await this.fetch(this.options.url, {
-            method: "POST",
-            headers: { ...this.options.headers, "Content-Type": "application/octet-stream" },
-            body,
-          });
+  /** POSTs what is queued as soon as there is a chunk of it, up to MAX_CHUNKS_IN_FLIGHT at once. */
+  private postChunks(): void {
+    while (!this.closed && this.inFlight < MAX_CHUNKS_IN_FLIGHT && this.outbox.size >= CHUNK_SAMPLES) {
+      const body = this.outbox.take()!;
+      const seq = (this.lastSeq = Math.max(this.lastSeq + 1, Date.now()));
+      const started = Date.now();
+      this.inFlight += 1;
+      this.fetch(withRelaySeq(this.options.url, seq), {
+        method: "POST",
+        headers: { ...this.options.headers, "Content-Type": "application/octet-stream" },
+        body,
+      })
+        .then((response) => {
           if (!response.ok) throw new Error(`AgentSDR answered ${response.status}`);
           const summary = this.trips.add(Date.now() - started, Date.now());
           if (summary) this.options.log(`uplink: ${summary}`);
@@ -430,16 +442,18 @@ export class RelayUplink {
             this.failing = false;
             this.options.log("uplink: sending works again");
           }
-        } catch (error) {
+        })
+        .catch((error: unknown) => {
           // Real-time audio: what did not get through is not sent again.
           if (!this.failing && !this.closed) {
             this.failing = true;
             this.options.log(`uplink: could not send audio: ${describe(error)}`);
           }
-        }
-      }
-    } finally {
-      this.sending = false;
+        })
+        .finally(() => {
+          this.inFlight -= 1;
+          this.postChunks();
+        });
     }
   }
 }

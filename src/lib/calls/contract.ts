@@ -636,6 +636,12 @@ export const REP_RELAY_MAX_CHUNK_MS = 1_000;
 /** Marks a POST whose body is a stream of PCM (value "1"), read as it arrives. */
 export const REP_RELAY_STREAM_HEADER = "X-Relay-Stream";
 /**
+ * A chunked POST's sequence number (query parameter): its send time in ms,
+ * strictly increasing per sender. Several chunks are under way at once, so
+ * the relay drops one that arrives after a newer one (relayUplink.ts).
+ */
+export const REP_RELAY_SEQ_PARAM = "seq";
+/**
  * Senders start a new upload stream this often, ending the old one. Proxies
  * limit how long reading one request may take (Traefik v3: 60 s, body
  * included), and a long call outlasts that.

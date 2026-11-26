@@ -6,7 +6,7 @@ import { assertExactKeys, assertObject } from "@/lib/crm/categories";
 import { DEMO_READ_ONLY_MESSAGE, demoRequestBlock } from "@/lib/demo/mode";
 import { migrationMutationBlockReason } from "@/lib/migration/controls";
 import type { CallAiLeadRequest } from "./aiCampaigns/api";
-import { REP_RELAY_STREAM_HEADER, type RepRelaySide } from "./contract";
+import { REP_RELAY_SEQ_PARAM, REP_RELAY_STREAM_HEADER, type RepRelaySide } from "./contract";
 import { callSessions } from "./schema";
 import { CallApiError, getCallInOrganization, isTerminalStatus } from "./sessions";
 import {
@@ -80,6 +80,14 @@ export function validateRelayPcm(bytes: Uint8Array): Uint8Array {
 }
 
 /** Reads a POST's PCM body, never more than the limit allows (a lying or absent Content-Length included). */
+/** A chunked POST's sequence number (REP_RELAY_SEQ_PARAM), or null when absent or not a positive integer. */
+export function readRelaySeq(request: Request): number | null {
+  const raw = new URL(request.url).searchParams.get(REP_RELAY_SEQ_PARAM);
+  if (!raw || !/^\d{1,16}$/.test(raw)) return null;
+  const seq = Number(raw);
+  return Number.isSafeInteger(seq) && seq > 0 ? seq : null;
+}
+
 export async function readRelayPcm(request: Request): Promise<Uint8Array> {
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > REP_RELAY_MAX_CHUNK_BYTES) {
