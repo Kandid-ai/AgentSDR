@@ -879,12 +879,22 @@ export async function claimStep(input: {
           inArray(callSessions.status, ["pending", "in_progress"]),
         ))
         .limit(1);
+      // A call step claimed but whose call is not inserted yet (another claim between its
+      // transaction and startCall). A started step whose call has ended — a rep's call
+      // waiting for its wrap-up — does not hold the number: that held the dialer on
+      // "waiting for the number" for up to 30 minutes (26 Nov 2026).
       const [running] = busy
         ? [busy]
         : await tx
             .select({ id: callCampaignStepRuns.id })
             .from(callCampaignStepRuns)
-            .where(and(eq(callCampaignStepRuns.stationId, station.id), eq(callCampaignStepRuns.status, "started"), eq(callCampaignStepRuns.kind, "call")))
+            .where(and(
+              eq(callCampaignStepRuns.stationId, station.id),
+              eq(callCampaignStepRuns.status, "started"),
+              eq(callCampaignStepRuns.kind, "call"),
+              isNull(callCampaignStepRuns.callSessionId),
+              gte(callCampaignStepRuns.createdAt, new Date(now.getTime() - STARTING_STALE_MS)),
+            ))
             .limit(1);
       if (running) return { kind: "station_taken" as const };
     }

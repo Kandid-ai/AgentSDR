@@ -23,7 +23,12 @@ function subscribeReducedMotion(listener: () => void): () => void {
 }
 const reducedMotionNow = () => window.matchMedia(REDUCED_MOTION).matches;
 
-/** Two short tones (A5 then E6), generated here: no asset. Blocked autoplay or no Web Audio: silent. */
+/**
+ * Beep-beep-beep on a pick-up: three short, loud tones at one pitch (the rep
+ * asked for an unmistakable beep; a soft two-note chime was easy to miss),
+ * about 0.6 s in all so the lead's first words are not lost under it.
+ * Generated here, no asset. Blocked autoplay or no Web Audio: silent.
+ */
 function playChime() {
   try {
     const Context = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -31,19 +36,22 @@ function playChime() {
     const context = new Context();
     void context.resume().catch(() => {});
     const start = context.currentTime + 0.02;
-    [[880, 0], [1318.5, 0.17]].forEach(([frequency, offset]) => {
+    const BEEP_S = 0.13;
+    const GAP_S = 0.08;
+    for (let i = 0; i < 3; i += 1) {
       const oscillator = context.createOscillator();
       const gain = context.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = frequency;
-      const at = start + offset;
+      oscillator.type = "square";
+      oscillator.frequency.value = 1_000;
+      const at = start + i * (BEEP_S + GAP_S);
       gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.exponentialRampToValueAtTime(0.22, at + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.3);
+      gain.gain.exponentialRampToValueAtTime(0.18, at + 0.01);
+      gain.gain.setValueAtTime(0.18, at + BEEP_S - 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + BEEP_S);
       oscillator.connect(gain).connect(context.destination);
       oscillator.start(at);
-      oscillator.stop(at + 0.32);
-    });
+      oscillator.stop(at + BEEP_S + 0.01);
+    }
     window.setTimeout(() => void context.close().catch(() => {}), 900);
   } catch {
     // The chime is a nicety; never break the call for it.

@@ -78,6 +78,8 @@ export function dialerReducer(phase: DialerPhase, event: DialerEvent): DialerPha
       if (phase.name !== "dialing") return phase;
       const { response } = event;
       if (response.kind === "calling") return { name: "calling", lead: response.lead, callId: response.callId, numberName: response.numberName };
+      // A picked-up call left without its wrap-up (a reload, a closed tab): record it first.
+      if (response.kind === "wrap-up") return { name: "wrap-up", lead: response.lead, callId: response.callId };
       // Keep the lead to prefer: the server waits while the call just made is still settling, and its redial goes first.
       if (response.kind === "waiting") return { name: "waiting", message: response.message, retryInMs: Math.max(500, response.retryInMs), prefer: phase.prefer };
       return { name: "stopped", notice: response.message, nextDueAt: response.nextDueAt };

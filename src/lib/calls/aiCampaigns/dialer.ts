@@ -144,6 +144,12 @@ export type DialerNextRequest = {
 
 export type DialerNextResponse =
   | { kind: "calling"; callId: string; numberName: string; lead: DialerLead }
+  /**
+   * A call of this campaign that was picked up still has no wrap-up (the tab
+   * that placed it was reloaded or closed): record it before the next call.
+   * Every picked-up call gets its outcome.
+   */
+  | { kind: "wrap-up"; callId: string; lead: DialerLead }
   /** Nothing can be placed this moment (the number is busy with a call or a message): ask again after retryInMs. */
   | { kind: "waiting"; message: string; retryInMs: number }
   /** Nothing to call now: the queue is empty, outside calling hours, or every number is at its limit. */

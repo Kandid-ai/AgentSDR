@@ -50,6 +50,11 @@ describe("start and dial results", () => {
     expect(dialerReducer(waiting, { type: "retry" })).toEqual({ name: "dialing", prefer: null });
   });
 
+  test("a picked-up call left without its wrap-up is wrapped up before the next call", () => {
+    const next = dialerReducer({ name: "dialing", prefer: null }, { type: "dial-result", response: { kind: "wrap-up", callId: "call-1", lead } });
+    expect(next).toEqual({ name: "wrap-up", callId: "call-1", lead });
+  });
+
   test("a wait keeps the lead to prefer, so a redial is not overtaken while the last call settles", () => {
     const waiting = dialerReducer({ name: "dialing", prefer: "lead-1" }, { type: "dial-result", response: { kind: "waiting", message: "busy", retryInMs: 2000 } });
     expect(dialerReducer(waiting, { type: "retry" })).toEqual({ name: "dialing", prefer: "lead-1" });

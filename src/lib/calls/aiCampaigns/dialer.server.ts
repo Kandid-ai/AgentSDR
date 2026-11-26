@@ -227,6 +227,8 @@ export async function dialNext(campaignId: string, request: DialerNextRequest): 
   }
 
   await settleOrganization();
+  const unfinished = await pendingWrapUp(campaign);
+  if (unfinished) return unfinished;
   const now = new Date();
   const { numbers, gapMinutes } = await campaignNumbers(campaign.id, now);
   if (!numbers.length) return { kind: "idle", message: "Choose a calling number for this campaign first", nextDueAt: null };
@@ -336,18 +338,48 @@ async function placeOnStation(station: StationRow, campaign: CampaignRow, now: D
       // Most failures here are the number's (not connected, its browser), not the lead's: tell the rep.
       throw error instanceof CallApiError ? error : new CallApiError(502, error instanceof Error ? error.message : "Could not place the call");
     }
-    return { kind: "calling", response: { kind: "calling", callId, numberName: station.name, lead: dialerLead(contact, lead, campaign, plan) } };
+    const stepNote = plan.step?.kind === "call" ? plan.step.instructions.trim() || null : null;
+    return { kind: "calling", response: { kind: "calling", callId, numberName: station.name, lead: dialerLead(contact, lead, campaign, stepNote) } };
   }
   return { kind: "none" };
+}
+
+/**
+ * The oldest picked-up rep call of this campaign still waiting for its
+ * wrap-up: its step is open, the call is over and recorded, and nobody gave
+ * it an outcome — the tab that placed it was reloaded or closed. The engine
+ * would hand it to a person after REP_OUTCOME_GRACE_MS anyway; asking now
+ * gets the rep's own word on it while it is fresh.
+ */
+export async function pendingWrapUp(campaign: CampaignRow): Promise<Extract<DialerNextResponse, { kind: "wrap-up" }> | null> {
+  const [row] = await db
+    .select({ callId: callSessions.id, contact: callCampaignContacts, person: people, company: companies })
+    .from(callCampaignStepRuns)
+    .innerJoin(callSessions, and(eq(callSessions.id, callCampaignStepRuns.callSessionId), inOrg(callSessions)))
+    .innerJoin(callCampaignContacts, eq(callCampaignContacts.id, callCampaignStepRuns.contactId))
+    .innerJoin(people, and(eq(people.id, callCampaignContacts.personId), inOrg(people)))
+    .leftJoin(companies, eq(companies.id, people.companyId))
+    .where(and(
+      contactInScope(),
+      eq(callCampaignContacts.campaignId, campaign.id),
+      eq(callCampaignStepRuns.status, "started"),
+      eq(callCampaignStepRuns.kind, "call"),
+      isNotNull(callSessions.remoteRep),
+      eq(callSessions.status, "recorded"),
+      sql`${callSessions.agentOutcome} is null`,
+    ))
+    .orderBy(asc(callSessions.createdAt))
+    .limit(1);
+  if (!row) return null;
+  return { kind: "wrap-up", callId: row.callId, lead: dialerLead(row.contact, { person: row.person, company: row.company }, campaign, null) };
 }
 
 function dialerLead(
   contact: ContactRow,
   lead: { person: typeof people.$inferSelect; company: typeof companies.$inferSelect | null },
   campaign: CampaignRow,
-  plan: ReturnType<typeof plannedAction>,
+  stepNote: string | null,
 ): DialerLead {
-  const step = "step" in plan && plan.step?.kind === "call" ? plan.step : null;
   return {
     contactId: contact.id,
     personId: contact.personId,
@@ -356,7 +388,7 @@ function dialerLead(
     title: lead.person.title ?? null,
     phone: lead.person.phone ?? "",
     stepLabel: currentStepLabel(contact, campaign) ?? "Call",
-    stepNote: step?.instructions.trim() || null,
+    stepNote,
     notes: contact.notes,
     status: contact.aiStatus ?? "queued",
     lastNote: contact.aiNote,
