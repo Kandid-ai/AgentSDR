@@ -40,6 +40,8 @@ import { isRemoteRepOver, microphoneErrorText, remoteRepView, type RemoteRepStag
 export type RemoteRepCallState = {
   callId: string | null;
   leadName: string;
+  /** The lead's company, when known (the bar shows it beside the name). */
+  leadCompany: string | null;
   numberName: string | null;
   stage: RemoteRepStage;
   /** On call: when the lead picked up (epoch ms). */
@@ -127,6 +129,7 @@ export function isRemoteRepCallActive(): boolean {
 
 export type StartRemoteRepCall = {
   leadName: string;
+  leadCompany?: string | null;
   numberName: string | null;
   /** Queues the call on the server (e.g. callAiLead with `remoteRep: true`). */
   place: () => Promise<{ callId: string; numberName?: string | null }>;
@@ -137,12 +140,12 @@ export type StartRemoteRepCall = {
  * with the call id once queued, or null if it was not (the reason is in the
  * state, so the call bar shows it). Nothing is queued without a microphone.
  */
-export async function startRemoteRepCall({ leadName, numberName, place }: StartRemoteRepCall): Promise<string | null> {
+export async function startRemoteRepCall({ leadName, leadCompany = null, numberName, place }: StartRemoteRepCall): Promise<string | null> {
   if (isRemoteRepCallActive()) throw new Error("You are already on a call");
   // A finished call still on the bar: drop it, so its late reads cannot touch this one.
   if (session) clearTimeout(session.timer);
   session = null;
-  emit({ callId: null, leadName, numberName, stage: "mic", answeredAt: null, message: null, muted: false, unstable: false, audioBlocked: false, endedBy: null });
+  emit({ callId: null, leadName, leadCompany, numberName, stage: "mic", answeredAt: null, message: null, muted: false, unstable: false, audioBlocked: false, endedBy: null });
 
   if (typeof AudioContext === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof ReadableStream === "undefined") {
     emit({ ...state!, stage: "error", message: "This browser can't place calls — use a recent Chrome, Edge or Firefox." });

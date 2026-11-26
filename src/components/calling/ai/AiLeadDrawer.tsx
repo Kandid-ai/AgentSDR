@@ -151,6 +151,7 @@ export function AiLeadDrawer({
       // How it goes (or why it did not) shows in the call bar.
       const callId = await startRemoteRepCall({
         leadName: who,
+        leadCompany: lead.companyName ?? null,
         numberName: lead.numberName,
         place: () => callAiLead(campaignId, contactId, { remoteRep: true }),
       });

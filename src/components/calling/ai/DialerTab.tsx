@@ -57,6 +57,8 @@ import {
   type WrapUpForm,
 } from "./dialerMachine";
 import { errorText } from "./aiShared";
+import { clearDialerSession, publishDialerSession } from "./dialerSession";
+import { dialerStatus } from "./dialerSessionText";
 
 const OVERVIEW_REFRESH_MS = 15_000;
 
@@ -76,6 +78,15 @@ function answeredOn(call: CallDetail): boolean {
   if (call.status === "recorded" || call.status === "in_progress") return true;
   const phase = call.livePhase;
   return (phase?.kind === "processing" || phase?.kind === "done") && (phase.durationMs ?? 0) > 0;
+}
+
+/** From the Start click only, never on load: a pick-up while this tab is hidden can then notify. */
+function askNotificationPermission() {
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission().catch(() => {});
+  } catch {
+    // Older browsers use a callback form; a missing notification is not worth an error.
+  }
 }
 
 export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail; onChanged: () => void }) {
@@ -168,7 +179,7 @@ export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail;
       void cancelCall(callId).catch(() => {});
       dispatch({ type: "call-not-started", message });
     };
-    startRemoteRepCall({ leadName: lead.name || lead.phone, numberName, place: async () => ({ callId, numberName }) })
+    startRemoteRepCall({ leadName: lead.name || lead.phone, leadCompany: lead.company, numberName, place: async () => ({ callId, numberName }) })
       .then((id) => { if (id === null) fail(remoteRepCallSnapshot()?.message ?? null); })
       .catch((cause) => fail(errorText(cause, "The call could not start")));
   }, [phase]);
@@ -200,6 +211,22 @@ export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail;
     return () => clearInterval(timer);
   }, [onCall]);
 
+  // Tell the call bar what the dialer is doing, so it shows between calls on any page.
+  const campaignName = campaign.name;
+  const status = dialerStatus(phase);
+  const statusText = status?.text ?? null;
+  const statusCanPause = status?.canPause ?? false;
+  const statusDismissible = status?.dismissible ?? false;
+  const pauseDialer = useCallback(() => dispatch({ type: "pause" }), []);
+  useEffect(() => {
+    if (statusText === null) {
+      clearDialerSession();
+      return;
+    }
+    publishDialerSession({ campaignId, campaignName, text: statusText, canPause: statusCanPause, dismissible: statusDismissible, pause: pauseDialer });
+  }, [campaignId, campaignName, statusText, statusCanPause, statusDismissible, pauseDialer]);
+  useEffect(() => clearDialerSession, []);
+
   const running = isRunning(phase);
   const live = phase.name === "calling" || phase.name === "wrap-up";
   const mine = phase.name === "calling" && call && (call.callId === phase.callId || call.callId === null) ? call : null;
@@ -230,7 +257,7 @@ export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail;
                 Pause
               </Button.Root>
             ) : (
-              <Button.Root variant="primary" mode="filled" size="small" onClick={() => dispatch({ type: "start" })} disabled={!active}>
+              <Button.Root variant="primary" mode="filled" size="small" onClick={() => { askNotificationPermission(); dispatch({ type: "start" }); }} disabled={!active}>
                 <Button.Icon as={RiPlayCircleLine} />
                 Start
               </Button.Root>
