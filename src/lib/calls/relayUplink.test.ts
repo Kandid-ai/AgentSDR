@@ -1,14 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { REP_RELAY_STREAM_HEADER } from "./contract";
-import { RelayUplink, RoundTrips, STREAM_FAILURES_BEFORE_FALLBACK, streamDecision } from "./relayUplink";
+import { forgetStreamingFallback, RelayUplink, RoundTrips, STREAM_FAILURES_BEFORE_FALLBACK, streamDecision } from "./relayUplink";
 
 describe("streamDecision", () => {
   const fresh = { worked: false, failures: 0 };
 
-  test(`falls back after ${STREAM_FAILURES_BEFORE_FALLBACK} failures in a row before any stream worked`, () => {
-    const once = streamDecision(fresh, { heard: false, error: "Failed to fetch" });
-    expect(once).toEqual({ worked: false, failures: 1, fallBack: false });
-    expect(streamDecision(once, { heard: false, error: "AgentSDR did not hear its audio in 5 s" }).fallBack).toBe(true);
+  test("falls back on the first failure before any stream worked: every second of probing is audio lost", () => {
+    expect(STREAM_FAILURES_BEFORE_FALLBACK).toBe(1);
+    expect(streamDecision(fresh, { heard: false, error: "AgentSDR did not hear its audio in 1.5 s" })).toEqual({ worked: false, failures: 1, fallBack: true });
   });
 
   test("a heard stream resets the count and proves streaming works: later failures only retry", () => {
@@ -21,8 +20,7 @@ describe("streamDecision", () => {
   });
 
   test("an attempt that ended quietly counts neither way", () => {
-    const once = streamDecision(fresh, { heard: false, error: "Failed to fetch" });
-    expect(streamDecision(once, { heard: false, error: null })).toEqual({ ...once, fallBack: false });
+    expect(streamDecision(fresh, { heard: false, error: null })).toEqual({ ...fresh, fallBack: false });
   });
 });
 
@@ -95,6 +93,8 @@ function fakeRelay(behaviour: (attempt: number) => StreamBehaviour) {
 const block = (value: number, samples = 700) => new Int16Array(samples).fill(value);
 
 describe("RelayUplink", () => {
+  beforeEach(forgetStreamingFallback);
+
   test("streams audio on one request as it comes, marked for the relay, and says so once heard", async () => {
     const relay = fakeRelay(() => "heard");
     const uplink = relay.open();
@@ -112,7 +112,7 @@ describe("RelayUplink", () => {
     uplink.close();
   });
 
-  test("falls back to chunked POSTs when streams are refused twice (no HTTP/2)", async () => {
+  test("falls back to chunked POSTs when a stream is refused (no HTTP/2)", async () => {
     const relay = fakeRelay(() => "refused");
     const uplink = relay.open();
     await waitFor(() => uplink.mode === "chunked");
@@ -135,6 +135,21 @@ describe("RelayUplink", () => {
     await waitFor(() => uplink.mode === "chunked");
     expect(relay.steps.at(-1)).toBe("uplink: chunked (fallback: AgentSDR did not hear its audio in 0.03 s)");
     uplink.close();
+  });
+
+  test("after a fallback, the page's next call sends chunks from the start, without probing", async () => {
+    const first = fakeRelay(() => "refused");
+    const uplink = first.open();
+    await waitFor(() => uplink.mode === "chunked");
+    uplink.close();
+    const next = fakeRelay(() => "heard");
+    const again = next.open();
+    expect(again.mode).toBe("chunked");
+    expect(next.steps).toEqual(["uplink: chunked (streaming did not get through on an earlier call)"]);
+    again.send(block(4));
+    await waitFor(() => next.posts.length === 1);
+    expect(next.streams).toHaveLength(0);
+    again.close();
   });
 
   test("once a stream worked, a refused one is retried with a stream, not given up on", async () => {

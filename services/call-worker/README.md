@@ -151,7 +151,8 @@ Redeploy only when the worker's own inputs change: every redeploy hangs up the c
 On Dokploy, auto-deploy with these Watch Paths (everything the image is built from; add a file
 here when the worker or extension starts importing another one from `src/lib/calls/`):
 `services/call-worker/**`, `extensions/whatsapp-recorder/**`, `src/lib/calls/contract.ts`,
-`src/lib/calls/stationContract.ts`, `src/lib/calls/digits.ts`, `src/lib/calls/whatsappContact.ts`.
+`src/lib/calls/stationContract.ts`, `src/lib/calls/digits.ts`, `src/lib/calls/whatsappContact.ts`,
+`src/lib/calls/relayUplink.ts`, `src/lib/calls/relayPcm.ts`, `src/lib/calls/liveAgent.ts`.
 The app's own service watches the single path `!services/call-worker/**` (any file except the
 worker's), so a worker-only change does not rebuild it; an extension change rebuilds both, since
 the app serves the extension's zip. Not `**` beside it: with both, Dokploy rebuilt the app for a

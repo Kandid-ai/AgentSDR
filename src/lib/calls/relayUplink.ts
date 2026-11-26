@@ -17,12 +17,19 @@
  *              logged every statsMs.
  *
  * Streaming falls back for the rest of the call when this browser cannot
- * stream a request body (Firefox), or when streams fail twice in a row
- * before any worked — refused (Chrome streams only over HTTP/2 or newer), or
- * carrying audio the relay never heard (something in between holds the body
- * back). Once one has worked, a failure (a network blip) only retries with
- * backoff. Either way the backlog is capped at REP_RELAY_MAX_CHUNK_MS, oldest
- * dropped: after a stall the other side hears now, not late.
+ * stream a request body (Firefox), or when the first stream fails before any
+ * worked — refused (Chrome streams only over HTTP/2 or newer), or carrying
+ * audio the relay did not hear within ackMs (something in between holds the
+ * body back). Once one has worked, a failure (a network blip) only retries
+ * with backoff. Either way the backlog is capped at REP_RELAY_MAX_CHUNK_MS,
+ * oldest dropped: after a stall the other side hears now, not late.
+ *
+ * A fallback is remembered by the page (STREAMING_RETRY_AFTER_MS): the next
+ * calls start as chunks at once. Production never heard a stream (26 Nov
+ * 2026: 12 of 12 failed — something in front of the app holds the body), and
+ * the probe of two 5 s attempts cost every call its first ~10 s of audio both
+ * ways: the rep saw "Ringing" long before hearing it, and a lead who picked
+ * up quickly heard nobody.
  */
 
 import { REP_RELAY_CHUNK_MS, REP_RELAY_SAMPLE_RATE, REP_RELAY_STREAM_HEADER, REP_RELAY_STREAM_ROTATE_MS } from "./contract";
@@ -44,7 +51,8 @@ export type RelayUplinkTiming = {
 };
 
 const DEFAULT_TIMING: RelayUplinkTiming = {
-  ackMs: 5_000,
+  // A heard stream is acked within a round trip (~0.3 s); waiting longer only loses audio.
+  ackMs: 1_500,
   rotateMs: REP_RELAY_STREAM_ROTATE_MS,
   backoffMs: [250, 500, 1_000, 2_000],
   statsMs: 10_000,
@@ -74,7 +82,18 @@ export type RelayUplinkOptions = {
 // --- pure pieces (tested) --------------------------------------------------------
 
 /** Failed streams in a row, before any worked, that send the rest of the call as chunks. */
-export const STREAM_FAILURES_BEFORE_FALLBACK = 2;
+export const STREAM_FAILURES_BEFORE_FALLBACK = 1;
+
+/** After streaming fell back on this page, later calls skip it for this long (then try again: the path may be fixed). */
+export const STREAMING_RETRY_AFTER_MS = 30 * 60_000;
+
+/** When streaming last fell back in this page (0: never) — the rep's tab and the station's WhatsApp tab each live across calls. */
+let streamingFellBackAt = 0;
+
+/** For tests: forget an earlier fallback. */
+export function forgetStreamingFallback(): void {
+  streamingFellBackAt = 0;
+}
 
 /** How one streaming attempt ended. */
 export type StreamAttempt = {
@@ -195,8 +214,10 @@ export class RelayUplink {
     this.timing = { ...DEFAULT_TIMING, ...options.timing };
     this.trips = new RoundTrips(this.timing.statsMs);
     const canStream = options.canStream ?? canStreamRequests();
-    this.current = canStream ? "streaming" : "chunked";
+    const fellBackRecently = streamingFellBackAt > 0 && Date.now() - streamingFellBackAt < STREAMING_RETRY_AFTER_MS;
+    this.current = canStream && !fellBackRecently ? "streaming" : "chunked";
     if (!canStream) options.log("uplink: chunked (fallback: this browser cannot stream a request body)");
+    else if (fellBackRecently) options.log("uplink: chunked (streaming did not get through on an earlier call)");
   }
 
   get mode(): RelayUplinkMode {
@@ -363,6 +384,7 @@ export class RelayUplink {
 
   private fallBack(reason: string): void {
     this.current = "chunked";
+    streamingFellBackAt = Date.now();
     this.options.log(`uplink: chunked (fallback: ${reason})`);
     const upload = this.upload;
     this.upload = null;
