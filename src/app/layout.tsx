@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Instrument_Serif, Inter as FontSans } from "next/font/google";
 import AppShell from "@/components/AppShell";
 import DialogProvider from "@/components/DialogProvider";
+import { DialerOverlay } from "@/components/calling/ai/DialerOverlay";
 import { RemoteRepCallBar } from "@/components/calls/RemoteRepCallBar";
 import { DemoProvider } from "@/components/demo/DemoProvider";
 import { brandDisplay } from "@/components/brand/font";
@@ -71,6 +72,8 @@ export default async function RootLayout({
               {modal}
               {/* A call the rep talks on through a calling number: survives navigation. */}
               <RemoteRepCallBar />
+              {/* The rep dialer's wrap-up and pop-out window: the dialer keeps going on every page. */}
+              <DialerOverlay />
             </DemoProvider>
           </DialogProvider>
         </ThemeProvider>

@@ -34,6 +34,7 @@ import {
 } from "@/lib/calls/contract";
 import { base64ToBytes, createDownsampler, leBytesToFloat32, nextPlayTime } from "@/lib/calls/relayPcm";
 import { RelayUplink } from "@/lib/calls/relayUplink";
+import { clearBackgroundTimeout, setBackgroundTimeout } from "./backgroundTimer";
 import { routePlayback, type PlaybackRoute } from "./echoLoopback";
 import { isRemoteRepOver, microphoneErrorText, remoteRepView, type RemoteRepStage } from "./remoteRepStage";
 
@@ -94,8 +95,9 @@ type Session = {
   reconnectMs: number;
   /** Media released: hung up, failed or over. */
   ended: boolean;
-  timer: ReturnType<typeof setTimeout> | undefined;
-  reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  // Background timers (backgroundTimer.ts): a hidden tab must still see the pick-up and the hang-up on time.
+  timer: number | undefined;
+  reconnectTimer: number | undefined;
 };
 
 let state: RemoteRepCallState | null = null;
@@ -143,7 +145,7 @@ export type StartRemoteRepCall = {
 export async function startRemoteRepCall({ leadName, leadCompany = null, numberName, place }: StartRemoteRepCall): Promise<string | null> {
   if (isRemoteRepCallActive()) throw new Error("You are already on a call");
   // A finished call still on the bar: drop it, so its late reads cannot touch this one.
-  if (session) clearTimeout(session.timer);
+  if (session) clearBackgroundTimeout(session.timer);
   session = null;
   emit({ callId: null, leadName, leadCompany, numberName, stage: "mic", answeredAt: null, message: null, muted: false, unstable: false, audioBlocked: false, endedBy: null });
 
@@ -269,7 +271,7 @@ export async function hangUpRemoteRepCall(): Promise<void> {
 /** Clears a finished call from the bar. */
 export function dismissRemoteRepCall() {
   if (state && isRemoteRepOver(state.stage)) {
-    if (session?.ended) clearTimeout(session.timer);
+    if (session?.ended) clearBackgroundTimeout(session.timer);
     session = null;
     emit(null);
   }
@@ -400,8 +402,8 @@ async function openRelayStream(s: Session) {
 
 function reconnect(s: Session) {
   if (s.ended || session !== s) return;
-  clearTimeout(s.reconnectTimer);
-  s.reconnectTimer = setTimeout(() => void openRelayStream(s), s.reconnectMs);
+  clearBackgroundTimeout(s.reconnectTimer);
+  s.reconnectTimer = setBackgroundTimeout(() => void openRelayStream(s), s.reconnectMs);
   s.reconnectMs = Math.min(RECONNECT_MAX_MS, s.reconnectMs * 2);
 }
 
@@ -475,7 +477,7 @@ async function poll(s: Session) {
     patch(s, { stage: view.stage, answeredAt: view.answeredAt ?? state?.answeredAt ?? null });
     refreshUnstable(s);
   }
-  s.timer = setTimeout(() => void poll(s), s.stationPresent ? POLL_LIVE_MS : POLL_WAITING_MS);
+  s.timer = setBackgroundTimeout(() => void poll(s), s.stationPresent ? POLL_LIVE_MS : POLL_WAITING_MS);
 }
 
 /**
@@ -486,8 +488,8 @@ async function poll(s: Session) {
 async function finish(s: Session, end: { stage: "ended" | "error"; message: string | null }, { settle = false } = {}) {
   if (s.ended) return;
   s.ended = true;
-  clearTimeout(s.timer);
-  clearTimeout(s.reconnectTimer);
+  clearBackgroundTimeout(s.timer);
+  clearBackgroundTimeout(s.reconnectTimer);
   s.down?.abort();
   s.down = null;
   s.uplink?.close();
@@ -514,7 +516,7 @@ async function settleEnding(s: Session, callId: string, until: number) {
   } catch {
     // Keep the ending already shown.
   }
-  s.timer = setTimeout(() => void settleEnding(s, callId, until), POLL_LIVE_MS);
+  s.timer = setBackgroundTimeout(() => void settleEnding(s, callId, until), POLL_LIVE_MS);
 }
 
 function warnBeforeUnload(event: BeforeUnloadEvent) {

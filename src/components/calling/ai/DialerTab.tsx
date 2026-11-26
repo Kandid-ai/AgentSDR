@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import {
   RiCalendarCheckLine,
   RiCheckboxCircleLine,
@@ -10,55 +11,23 @@ import {
   RiPauseCircleLine,
   RiPhoneLine,
   RiPlayCircleLine,
-  RiSendPlane2Line,
   RiTimeLine,
 } from "@remixicon/react";
 import * as Badge from "@/components/alignui/badge";
 import * as Button from "@/components/alignui/button";
-import * as Input from "@/components/alignui/input";
-import * as Modal from "@/components/alignui/modal";
-import * as Textarea from "@/components/alignui/textarea";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
 import { formatElapsed } from "@/components/calls/formatElapsed";
-import {
-  hangUpRemoteRepCall,
-  isRemoteRepCallActive,
-  remoteRepCallSnapshot,
-  startRemoteRepCall,
-  subscribeRemoteRepCall,
-} from "@/components/calls/remoteRepCall";
+import { openPip } from "@/components/calls/pipWindow";
+import { hangUpRemoteRepCall, remoteRepCallSnapshot, subscribeRemoteRepCall } from "@/components/calls/remoteRepCall";
 import { isRemoteRepOver } from "@/components/calls/remoteRepStage";
 import { EmptyState } from "@/components/page/EmptyState";
 import { StatRow } from "@/components/page/StatRow";
 import type { AiCampaignDetail } from "@/lib/calls/aiCampaigns/api";
-import { dialNext, getDialerOverview, sendDialerMessage, wrapUpDialerCall } from "@/lib/calls/aiCampaigns/client";
-import {
-  REP_CALL_OUTCOMES,
-  REP_CALL_OUTCOME_LABELS,
-  REP_MESSAGE_MAX_CHARS,
-  REP_NOTES_MAX_CHARS,
-  type DialerLead,
-  type DialerOverview,
-} from "@/lib/calls/aiCampaigns/dialer";
-import { cancelCall, getCall } from "@/lib/calls/client";
-import type { CallDetail } from "@/lib/calls/contract";
+import type { DialerLead } from "@/lib/calls/aiCampaigns/dialer";
 import { cn } from "@/utils/cn";
-import {
-  EMPTY_WRAP_UP,
-  STOPPED,
-  callStageLabel,
-  dialerReducer,
-  isRunning,
-  messageProblem,
-  wrapUpProblem,
-  wrapUpRequest,
-  wrapUpTime,
-  type DialerPhase,
-  type WrapUpForm,
-} from "./dialerMachine";
-import { errorText } from "./aiShared";
-import { clearDialerSession, publishDialerSession } from "./dialerSession";
-import { dialerStatus } from "./dialerSessionText";
+import { askNotificationPermission, pauseDialer, refreshDialerOverview, startDialer, useDialer } from "./dialerController";
+import { STOPPED, callStageLabel, isRunning, type DialerPhase } from "./dialerMachine";
+import { dialerCampaignHref } from "./dialerView";
 
 const OVERVIEW_REFRESH_MS = 15_000;
 
@@ -68,140 +37,42 @@ const when = (iso: string) => new Date(iso).toLocaleString(undefined, { weekday:
  * The Dialer tab of a rep campaign: Start places the next due lead's call
  * through a calling station and the rep talks from this tab (remoteRepCall.ts);
  * a call that was picked up ends in a wrap-up, one that was not goes on to the
- * next lead after a short countdown. The transitions are in dialerMachine.ts;
- * this component runs the requests, the call and the timers. The dialer lives in
- * this component: leave the page and it stops, while a call on carries on in
- * the call bar.
+ * next lead after a short countdown. The dialer runs in dialerController.ts,
+ * not here: leaving the page does not stop it (the call bar, the pop-out and
+ * the wrap-up follow the rep, DialerOverlay.tsx). This tab is a view of it.
  */
-/** The lead picked up: the extension marked the call started, it was recorded, or its phase reports a length. */
-function answeredOn(call: CallDetail): boolean {
-  if (call.status === "recorded" || call.status === "in_progress") return true;
-  const phase = call.livePhase;
-  return (phase?.kind === "processing" || phase?.kind === "done") && (phase.durationMs ?? 0) > 0;
-}
-
-/** From the Start click only, never on load: a pick-up while this tab is hidden can then notify. */
-function askNotificationPermission() {
-  try {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission().catch(() => {});
-  } catch {
-    // Older browsers use a callback form; a missing notification is not worth an error.
-  }
-}
-
 export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail; onChanged: () => void }) {
   const campaignId = campaign.id;
-  const [phase, dispatch] = useReducer(dialerReducer, STOPPED);
-  const phaseRef = useRef<DialerPhase>(phase);
-  const [overview, setOverview] = useState<DialerOverview | null>(null);
-  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const dialer = useDialer();
+  // Another campaign's dialer: this tab shows itself stopped, and Start is refused until that one is paused.
+  const ours = dialer.campaign?.id === campaignId;
+  const phase: DialerPhase = ours ? dialer.phase : STOPPED;
+  const busyElsewhere = !ours && dialer.campaign !== null && dialer.phase.name !== "stopped" ? dialer.campaign : null;
+  const overview = dialer.overviews[campaignId]?.data ?? null;
+  const overviewError = dialer.overviews[campaignId]?.error ?? null;
   const call = useSyncExternalStore(subscribeRemoteRepCall, remoteRepCallSnapshot, () => null);
   const [now, setNow] = useState(() => Date.now());
+  const [refusal, setRefusal] = useState<string | null>(null);
   const active = campaign.state === "active";
   const onChangedRef = useRef(onChanged);
 
   useEffect(() => {
-    phaseRef.current = phase;
     onChangedRef.current = onChanged;
   });
 
-  const refresh = useCallback(async () => {
-    try {
-      setOverview(await getDialerOverview(campaignId));
-      setOverviewError(null);
-    } catch (cause) {
-      setOverviewError(errorText(cause, "Could not load today's numbers"));
-    }
-  }, [campaignId]);
-
-  // The header's numbers: now, every 15 s while the tab is visible, and after every call.
+  // The header's numbers: now, every 15 s while the tab is visible (the controller refreshes them after every call).
   useEffect(() => {
     if (campaign.state === "draft") return;
-    const timer = setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, OVERVIEW_REFRESH_MS);
+    void refreshDialerOverview(campaignId);
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void refreshDialerOverview(campaignId); }, OVERVIEW_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [refresh, campaign.state]);
+  }, [campaignId, campaign.state]);
 
+  // At every phase change of this campaign's dialer (a call settling, a save): the page's own figures too.
   const phaseName = phase.name;
   useEffect(() => {
-    // On mount and at every phase change (a call settling, a save): bring the figures up to date.
-    if (campaign.state !== "draft") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      void refresh();
-      onChangedRef.current();
-    }
-  }, [phaseName, refresh, campaign.state]);
-
-  // Ask for the next lead. Once per dialing phase (a re-run of the effect must not queue a second call).
-  const requested = useRef<DialerPhase | null>(null);
-  useEffect(() => {
-    if (phase.name !== "dialing" || requested.current === phase) return;
-    requested.current = phase;
-    const mine = phase;
-    if (isRemoteRepCallActive()) {
-      dispatch({ type: "dial-failed", message: "You are on another call. Finish it, then press Start." });
-      return;
-    }
-    dialNext(campaignId, { preferContactId: mine.prefer })
-      .then((response) => {
-        if (phaseRef.current !== mine) {
-          // Paused (or restarted) while asking: a call queued meanwhile is withdrawn.
-          if (response.kind === "calling") void cancelCall(response.callId).catch(() => {});
-          return;
-        }
-        dispatch({ type: "dial-result", response });
-      })
-      .catch((cause) => {
-        if (phaseRef.current === mine) dispatch({ type: "dial-failed", message: errorText(cause, "Could not start the next call") });
-      });
-  }, [phase, campaignId]);
-
-  // Nothing could be placed this moment: ask again after a short wait.
-  useEffect(() => {
-    if (phase.name !== "waiting") return;
-    const timer = setTimeout(() => dispatch({ type: "retry" }), phase.retryInMs);
-    return () => clearTimeout(timer);
-  }, [phase]);
-
-  // The countdown to the next call.
-  useEffect(() => {
-    if (phase.name !== "countdown") return;
-    const timer = setTimeout(() => dispatch({ type: "tick" }), 1_000);
-    return () => clearTimeout(timer);
-  }, [phase]);
-
-  // The call is queued server-side already: open the microphone and let the rep's audio go.
-  const started = useRef<string | null>(null);
-  useEffect(() => {
-    if (phase.name !== "calling" || started.current === phase.callId) return;
-    const { callId, numberName, lead } = phase;
-    started.current = callId;
-    const fail = (message: string | null) => {
-      void cancelCall(callId).catch(() => {});
-      dispatch({ type: "call-not-started", message });
-    };
-    startRemoteRepCall({ leadName: lead.name || lead.phone, leadCompany: lead.company, numberName, place: async () => ({ callId, numberName }) })
-      .then((id) => { if (id === null) fail(remoteRepCallSnapshot()?.message ?? null); })
-      .catch((cause) => fail(errorText(cause, "The call could not start")));
-  }, [phase]);
-
-  // Watch the call; when it is over, the machine decides what follows.
-  useEffect(() => {
-    if (phase.name !== "calling" || started.current !== phase.callId || !call || !isRemoteRepOver(call.stage)) return;
-    if (call.callId !== phase.callId && call.callId !== null) return;
-    const end = { stage: call.stage, answeredAt: call.answeredAt, endedBy: call.endedBy, message: call.message };
-    if (end.answeredAt != null || end.endedBy === "rep" || end.stage === "error") {
-      dispatch({ type: "call-ended", end });
-      return;
-    }
-    // The bar polls every second or two, so a pick-up that ended between two polls was never
-    // seen on call: ask the call itself before reading it as unanswered (a pick-up needs a wrap-up).
-    let cancelled = false;
-    void getCall(phase.callId)
-      .then((detail) => (answeredOn(detail) ? { ...end, answeredAt: Date.now() } : end))
-      .catch(() => end)
-      .then((settled) => { if (!cancelled) dispatch({ type: "call-ended", end: settled }); });
-    return () => { cancelled = true; };
-  }, [phase, call]);
+    if (ours) onChangedRef.current();
+  }, [phaseName, ours]);
 
   // The call timer.
   const onCall = phase.name === "calling" && call?.callId === phase.callId && call.stage === "on-call";
@@ -211,21 +82,15 @@ export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail;
     return () => clearInterval(timer);
   }, [onCall]);
 
-  // Tell the call bar what the dialer is doing, so it shows between calls on any page.
-  const campaignName = campaign.name;
-  const status = dialerStatus(phase);
-  const statusText = status?.text ?? null;
-  const statusCanPause = status?.canPause ?? false;
-  const statusDismissible = status?.dismissible ?? false;
-  const pauseDialer = useCallback(() => dispatch({ type: "pause" }), []);
-  useEffect(() => {
-    if (statusText === null) {
-      clearDialerSession();
-      return;
-    }
-    publishDialerSession({ campaignId, campaignName, text: statusText, canPause: statusCanPause, dismissible: statusDismissible, pause: pauseDialer });
-  }, [campaignId, campaignName, statusText, statusCanPause, statusDismissible, pauseDialer]);
-  useEffect(() => clearDialerSession, []);
+  const start = () => {
+    const refused = startDialer({ id: campaignId, name: campaign.name });
+    setRefusal(refused);
+    if (refused) return;
+    // The same click opens the pop-out, so the rep can work elsewhere: first, while the click's
+    // user activation is fresh (requestWindow needs it), then the notification permission.
+    void openPip();
+    askNotificationPermission();
+  };
 
   const running = isRunning(phase);
   const live = phase.name === "calling" || phase.name === "wrap-up";
@@ -249,15 +114,15 @@ export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail;
       <Frame>
         <FrameHeader
           title="Dialer"
-          description="Press Start and the next lead is called from your campaign's number. When they pick up, you talk."
+          description="Press Start and the next lead is called from your campaign's number. When they pick up, you talk. It keeps going on any page of AgentSDR while this browser tab is open."
           actions={
             running ? (
-              <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => dispatch({ type: "pause" })} disabled={phase.name === "calling" || phase.name === "wrap-up"} title={live ? "Finish the call first" : undefined}>
+              <Button.Root variant="neutral" mode="stroke" size="small" onClick={pauseDialer} disabled={live} title={live ? "Finish the call first" : undefined}>
                 <Button.Icon as={RiPauseCircleLine} />
                 Pause
               </Button.Root>
             ) : (
-              <Button.Root variant="primary" mode="filled" size="small" onClick={() => { askNotificationPermission(); dispatch({ type: "start" }); }} disabled={!active}>
+              <Button.Root variant="primary" mode="filled" size="small" onClick={start} disabled={!active || busyElsewhere !== null} title={busyElsewhere ? "Pause the other campaign's dialer first" : undefined}>
                 <Button.Icon as={RiPlayCircleLine} />
                 Start
               </Button.Root>
@@ -265,6 +130,14 @@ export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail;
           }
         />
         <FramePanel className="space-y-4">
+          {busyElsewhere && (
+            <p role="status" className="text-paragraph-sm text-text-sub-600">
+              The dialer is working on{" "}
+              <Link href={dialerCampaignHref(busyElsewhere.id)} className="text-primary-base underline-offset-2 hover:underline">{busyElsewhere.name}</Link>
+              . Pause it there to call this campaign.
+            </p>
+          )}
+          {refusal && !busyElsewhere && <p role="alert" className="text-paragraph-sm text-error-base">{refusal}</p>}
           <StatRow
             items={[
               { label: "Dials today", value: num(today?.dials), icon: RiPhoneLine, hint: "Calls this campaign placed today" },
@@ -299,7 +172,7 @@ export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail;
                   phase.name === "countdown" ? (
                     <p role="status" className="flex flex-wrap items-center gap-3 text-paragraph-sm text-text-sub-600">
                       <span>Not answered. Next call in {phase.seconds}…</span>
-                      <Button.Root variant="neutral" mode="stroke" size="xsmall" onClick={() => dispatch({ type: "pause" })}>
+                      <Button.Root variant="neutral" mode="stroke" size="xsmall" onClick={pauseDialer}>
                         <Button.Icon as={RiPauseCircleLine} />
                         Pause
                       </Button.Root>
@@ -339,16 +212,6 @@ export function DialerTab({ campaign, onChanged }: { campaign: AiCampaignDetail;
           </Frame>
         )}
       </div>
-
-      {phase.name === "wrap-up" && (
-        <WrapUpModal
-          key={phase.callId}
-          lead={phase.lead}
-          callId={phase.callId}
-          campaignId={campaignId}
-          onSaved={(next) => dispatch({ type: "wrap-up-saved", next })}
-        />
-      )}
     </div>
   );
 }
@@ -419,148 +282,5 @@ function LeadCard({ lead, status }: { lead: DialerLead; status: React.ReactNode 
         </div>
       )}
     </div>
-  );
-}
-
-/** Shown after a call that was picked up. It cannot be dismissed: the outcome is how the lead moves on. */
-function WrapUpModal({
-  lead,
-  callId,
-  campaignId,
-  onSaved,
-}: {
-  lead: DialerLead;
-  callId: string;
-  campaignId: string;
-  onSaved: (next: boolean) => void;
-}) {
-  const [form, setForm] = useState<WrapUpForm>(EMPTY_WRAP_UP);
-  const [saving, setSaving] = useState<"pause" | "next" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [messageError, setMessageError] = useState<string | null>(null);
-
-  const time = wrapUpTime(form);
-  const problem = wrapUpProblem(form);
-
-  async function save(next: boolean) {
-    if (problem) { setError(problem); return; }
-    setSaving(next ? "next" : "pause");
-    setError(null);
-    try {
-      await wrapUpDialerCall(campaignId, wrapUpRequest(callId, form));
-      onSaved(next);
-    } catch (cause) {
-      setError(errorText(cause, "Could not save. Try again."));
-      setSaving(null);
-    }
-  }
-
-  async function send() {
-    const invalid = messageProblem(message);
-    if (invalid) { setMessageError(invalid); return; }
-    setSending(true);
-    setMessageError(null);
-    setSent(false);
-    try {
-      await sendDialerMessage(campaignId, { contactId: lead.contactId, body: message.trim() });
-      setSent(true);
-      setMessage("");
-    } catch (cause) {
-      setMessageError(errorText(cause, "Could not send the message"));
-    } finally {
-      setSending(false);
-    }
-  }
-
-  const busy = saving !== null;
-  return (
-    <Modal.Root open>
-      <Modal.Content
-        hideClose
-        size="max-w-xl"
-        onEscapeKeyDown={(event) => event.preventDefault()}
-        onPointerDownOutside={(event) => event.preventDefault()}
-        onInteractOutside={(event) => event.preventDefault()}
-      >
-        <Modal.Header icon={RiPhoneLine}>
-          <Modal.Title>How did the call go?</Modal.Title>
-          <Modal.Description>{lead.name || lead.phone}{lead.company ? ` · ${lead.company}` : ""}</Modal.Description>
-        </Modal.Header>
-        <Modal.Body className="space-y-5">
-          <fieldset>
-            <legend className="mb-2 text-label-sm text-text-strong-950">Outcome</legend>
-            <div role="radiogroup" aria-label="Outcome" className="grid gap-2 sm:grid-cols-2">
-              {REP_CALL_OUTCOMES.map((outcome) => {
-                const selected = form.outcome === outcome;
-                return (
-                  <button
-                    key={outcome}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    disabled={busy}
-                    onClick={() => { setError(null); setForm((current) => ({ ...current, outcome })); }}
-                    className={cn("rounded-xl p-3 text-left outline-none ring-1 ring-inset transition focus-visible:ring-2 focus-visible:ring-primary-base disabled:opacity-60", selected ? "bg-bg-weak-50 ring-primary-base" : "ring-stroke-soft-200 hover:bg-bg-weak-50")}
-                  >
-                    <span className="block text-label-sm text-text-strong-950">{REP_CALL_OUTCOME_LABELS[outcome].label}</span>
-                    <span className="mt-0.5 block text-paragraph-xs text-text-sub-600">{REP_CALL_OUTCOME_LABELS[outcome].help}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
-
-          {time && (
-            <div>
-              <label htmlFor="dialer-when" className="mb-1.5 block text-label-sm text-text-strong-950">
-                {form.outcome === "call_back" ? "Call back at" : "Follow up at"} {time === "optional" && <span className="text-text-soft-400">(optional)</span>}
-              </label>
-              <Input.Root size="small" className="w-64" hasError={time === "required" && !form.when && Boolean(error)}>
-                <Input.Wrapper>
-                  <Input.Input id="dialer-when" type="datetime-local" value={form.when} disabled={busy} onChange={(event) => { setError(null); setForm((current) => ({ ...current, when: event.target.value })); }} />
-                </Input.Wrapper>
-              </Input.Root>
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="dialer-notes" className="mb-1.5 block text-label-sm text-text-strong-950">Notes <span className="text-text-soft-400">(optional)</span></label>
-            <Textarea.Root id="dialer-notes" simple rows={3} maxLength={REP_NOTES_MAX_CHARS} value={form.notes} disabled={busy} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder="What they said, who to ask for, anything the next call should know." />
-            <div className="mt-1 flex justify-end text-paragraph-xs tabular-nums text-text-soft-400">{form.notes.length}/{REP_NOTES_MAX_CHARS}</div>
-          </div>
-
-          <div className="rounded-xl bg-bg-weak-50 p-3 ring-1 ring-inset ring-stroke-soft-200">
-            <label htmlFor="dialer-message" className="mb-1.5 block text-label-sm text-text-strong-950">Send a WhatsApp</label>
-            <p className="mb-2 text-paragraph-xs text-text-sub-600">From the same number, right now. It does not depend on saving the call.</p>
-            <Textarea.Root id="dialer-message" simple rows={2} maxLength={REP_MESSAGE_MAX_CHARS} value={message} disabled={sending} onChange={(event) => { setSent(false); setMessageError(null); setMessage(event.target.value); }} placeholder="Hi, great speaking just now …" />
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-paragraph-xs tabular-nums text-text-soft-400">{message.length}/{REP_MESSAGE_MAX_CHARS}</span>
-              <div className="flex items-center gap-3">
-                {sent && <span role="status" className="text-paragraph-xs text-success-base">Sent</span>}
-                {messageError && <span role="alert" className="text-paragraph-xs text-error-base">{messageError}</span>}
-                <Button.Root variant="neutral" mode="stroke" size="xsmall" onClick={() => void send()} disabled={sending || !message.trim()}>
-                  <Button.Icon as={sending ? RiLoader4Line : RiSendPlane2Line} className={cn(sending && "animate-spin")} />
-                  {sending ? "Sending…" : "Send"}
-                </Button.Root>
-              </div>
-            </div>
-          </div>
-        </Modal.Body>
-        <Modal.Footer>
-          {error && <p role="alert" className="mr-auto text-paragraph-sm text-error-base">{error}</p>}
-          <Button.Root variant="neutral" mode="stroke" size="small" onClick={() => void save(false)} disabled={busy || Boolean(problem)}>
-            <Button.Icon as={saving === "pause" ? RiLoader4Line : RiPauseCircleLine} className={cn(saving === "pause" && "animate-spin")} />
-            Pause
-          </Button.Root>
-          <Button.Root variant="primary" mode="filled" size="small" onClick={() => void save(true)} disabled={busy || Boolean(problem)}>
-            <Button.Icon as={saving === "next" ? RiLoader4Line : RiPlayCircleLine} className={cn(saving === "next" && "animate-spin")} />
-            Next lead
-          </Button.Root>
-        </Modal.Footer>
-      </Modal.Content>
-    </Modal.Root>
   );
 }

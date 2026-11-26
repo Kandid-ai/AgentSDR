@@ -1,37 +1,38 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { RiCloseLine, RiErrorWarningLine, RiLoader4Line, RiMicLine, RiMicOffLine, RiPauseCircleLine, RiPhoneFill, RiVolumeUpLine } from "@remixicon/react";
+import { RiVolumeUpLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import { cn } from "@/utils/cn";
-import { clearDialerSession, dialerCampaignHref, dialerSessionSnapshot, subscribeDialerSession } from "@/components/calling/ai/dialerSession";
-import { formatElapsed } from "./formatElapsed";
+import { dismissDialerNotice, pauseDialer, useDialer } from "@/components/calling/ai/dialerController";
+import { dialerStatus } from "@/components/calling/ai/dialerSessionText";
+import { dialerCampaignHref, dialerLeadPhone } from "@/components/calling/ai/dialerView";
+import { CallRow, DialerRow, PopOutButton } from "./callBarParts";
 import { PickupAlerts } from "./PickupAlerts";
-import { barTone, leadLine } from "./pickupAlert";
-import {
-  dismissRemoteRepCall,
-  hangUpRemoteRepCall,
-  remoteRepCallSnapshot,
-  resumeRemoteRepAudio,
-  setRemoteRepMuted,
-  subscribeRemoteRepCall,
-  type RemoteRepCallState,
-} from "./remoteRepCall";
+import { barTone } from "./pickupAlert";
+import { openPip, usePipSupported, usePipWindow } from "./pipWindow";
+import { dismissRemoteRepCall, remoteRepCallSnapshot, resumeRemoteRepAudio, subscribeRemoteRepCall } from "./remoteRepCall";
 import { isRemoteRepOver } from "./remoteRepStage";
 
 /** A call that ended normally leaves the bar after this; a failure stays until dismissed. */
 const ENDED_HIDE_MS = 10_000;
 
+const BAR = "pointer-events-auto fixed inset-x-4 bottom-4 z-[90] mx-auto max-w-md rounded-2xl p-3 shadow-regular-md ring-1 ring-inset animate-in fade-in-0 slide-in-from-bottom-2 sm:inset-x-auto sm:left-1/2 sm:w-[26rem] sm:-translate-x-1/2";
+
 /**
  * The floating bar for a call the rep talks on through a calling number
- * (remoteRepCall.ts): who, where it stands, mute and hang up. Mounted once in
- * the root layout, so it stays on screen across pages while the call is on.
+ * (remoteRepCall.ts): who, where it stands, mute and hang up; between the
+ * calls of a running dialer, what the dialer is doing. Mounted once in the
+ * root layout, so it stays on screen across pages. Its rows are shared with
+ * the pop-out window (callBarParts.tsx, DialerOverlay.tsx).
  */
 export function RemoteRepCallBar() {
   const call = useSyncExternalStore(subscribeRemoteRepCall, remoteRepCallSnapshot, () => null);
-  const dialer = useSyncExternalStore(subscribeDialerSession, dialerSessionSnapshot, () => null);
-  const [hangingUp, setHangingUp] = useState(false);
+  const { campaign, phase } = useDialer();
+  const pipSupported = usePipSupported();
+  const pip = usePipWindow();
+  const popOut = pipSupported && !pip ? () => void openPip() : null;
 
   const stage = call?.stage;
   useEffect(() => {
@@ -41,12 +42,27 @@ export function RemoteRepCallBar() {
   }, [stage]);
 
   // A running dialer keeps the bar up between calls: once a call is over, its status (and Pause) take the bar.
-  const showDialer = dialer && (!call || isRemoteRepOver(call.stage));
-  if (showDialer) {
+  const status = campaign ? dialerStatus(phase) : null;
+  if (campaign && status && (!call || isRemoteRepOver(call.stage))) {
     return (
       <>
         <PickupAlerts />
-        <DialerStatusBar dialer={dialer} />
+        <div role="region" aria-label="Dialer" className={cn(BAR, "bg-bg-white-0 ring-stroke-soft-200")}>
+          <DialerRow
+            campaignName={campaign.name}
+            text={status.text}
+            button={status.canPause ? "pause" : null}
+            dismissible={status.dismissible}
+            onPause={pauseDialer}
+            onDismiss={dismissDialerNotice}
+          />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <Link href={dialerCampaignHref(campaign.id)} className="text-paragraph-xs text-primary-base underline-offset-2 hover:underline">
+              Open the Dialer tab
+            </Link>
+            {popOut && <PopOutButton onClick={popOut} />}
+          </div>
+        </div>
       </>
     );
   }
@@ -54,163 +70,31 @@ export function RemoteRepCallBar() {
   const over = isRemoteRepOver(call.stage);
   const tone = barTone(call.stage);
 
-  const hangUp = async () => {
-    setHangingUp(true);
-    try {
-      await hangUpRemoteRepCall();
-    } finally {
-      setHangingUp(false);
-    }
-  };
-
   return (
     <>
-    <PickupAlerts />
-    <div
-      role="region"
-      aria-label="Call"
-      // pointer-events-auto: a modal (the lead drawer) sets pointer-events: none on <body>.
-      className={cn(
-        "pointer-events-auto fixed inset-x-4 bottom-4 z-[90] mx-auto max-w-md rounded-2xl p-3 shadow-regular-md ring-1 ring-inset animate-in fade-in-0 slide-in-from-bottom-2 sm:inset-x-auto sm:left-1/2 sm:w-[26rem] sm:-translate-x-1/2",
-        tone === "live" ? "bg-success-lighter ring-success-base" : "bg-bg-white-0 ring-stroke-soft-200",
-      )}
-    >
-      <div className="flex items-center gap-3">
-        <StageIcon call={call} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-label-sm text-text-strong-950">
-            {leadLine(call.leadName, call.leadCompany)}
-            {call.numberName && <span className="font-normal text-text-soft-400"> · from {call.numberName}</span>}
-          </p>
-          <p aria-live="polite" className={cn("text-paragraph-xs", call.stage === "error" ? "text-error-dark" : tone === "live" ? "text-label-sm text-success-dark" : "text-text-sub-600")}>
-            <StageText call={call} />
-          </p>
-        </div>
-        {!over ? (
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Button.Root
-              variant="neutral"
-              mode="stroke"
-              size="xsmall"
-              aria-pressed={call.muted}
-              aria-label={call.muted ? "Unmute" : "Mute"}
-              title={call.muted ? "Unmute" : "Mute"}
-              disabled={call.stage === "mic"}
-              onClick={() => setRemoteRepMuted(!call.muted)}
-            >
-              <Button.Icon as={call.muted ? RiMicOffLine : RiMicLine} className={cn(call.muted && "text-error-base")} />
-            </Button.Root>
-            <Button.Root variant="error" mode="filled" size="xsmall" disabled={call.stage === "mic" || hangingUp} onClick={() => void hangUp()}>
-              <Button.Icon as={hangingUp ? RiLoader4Line : RiPhoneFill} className={cn("rotate-[135deg]", hangingUp && "animate-spin")} />
-              {call.stage === "on-call" ? "Hang up" : "Cancel"}
-            </Button.Root>
-          </div>
-        ) : (
-          <Button.Root variant="neutral" mode="ghost" size="xsmall" aria-label="Close" title="Close" onClick={dismissRemoteRepCall}>
-            <Button.Icon as={RiCloseLine} />
+      <PickupAlerts />
+      <div
+        role="region"
+        aria-label="Call"
+        // pointer-events-auto: a modal (the lead drawer) sets pointer-events: none on <body>.
+        className={cn(BAR, tone === "live" ? "bg-success-lighter ring-success-base" : "bg-bg-white-0 ring-stroke-soft-200")}
+      >
+        <CallRow call={call} phone={dialerLeadPhone(phase, call)} />
+        {!over && call.audioBlocked && (
+          <Button.Root variant="primary" mode="lighter" size="xxsmall" className="mt-2 w-full" onClick={resumeRemoteRepAudio}>
+            <Button.Icon as={RiVolumeUpLine} />
+            The browser paused the call audio — click to hear them
           </Button.Root>
         )}
+        {((!over && call.stage !== "mic") || popOut) && (
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <p className="text-paragraph-xs text-text-soft-400">
+              {over || call.stage === "mic" ? "" : call.stage === "on-call" ? "Use headphones for the best sound." : "Keep this tab open — the call runs through it. Use headphones for the best sound."}
+            </p>
+            {popOut && <PopOutButton onClick={popOut} />}
+          </div>
+        )}
       </div>
-      {!over && call.audioBlocked && (
-        <Button.Root variant="primary" mode="lighter" size="xxsmall" className="mt-2 w-full" onClick={resumeRemoteRepAudio}>
-          <Button.Icon as={RiVolumeUpLine} />
-          The browser paused the call audio — click to hear them
-        </Button.Root>
-      )}
-      {!over && call.stage !== "mic" && (
-        <p className="mt-2 text-paragraph-xs text-text-soft-400">
-          {call.stage === "on-call" ? "Use headphones for the best sound." : "Keep this tab open — the call runs through it. Use headphones for the best sound."}
-        </p>
-      )}
-    </div>
     </>
   );
-}
-
-/** Between calls of a running dialer: what it is doing, Pause, and the way back to the Dialer tab. */
-function DialerStatusBar({ dialer }: { dialer: NonNullable<ReturnType<typeof dialerSessionSnapshot>> }) {
-  return (
-    <div
-      role="region"
-      aria-label="Dialer"
-      className="pointer-events-auto fixed inset-x-4 bottom-4 z-[90] mx-auto max-w-md rounded-2xl bg-bg-white-0 p-3 shadow-regular-md ring-1 ring-inset ring-stroke-soft-200 animate-in fade-in-0 slide-in-from-bottom-2 sm:inset-x-auto sm:left-1/2 sm:w-[26rem] sm:-translate-x-1/2"
-    >
-      <div className="flex items-center gap-3">
-        <RiLoader4Line className={cn("size-4 shrink-0 text-text-sub-600", dialer.canPause && "animate-spin")} aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-label-sm text-text-strong-950">
-            Dialer<span className="font-normal text-text-soft-400"> · {dialer.campaignName}</span>
-          </p>
-          <p aria-live="polite" className="text-paragraph-xs text-text-sub-600">{dialer.text}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {dialer.canPause ? (
-            <Button.Root variant="neutral" mode="stroke" size="xsmall" onClick={dialer.pause}>
-              <Button.Icon as={RiPauseCircleLine} />
-              Pause
-            </Button.Root>
-          ) : dialer.dismissible ? (
-            <Button.Root variant="neutral" mode="ghost" size="xsmall" aria-label="Close" title="Close" onClick={clearDialerSession}>
-              <Button.Icon as={RiCloseLine} />
-            </Button.Root>
-          ) : null}
-        </div>
-      </div>
-      <Link href={dialerCampaignHref(dialer.campaignId)} className="mt-2 inline-block text-paragraph-xs text-primary-base underline-offset-2 hover:underline">
-        Open the Dialer tab
-      </Link>
-    </div>
-  );
-}
-
-function StageIcon({ call }: { call: RemoteRepCallState }) {
-  if (call.stage === "on-call") {
-    return (
-      <span className="relative flex size-2.5 shrink-0" aria-hidden="true">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-success-base opacity-75" />
-        <span className="relative inline-flex size-2.5 rounded-full bg-success-base" />
-      </span>
-    );
-  }
-  if (call.stage === "error") return <RiErrorWarningLine className="size-4 shrink-0 text-error-base" aria-hidden="true" />;
-  if (call.stage === "ended") return <RiPhoneFill className="size-4 shrink-0 rotate-[135deg] text-text-soft-400" aria-hidden="true" />;
-  return <RiLoader4Line className="size-4 shrink-0 animate-spin text-text-sub-600" aria-hidden="true" />;
-}
-
-function StageText({ call }: { call: RemoteRepCallState }) {
-  const number = call.numberName ?? "the number";
-  switch (call.stage) {
-    case "mic":
-      return <>Getting your microphone…</>;
-    case "placing":
-      return <>Placing the call…</>;
-    case "waiting":
-      return <>Waiting for {number} to be free…</>;
-    case "opening":
-      return <>Opening {number}&apos;s WhatsApp…</>;
-    case "dialing":
-      return <>Calling…</>;
-    case "ringing":
-      return <>Ringing…</>;
-    case "on-call":
-      return (
-        <>
-          On call · <OnCallTimer answeredAt={call.answeredAt} />
-          {call.muted && " · muted"}
-          {call.unstable && " · connection unstable…"}
-        </>
-      );
-    case "ended":
-    case "error":
-      return <>{call.message ?? (call.stage === "error" ? "The call failed" : "Call ended")}</>;
-  }
-}
-
-function OnCallTimer({ answeredAt }: { answeredAt: number | null }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, []);
-  return <span className="tabular-nums">{answeredAt ? formatElapsed(now - answeredAt) : "0:00"}</span>;
 }

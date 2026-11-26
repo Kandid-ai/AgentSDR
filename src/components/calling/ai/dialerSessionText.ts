@@ -1,4 +1,4 @@
-/** What the dialer is doing, in words for the call bar between calls (pure; see dialerSession.ts). */
+/** What the dialer is doing, in words for the call bar between calls and the pop-out (pure; see dialerController.ts). */
 import type { DialerPhase } from "./dialerMachine";
 
 export type DialerStatus = { text: string; /** The rep can pause now (not mid-call, not in wrap-up). */ canPause: boolean; /** Only a stopped dialer's notice can be closed from the bar. */ dismissible: boolean } | null;

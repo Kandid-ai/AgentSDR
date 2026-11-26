@@ -672,8 +672,15 @@ A campaign with `call_campaigns.ai_caller = 'rep'` (fixed at creation, "New
 rep campaign"; `scripts/add-ai-campaign-caller.ts`) is an AI campaign that a
 rep talks on. It has the same sequence, leads, numbers, Sending rules and
 outcome rules. Spec: `src/lib/calls/aiCampaigns/dialer.ts`; server half:
-`dialer.server.ts`; page: the campaign's Dialer tab (`DialerTab.tsx`,
-`dialerMachine.ts`).
+`dialer.server.ts`. The runtime is app-wide, not the campaign page's:
+`src/components/calling/ai/dialerController.ts`, a module-level store driving
+`dialerMachine.ts`. It keeps dialing on every page while the tab is open.
+`DialerOverlay.tsx`, in the root layout, shows the wrap-up anywhere and the
+pop-out window (Document Picture-in-Picture, `src/components/calls/pipWindow.ts`).
+The pop-out opens from the Start click and floats over other apps.
+`DialerTab.tsx` is only a view. Timers that must keep time in a hidden tab (the
+dialer's, and remoteRepCall's polls) run on `backgroundTimer.ts`, a worker.
+A pick-up glows, chimes and notifies (`PickupAlerts.tsx`).
 
 - **Who places what.** The engine never places a rep campaign's calls
   (`pickDueContact` skips a lead whose next action is a call). It still
@@ -696,6 +703,10 @@ outcome rules. Spec: `src/lib/calls/aiCampaigns/dialer.ts`; server half:
   - The rep hanging up before the lead answers pauses the dialer.
   - A call withdrawn before any number took it is `cancelled`, not an attempt:
     the same step runs again.
+- **Audio goes up as POSTs** (`RelayUplink`, chunked by default). Nothing in
+  front of production lets a streaming upload through (12 of 12 failed,
+  26 Nov 2026), and probing for one cost each call ~11 s of audio both ways.
+  `tryStreaming` keeps the path for a deployment where streams do arrive.
 - **Incoming calls.** A rep campaign's lead who calls a station back is never
   answered by the AI. It rings out and becomes a call-back due now, at the
   front of the dialer.

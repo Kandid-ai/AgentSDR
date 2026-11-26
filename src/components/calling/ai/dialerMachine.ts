@@ -1,6 +1,6 @@
 /**
  * The rep dialer's state transitions, pure so they can be tested without a
- * browser (DialerTab.tsx runs the effects: the requests, the call, the timers).
+ * browser (dialerController.ts runs the effects: the requests, the call, the timers).
  *
  *   stopped ──start──▶ dialing ──calling──▶ calling ──ended──▶ wrap-up ──Next lead──▶ dialing
  *                         │  ├──waiting──▶ waiting ──retry──▶ dialing        └─Pause──▶ stopped

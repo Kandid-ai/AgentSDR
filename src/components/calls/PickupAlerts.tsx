@@ -9,6 +9,7 @@ import {
   glowState,
   isPickupTransition,
   pickupNotification,
+  type GlowState,
 } from "./pickupAlert";
 import type { RemoteRepStage } from "./remoteRepStage";
 
@@ -63,18 +64,13 @@ export function PickupAlerts() {
   const leadName = call?.leadName ?? "";
   const leadCompany = call?.leadCompany ?? null;
   const previous = useRef<RemoteRepStage | null>(stage);
-  const [pickupAt, setPickupAt] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const reduced = useSyncExternalStore(subscribeReducedMotion, reducedMotionNow, () => false);
+  const glow = usePickupGlow(stage);
 
-  // The transition: once per arrival at on-call.
+  // The chime and the notification: once per arrival at on-call.
   useEffect(() => {
     const before = previous.current;
     previous.current = stage;
     if (!isPickupTransition(before, stage)) return;
-    const at = Date.now();
-    setPickupAt(at);
-    setNow(at);
     playChime();
     let permission: NotificationPermission | "unsupported" = "unsupported";
     try {
@@ -89,13 +85,6 @@ export function PickupAlerts() {
     }
   }, [stage, leadName, leadCompany]);
 
-  // Move the glow on at the end of the flash and the pulse.
-  useEffect(() => {
-    if (stage !== "on-call" || pickupAt === null) return;
-    const timers = [PICKUP_FLASH_MS, PICKUP_FLASH_MS + PICKUP_PULSE_MS].map((ms) => window.setTimeout(() => setNow(Date.now()), Math.max(0, pickupAt + ms - Date.now()) + 5));
-    return () => timers.forEach(window.clearTimeout);
-  }, [stage, pickupAt]);
-
   // The tab title, put back afterwards.
   const title = callTabTitle(stage, leadName);
   useEffect(() => {
@@ -105,9 +94,42 @@ export function PickupAlerts() {
     return () => { document.title = original; };
   }, [title]);
 
-  const glow = glowState(stage, pickupAt === null ? Infinity : now - pickupAt, reduced);
-  if (glow === "none") return null;
+  return <PickupGlow glow={glow} />;
+}
 
+/**
+ * The glow for a call's stage: the flash, the pulse, then the steady edge,
+ * timed from the pick-up seen by this hook (each user — the page, the
+ * pop-out — times its own).
+ */
+export function usePickupGlow(stage: RemoteRepStage | null): GlowState {
+  const previous = useRef<RemoteRepStage | null>(stage);
+  const [pickupAt, setPickupAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const reduced = useSyncExternalStore(subscribeReducedMotion, reducedMotionNow, () => false);
+
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = stage;
+    if (!isPickupTransition(before, stage)) return;
+    const at = Date.now();
+    setPickupAt(at);
+    setNow(at);
+  }, [stage]);
+
+  // Move the glow on at the end of the flash and the pulse.
+  useEffect(() => {
+    if (stage !== "on-call" || pickupAt === null) return;
+    const timers = [PICKUP_FLASH_MS, PICKUP_FLASH_MS + PICKUP_PULSE_MS].map((ms) => window.setTimeout(() => setNow(Date.now()), Math.max(0, pickupAt + ms - Date.now()) + 5));
+    return () => timers.forEach(window.clearTimeout);
+  }, [stage, pickupAt]);
+
+  return glowState(stage, pickupAt === null ? Infinity : now - pickupAt, reduced);
+}
+
+/** The green layers over the viewport it renders in (the page, or the pop-out window). */
+export function PickupGlow({ glow }: { glow: GlowState }) {
+  if (glow === "none") return null;
   return (
     <>
       <style>{`
