@@ -12,8 +12,10 @@
  *     `remoteRep`, so the rep talks from their tab through the station.
  *   - A lead keeps the number that first called it (ai_station_id). Numbers
  *     rotate across leads, not within one.
- *   - A redial can be instant. Rep campaigns have no 10-minute minimum
- *     between steps.
+ *   - Steps wait exactly their delay, set to the minute (stepDelay.ts): 0 is
+ *     right away. Rep campaigns have no 10-minute minimum between steps. The
+ *     dialer always calls the most urgent due lead, so a lead whose 5-minute
+ *     redial has come due is called before new leads.
  *   - After a call that was picked up, the rep's wrap-up (outcome, notes) is
  *     stored as the call's agent_outcome, and engineRules.afterCall applies it
  *     exactly as it applies the agent's record_outcome.
@@ -34,10 +36,16 @@ export const AI_CAMPAIGN_CALLER_LABELS: Record<AiCampaignCaller, { label: string
   },
 };
 
-/** A rep campaign's starting sequence: call, redial at once, "Hi", call the next day. */
+/**
+ * A rep campaign's starting sequence, only a template the campaign edits:
+ * call, redial 5 minutes later, "Hi", call the next day. Each step runs only
+ * if they have not picked up for a real conversation. A wait of 0 is right
+ * away. The dialer calls whichever lead's next call is due first, so it
+ * returns to a lead once its redial's wait is up, between other leads.
+ */
 export const DEFAULT_REP_STEPS: AiCampaignStep[] = [
   { id: "call-1", kind: "call", delayHours: 0, instructions: "" },
-  { id: "call-2", kind: "call", delayHours: 0, instructions: "Redial straight away: a second ring right after a missed one is often picked up." },
+  { id: "call-2", kind: "call", delayHours: 5 / 60, instructions: "Redial: they missed your call a few minutes ago." },
   { id: "message-1", kind: "message", delayHours: 0, body: "Hi {{firstName}}" },
   { id: "call-3", kind: "call", delayHours: 24, instructions: "Next day: they have your missed calls and the Hi." },
 ];

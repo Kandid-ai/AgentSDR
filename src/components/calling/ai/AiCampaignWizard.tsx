@@ -27,7 +27,7 @@ import { TextField } from "@/components/calls/fields";
 import AddPeopleToCampaignModal from "@/components/leads/AddPeopleToCampaignModal";
 import CampaignCsvMappingDialog from "@/components/leads/CampaignCsvMappingDialog";
 import { PageHeader } from "@/components/page/PageHeader";
-import { formatDelay } from "@/components/whatsapp/campaigns/metrics";
+import { formatStepDelay } from "@/lib/calls/aiCampaigns/stepDelay";
 import {
   AI_CAMPAIGN_MAX_INSTRUCTIONS,
   aiLaunchBlocker,
@@ -449,7 +449,7 @@ export function AiCampaignWizard({ initialCaller = "agent" }: { initialCaller?: 
                     {campaign.steps.map((item, index) => (
                       <li key={item.id} className="flex items-center justify-between gap-4 py-2.5 text-paragraph-sm">
                         <span className="min-w-0">
-                          <span className="block text-text-sub-600">{item.kind === "call" ? (rep ? "Call" : "AI call") : "WhatsApp message"}{index > 0 ? ` · after ${formatDelay(item.delayHours)}` : " · first"}</span>
+                          <span className="block text-text-sub-600">{item.kind === "call" ? (rep ? "Call" : "AI call") : "WhatsApp message"}{index > 0 ? ` · after ${formatStepDelay(item.delayHours)}` : " · first"}</span>
                           <span className="block max-w-md truncate text-paragraph-xs text-text-soft-400">{item.kind === "call" ? item.instructions || (rep ? "No note" : "No extra instructions") : item.body}</span>
                         </span>
                         <RiCheckLine className="size-4 shrink-0 text-success-base" aria-hidden="true" />

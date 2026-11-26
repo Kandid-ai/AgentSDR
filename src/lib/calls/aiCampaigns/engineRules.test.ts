@@ -504,6 +504,14 @@ describe("a rep's campaign (dialer)", () => {
     expect(decision.nextAt?.getTime()).toBe(NOW.getTime());
   });
 
+  test("a redial set to 5 minutes is due exactly 5 minutes after the missed call", () => {
+    const fiveMinutes = campaign({ caller: "rep", steps: redial.map((step, i) => (i === 1 ? { ...step, delayHours: 5 / 60 } : step)) });
+    expect(afterCall(contact({ step: 0 }), "no_answer", null, fiveMinutes, NOW).nextAt?.getTime()).toBe(NOW.getTime() + 5 * 60_000);
+    // An agent's campaign keeps its 10-minute floor for the same step.
+    const agent = { ...fiveMinutes, caller: "agent" as const };
+    expect(afterCall(contact({ step: 0 }), "no_answer", null, agent, NOW).nextAt?.getTime()).toBe(NOW.getTime() + MIN_STEP_GAP_MS);
+  });
+
   test("an agent's campaign keeps the minimum gap between steps", () => {
     const decision = afterCall(contact({ step: 0 }), "no_answer", null, campaign({ steps: redial }), NOW);
     expect(decision.nextAt?.getTime()).toBe(NOW.getTime() + MIN_STEP_GAP_MS);

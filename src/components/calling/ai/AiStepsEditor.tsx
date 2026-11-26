@@ -26,17 +26,16 @@ import {
 } from "@/lib/calls/aiCampaigns/contract";
 import { AI_MESSAGE_FIELDS, previewAiMessage, type AiStepStat } from "@/lib/calls/aiCampaigns/api";
 import type { AiCampaignCaller } from "@/lib/calls/aiCampaigns/dialer";
-import { formatDelay } from "@/components/whatsapp/campaigns/metrics";
+import { delayHoursFrom, delayUnitOf, delayValueIn, formatStepDelay, type StepDelayUnit } from "@/lib/calls/aiCampaigns/stepDelay";
 import { cn } from "@/utils/cn";
 
-type Unit = "hours" | "days";
+type Unit = StepDelayUnit;
 
 export function newAiStep(kind: AiCampaignStep["kind"], delayHours: number): AiCampaignStep {
   const id = `step-${crypto.randomUUID().slice(0, 8)}`;
   return kind === "call" ? { id, kind, delayHours, instructions: "" } : { id, kind, delayHours, body: "" };
 }
 
-const unitOf = (hours: number): Unit => (hours > 0 && hours % 24 === 0 ? "days" : "hours");
 
 /**
  * An ordered list of call and WhatsApp-message steps: kind, wait after the
@@ -116,8 +115,8 @@ export function AiStepsEditor({
       )}
       <ol className="flex flex-col">
         {steps.map((step, index) => {
-          const unit = units[step.id] ?? unitOf(step.delayHours);
-          const delayValue = unit === "days" ? step.delayHours / 24 : step.delayHours;
+          const unit = units[step.id] ?? delayUnitOf(step.delayHours);
+          const delayValue = delayValueIn(step.delayHours, unit);
           const stat = statOf(step);
           const Icon = step.kind === "call" ? RiPhoneLine : RiChat1Line;
           return (
@@ -126,7 +125,7 @@ export function AiStepsEditor({
                 <div className="flex items-center gap-2 py-2 pl-5 text-paragraph-xs text-text-soft-400">
                   <span aria-hidden="true" className="h-4 w-px bg-stroke-soft-200" />
                   <RiTimerLine className="size-3.5" aria-hidden="true" />
-                  Wait {formatDelay(step.delayHours)}, if they have not had a real conversation
+                  {step.delayHours > 0 ? `Wait ${formatStepDelay(step.delayHours)}` : "Right away"}, if they have not had a real conversation
                 </div>
               )}
               <div className="rounded-xl bg-bg-white-0 p-4 shadow-regular-xs ring-1 ring-inset ring-stroke-soft-200">
@@ -167,10 +166,10 @@ export function AiStepsEditor({
                         <Input.Input
                           type="number"
                           min={0}
-                          max={unit === "days" ? AI_CAMPAIGN_MAX_DELAY_HOURS / 24 : AI_CAMPAIGN_MAX_DELAY_HOURS}
+                          max={delayValueIn(AI_CAMPAIGN_MAX_DELAY_HOURS, unit)}
                           aria-label="Wait before this step"
                           value={Number.isFinite(delayValue) ? String(delayValue) : ""}
-                          onChange={(event) => patch(step.id, { delayHours: Math.round(unit === "days" ? Number(event.target.value) * 24 : Number(event.target.value)) })}
+                          onChange={(event) => patch(step.id, { delayHours: Math.min(AI_CAMPAIGN_MAX_DELAY_HOURS, delayHoursFrom(Number(event.target.value), unit)) })}
                         />
                       </Input.Wrapper>
                     </Input.Root>
@@ -180,11 +179,13 @@ export function AiStepsEditor({
                       onValueChange={(value) => {
                         const next = value as Unit;
                         setUnits((current) => ({ ...current, [step.id]: next }));
-                        if (next === "days") patch(step.id, { delayHours: Math.max(24, Math.round(step.delayHours / 24) * 24) });
+                        // Keep the number typed, read in the new unit ("5 minutes" → "5 hours"), as people expect of a unit picker.
+                        patch(step.id, { delayHours: Math.min(AI_CAMPAIGN_MAX_DELAY_HOURS, delayHoursFrom(delayValueIn(step.delayHours, unit), next)) });
                       }}
                     >
                       <Select.Trigger className="w-28" aria-label="Wait unit"><Select.Value /></Select.Trigger>
                       <Select.Content>
+                        <Select.Item value="minutes">minutes</Select.Item>
                         <Select.Item value="hours">hours</Select.Item>
                         <Select.Item value="days">days</Select.Item>
                       </Select.Content>

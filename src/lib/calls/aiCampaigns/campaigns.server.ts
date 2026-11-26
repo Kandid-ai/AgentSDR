@@ -71,6 +71,7 @@ import {
 } from "./api";
 import { loadLeadActivity } from "./leadActivity";
 import { AI_CAMPAIGN_CALLERS, DEFAULT_REP_CHASE_STEPS, DEFAULT_REP_STEPS, type AiCampaignCaller } from "./dialer";
+import { roundDelayHours } from "./stepDelay";
 
 /**
  * AI calling campaigns: everything the pages and /api/calling/ai-campaigns
@@ -488,7 +489,8 @@ export async function updateAiCampaign(campaignId: string, input: UpdateAiCampai
 /** Keeps only the fields a step has, and clears the first step's wait (it runs as soon as the lead is queued). */
 export function normalizeSteps(steps: AiCampaignStep[]): AiCampaignStep[] {
   return steps.map((step, index): AiCampaignStep => {
-    const delayHours = index === 0 ? 0 : Math.round(step.delayHours);
+    // To the minute: a rep's redial can be a few minutes after the missed call (stepDelay.ts).
+    const delayHours = index === 0 ? 0 : roundDelayHours(step.delayHours);
     return step.kind === "call"
       ? { id: step.id, kind: "call", delayHours, instructions: step.instructions.trim() }
       : { id: step.id, kind: "message", delayHours, body: step.body.trim() };

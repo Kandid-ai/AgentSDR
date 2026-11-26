@@ -41,7 +41,15 @@ describe("normalizeSteps", () => {
       { id: "b", kind: "message", delayHours: 2.4, body: " yo " },
     ]);
     expect(first).toEqual({ id: "a", kind: "call", delayHours: 0, instructions: "hi" });
-    expect(second).toEqual({ id: "b", kind: "message", delayHours: 2, body: "yo" });
+    // Kept to the minute (a redial can be minutes after a missed call): 2.4 h is 144 minutes.
+    expect(second).toEqual({ id: "b", kind: "message", delayHours: 2.4, body: "yo" });
+  });
+  test("keeps a wait of a few minutes, rounded to the minute", () => {
+    const [, redial] = normalizeSteps([
+      { id: "a", kind: "call", delayHours: 0, instructions: "" },
+      { id: "b", kind: "call", delayHours: 5.2 / 60, instructions: "" },
+    ]);
+    expect(redial?.delayHours).toBe(5 / 60);
   });
 });
 
