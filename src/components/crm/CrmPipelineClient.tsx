@@ -3,20 +3,12 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  RiCheckDoubleLine,
-  RiFilterOffLine,
-  RiKanbanView2,
-  RiLayoutColumnLine,
-  RiListUnordered,
-  RiStackLine,
-} from "@remixicon/react";
+import { RiCheckDoubleLine, RiFilterOffLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as SegmentedControl from "@/components/alignui/segmented-control";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
 import { EmptyState } from "@/components/page/EmptyState";
-import { PageHeader } from "@/components/page/PageHeader";
-import { EMPTY_FILTERS, boardFilterParams, type BoardFilters, type BoardViewConfig, type CardField } from "@/lib/crm/boardViews";
+import { EMPTY_FILTERS, boardFilterParams, type BoardFilters, type CardField } from "@/lib/crm/boardViews";
 import { cn } from "@/utils/cn";
 import { HoverPreviewProvider } from "./ActionRowTools";
 import {
@@ -37,9 +29,9 @@ import {
 import { ErrorState } from "./CrmLayout";
 import { RowsSkeleton } from "./CrmSkeletons";
 import { FunnelFilterBar, activeFilterCount } from "./FunnelFilterBar";
-import { FunnelViewBar } from "./FunnelViewBar";
+import { FunnelHeader } from "./FunnelHeader";
 import { PipelineBoardCustomize } from "./PipelineBoardCustomize";
-import { PipelineStageBoard, groupCountMap, ordered, stageCatalog, type GroupCount } from "./PipelineStageBoard";
+import { ColumnLoadMore, ColumnSkeleton, PipelineStageBoard, groupCountMap, ordered, stageCatalog, type GroupCount } from "./PipelineStageBoard";
 import { useFunnelViews } from "./useFunnelViews";
 import { asList, asObject, crmFetch, errorMessage } from "./crm-utils";
 
@@ -163,7 +155,10 @@ export function CrmPipelineClient() {
     void crmFetch("/categories").then((result) => setCategories(asList<Data>(asObject(result).categories))).catch((cause) => setCategoryError(errorMessage(cause)));
   }, []);
 
-  const { filters } = config;
+  // Search is the viewer's own: it narrows the page but is never saved to the view.
+  const [search, setSearch] = useState("");
+  useEffect(() => { setSearch(""); }, [views.current?.id]);
+  const filters = useMemo(() => ({ ...config.filters, search }), [config.filters, search]);
   const base = useMemo(() => filterQuery(filters), [filters]);
   const ready = Boolean(views.current);
   const statusBoard = ready && config.layout === "board" && config.groupBy === "status";
@@ -199,39 +194,26 @@ export function CrmPipelineClient() {
   const shownStatuses = filters.statuses.length ? STAGES.filter((stage) => filters.statuses.includes(stage)) : STAGES;
 
   const filtered = activeFilterCount(filters) > 0;
-  const setFilters = useCallback((next: BoardFilters) => setConfig((old) => ({ ...old, filters: next })), [setConfig]);
+  const setFilters = useCallback((next: BoardFilters) => {
+    setSearch(next.search);
+    const { search: _search, ...saved } = next;
+    void _search;
+    setConfig((old) => {
+      const before = { ...old.filters, search: "" };
+      const after = { ...saved, search: "" };
+      // Typing in the search box alone leaves the view as it was saved.
+      return JSON.stringify(before) === JSON.stringify(after) ? old : { ...old, filters: after };
+    });
+  }, [setConfig]);
   const clearFilters = () => setFilters(EMPTY_FILTERS);
-  const set = (patch: Partial<BoardViewConfig>) => setConfig((old) => ({ ...old, ...patch }));
   const onMutated = summary.refresh;
   const format = (value: number | null | undefined) => value == null ? "—" : value.toLocaleString();
   const statusCount = (stage: PipelineStage) => summary.statusCounts ? Number(summary.statusCounts[stage] ?? 0) : null;
 
   return <>
-    <PageHeader
-      title="Funnel"
-      description="Your leads by stage, through saved views. Pick a view, filter it, and save it for the team."
-    />
+    <FunnelHeader views={views} actions={ready && <PipelineBoardCustomize config={config} onChange={setConfig} stages={allStages} counts={stageCounts ?? new Map()} />} />
 
-    <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-      <FunnelViewBar views={views} />
-      {ready && <div className="flex flex-wrap items-center gap-2">
-        <SegmentedControl.Root value={config.layout} onValueChange={(value) => set({ layout: value as BoardViewConfig["layout"] })}>
-          <SegmentedControl.List className="w-auto" aria-label="Layout">
-            <SegmentedControl.Trigger value="board" className="gap-1.5 px-3"><RiKanbanView2 className="size-4" aria-hidden="true" />Board</SegmentedControl.Trigger>
-            <SegmentedControl.Trigger value="list" className="gap-1.5 px-3"><RiListUnordered className="size-4" aria-hidden="true" />List</SegmentedControl.Trigger>
-          </SegmentedControl.List>
-        </SegmentedControl.Root>
-        {config.layout === "board" && <SegmentedControl.Root value={config.groupBy} onValueChange={(value) => set({ groupBy: value as BoardViewConfig["groupBy"] })}>
-          <SegmentedControl.List className="w-auto" aria-label="Columns">
-            <SegmentedControl.Trigger value="stage" className="gap-1.5 px-3" title="A column per stage, such as Case Study or Meeting Requested"><RiStackLine className="size-4" aria-hidden="true" />By stage</SegmentedControl.Trigger>
-            <SegmentedControl.Trigger value="status" className="gap-1.5 px-3" title="Columns: Needs action, Waiting on them, Follow-ups exhausted"><RiLayoutColumnLine className="size-4" aria-hidden="true" />By status</SegmentedControl.Trigger>
-          </SegmentedControl.List>
-        </SegmentedControl.Root>}
-        {config.layout === "board" && <PipelineBoardCustomize config={config} onChange={setConfig} columns={stageBoard ? allStages : null} counts={stageCounts ?? new Map()} />}
-      </div>}
-    </div>
-
-    {ready && <div className="mt-4">
+    {ready && <div className="mt-5">
       <FunnelFilterBar filters={filters} onChange={setFilters} stages={funnelStages} stageCounts={stageCounts} statusCounts={summary.statusCounts} total={summary.total} />
     </div>}
     {categoryError && <div className="mt-3"><ErrorState message={categoryError} /></div>}
@@ -285,7 +267,7 @@ export function CrmPipelineClient() {
       </>
       : <Frame className="mt-4">
         <FramePanel className="overflow-hidden p-0 sm:p-0">
-          {!list.loaded && list.loading ? <RowsSkeleton rows={8} />
+          {list.loading ? <RowsSkeleton rows={8} />
             : list.error && !list.actions.length ? <div className="p-4"><ErrorState message={list.error} onRetry={() => void list.load(0)} /></div>
             : <>
               <ActionRows
@@ -354,7 +336,7 @@ function BoardColumn({ stage, page, columns, count, categories, filtered, onRese
       <span className="flex h-7 min-w-9 shrink-0 items-center justify-center rounded-lg bg-bg-white-0 px-2 text-label-sm tabular-nums text-text-strong-950 shadow-regular-xs ring-1 ring-inset ring-stroke-soft-200" title={`${count === null ? "—" : count.toLocaleString()} leads`}>{count === null ? "—" : count.toLocaleString()}</span>
     </header>
     <NoticeBar notice={notice} onDismiss={() => setNotice(null)} className="mb-1 rounded-lg" />
-    {!page.loaded && page.loading ? <div className="space-y-2">{Array.from({ length: 4 }, (_, i) => <div key={i} className="h-36 animate-pulse rounded-xl bg-bg-white-0 ring-1 ring-inset ring-stroke-soft-200" />)}</div>
+    {page.loading ? <ColumnSkeleton cards={4} />
       : page.error && !page.actions.length ? <FramePanel className="p-3 sm:p-3"><ErrorState message={page.error} onRetry={() => void page.load(0)} /></FramePanel>
       : !page.actions.length ? <FramePanel className="p-0 sm:p-0">
         {filtered
@@ -379,9 +361,7 @@ function BoardColumn({ stage, page, columns, count, categories, filtered, onRese
             pipeline
           />;
         })}
-        {page.hasMore && <Button.Root variant="neutral" mode="ghost" size="small" className="w-full" onClick={page.loadMore} disabled={page.loadingMore}>
-          {page.loadingMore ? "Loading…" : "Load more"}
-        </Button.Root>}
+        {page.hasMore && <ColumnLoadMore onLoad={page.loadMore} busy={page.loadingMore} />}
       </div>}
   </Frame>;
 }

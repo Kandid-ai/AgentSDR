@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
-import { RiCheckDoubleLine, RiDraggable, RiFilterOffLine } from "@remixicon/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RiCheckDoubleLine, RiDraggable, RiFilterOffLine, RiLoader4Line } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
 import { EmptyState } from "@/components/page/EmptyState";
@@ -27,6 +27,39 @@ export type GroupCount = { categoryKey: string | null; subcategoryId: string | n
 
 /** Cards per column when a column loads more. */
 const COLUMN_PAGE = 20;
+
+/** Placeholder cards for a column whose leads are on their way. */
+export function ColumnSkeleton({ cards = 3 }: { cards?: number }) {
+  return <div className="space-y-2" aria-hidden="true">
+    {Array.from({ length: cards }, (_, i) => <div key={i} className="space-y-3 rounded-xl bg-bg-white-0 p-3.5 ring-1 ring-inset ring-stroke-soft-200">
+      <div className="flex items-center gap-3"><div className="size-8 animate-pulse rounded-full bg-bg-soft-200" /><div className="h-3.5 w-32 animate-pulse rounded bg-bg-soft-200" /></div>
+      <div className="h-5 w-28 animate-pulse rounded-md bg-bg-soft-200" />
+      <div className="space-y-1.5"><div className="h-3 w-full animate-pulse rounded bg-bg-soft-200" /><div className="h-3 w-4/5 animate-pulse rounded bg-bg-soft-200" /></div>
+    </div>)}
+  </div>;
+}
+
+/**
+ * The end of a column: reaching it loads the next cards (infinite scroll).
+ * Inside a column that scrolls on its own, the sentinel only counts as seen
+ * once it is scrolled into the column's view. The button is there for
+ * keyboards and browsers without IntersectionObserver.
+ */
+export function ColumnLoadMore({ onLoad, busy }: { onLoad: () => void; busy: boolean }) {
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = sentinel.current;
+    if (!node || busy || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) onLoad(); }, { rootMargin: "200px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [onLoad, busy]);
+  return <div ref={sentinel} className="flex h-10 items-center justify-center text-paragraph-xs text-text-soft-400">
+    {busy
+      ? <span className="inline-flex items-center gap-1.5"><RiLoader4Line className="size-4 animate-spin" aria-hidden="true" />Loading more…</span>
+      : <button type="button" onClick={onLoad} className="rounded-md px-2 py-1 text-label-xs text-text-sub-600 hover:bg-bg-weak-50 hover:text-text-strong-950">Load more</button>}
+  </div>;
+}
 
 /** A column the board can show: a sub-stage, or a category's leads with no sub-stage. */
 export type ColumnDef = {
@@ -155,7 +188,7 @@ export function moved(keys: readonly string[], from: string, to: string): string
  * count with a read narrowed to it, which works because every read shares
  * one order. Drag a header to reorder.
  */
-export function PipelineStageBoard({ query, actions, setActions, columns: arranged, countByKey, loaded, loading, error, onRetry, categories, config, onConfigChange, filtered, onReset, onMutated }: {
+export function PipelineStageBoard({ query, actions, setActions, columns: arranged, countByKey, loading, error, onRetry, categories, config, onConfigChange, filtered, onReset, onMutated }: {
   query: string;
   actions: Action[];
   setActions: React.Dispatch<React.SetStateAction<Action[]>>;
@@ -224,10 +257,13 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
     } catch (cause) { setColumnError(errorMessage(cause)); } finally { setLoadingColumn(""); }
   }, [query, setActions]);
 
-  if (!loaded && loading) {
-    return <div className="mt-4 flex gap-4 overflow-hidden">{Array.from({ length: 4 }, (_, i) => <div key={i} className="h-80 w-[min(20rem,85vw)] shrink-0 animate-pulse rounded-2xl bg-bg-weak-50 ring-1 ring-inset ring-stroke-soft-200" />)}</div>;
+  // While the filters' first read is on its way, every column shows
+  // placeholder cards rather than the previous filter's leads (or an empty
+  // "no matches" that is not true yet).
+  if (loading && !columns.length) {
+    return <div className="mt-4 flex gap-4 overflow-hidden">{Array.from({ length: 4 }, (_, i) => <div key={i} className="w-[min(20rem,85vw)] shrink-0 rounded-2xl bg-bg-weak-50 p-1 ring-1 ring-inset ring-stroke-soft-200"><div className="h-14" /><ColumnSkeleton /></div>)}</div>;
   }
-  if (error && !actions.length) return <div className="mt-4"><ErrorState message={error} onRetry={onRetry} /></div>;
+  if (error && !actions.length && !loading) return <div className="mt-4"><ErrorState message={error} onRetry={onRetry} /></div>;
 
   if (!columns.length) {
     return <Frame className="mt-4"><FramePanel className="p-0 sm:p-0">
@@ -240,7 +276,7 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
   return <>
     <NoticeBar notice={notice ?? (columnError ? { tone: "error", text: columnError } : null)} onDismiss={() => { setNotice(null); setColumnError(""); }} className="mt-3 rounded-lg" />
     {/* As many columns as there are stages, so the board scrolls sideways; each column scrolls on its own. */}
-    <div className={cn("-mx-4 mt-4 flex snap-x items-start gap-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0", loading && "pointer-events-none opacity-60")} aria-busy={loading || undefined}>
+    <div className="-mx-4 mt-4 flex snap-x items-start gap-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0" aria-busy={loading || undefined}>
       {columns.map((column) => {
         const cards = byColumn.get(column.key) ?? [];
         const hasMore = column.count !== null && cards.length < column.count;
@@ -270,7 +306,9 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
             <RiDraggable className="size-4 shrink-0 text-text-soft-400 opacity-0 transition group-hover/header:opacity-100" aria-hidden="true" />
             <span className="flex h-7 min-w-9 shrink-0 items-center justify-center rounded-lg bg-bg-white-0 px-2 text-label-sm tabular-nums text-text-strong-950 shadow-regular-xs ring-1 ring-inset ring-stroke-soft-200">{column.count === null ? "—" : column.count.toLocaleString()}</span>
           </header>
-          {!cards.length && !hasMore
+          {loading
+            ? <ColumnSkeleton />
+            : !cards.length && !hasMore
             ? <FramePanel className="p-0 sm:p-0"><EmptyState compact icon={RiCheckDoubleLine} title="No leads here" description={narrowed ? "None at this stage fits the filters." : "No open lead is at this stage."} /></FramePanel>
             : <div className="space-y-2 lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-contain">
               {cards.map((action) => {
@@ -288,9 +326,7 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
                   pipeline
                 />;
               })}
-              {hasMore && <Button.Root variant="neutral" mode="ghost" size="small" className="w-full" onClick={() => void loadColumn(column, cards.length)} disabled={loadingColumn === column.key}>
-                {loadingColumn === column.key ? "Loading…" : cards.length ? "Load more" : `Load ${Math.min(COLUMN_PAGE, column.count ?? 0)} leads`}
-              </Button.Root>}
+              {hasMore && <ColumnLoadMore onLoad={() => void loadColumn(column, cards.length)} busy={loadingColumn === column.key} />}
             </div>}
         </Frame>;
       })}

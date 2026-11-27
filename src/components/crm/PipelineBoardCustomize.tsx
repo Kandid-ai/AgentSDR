@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { RiArrowDownSLine, RiArrowUpSLine, RiDraggable, RiSettings3Line } from "@remixicon/react";
+import { RiArrowDownSLine, RiArrowUpSLine, RiDraggable, RiKanbanView2, RiLayoutColumnLine, RiListUnordered, RiSettings3Line, RiStackLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
 import * as Popover from "@/components/alignui/popover";
+import * as SegmentedControl from "@/components/alignui/segmented-control";
 import * as Switch from "@/components/alignui/switch";
 import { CARD_FIELDS, type BoardViewConfig } from "@/lib/crm/boardViews";
 import { cn } from "@/utils/cn";
@@ -19,22 +20,25 @@ export function withStages(stages: readonly string[], allKeys: readonly string[]
 }
 
 /**
- * The view's "Customize" panel, after Jira's board settings: which parts of
- * a card show, and on the by-stage board which stages are columns (one at a
- * time or a whole category), their order (drag, or the arrows), and whether
- * empty columns show. Changes edit the view; Save keeps them.
+ * The view's "Customize" panel, after Jira's board settings: the layout
+ * (board or list; columns by stage or by status), on the by-stage board
+ * which stages are columns (one at a time or a whole category), their order
+ * (drag, or the arrows) and whether empty columns show, and which parts of a
+ * card show. Every change is the view's, saved as it is made.
  */
-export function PipelineBoardCustomize({ config, onChange, columns, counts }: {
+export function PipelineBoardCustomize({ config, onChange, stages, counts }: {
   config: BoardViewConfig;
   onChange: (change: (old: BoardViewConfig) => BoardViewConfig) => void;
-  /** Every stage in the view's order; null on the by-status board. */
-  columns: ColumnDef[] | null;
+  /** Every stage in the view's order. */
+  stages: ColumnDef[];
   counts: ReadonlyMap<string, number>;
 }) {
+  const board = config.layout === "board";
+  const columns = board && config.groupBy === "stage" ? stages : null;
   const [dragging, setDragging] = useState("");
   const [dropTarget, setDropTarget] = useState("");
   const hiddenFields = new Set(config.hiddenFields);
-  const keys = columns?.map((column) => column.key) ?? [];
+  const keys = stages.map((column) => column.key);
   const shown = new Set(config.filters.stages.length ? config.filters.stages : keys);
   const setStages = (changed: readonly string[], on: boolean) => onChange((old) => ({ ...old, filters: { ...old.filters, stages: withStages(old.filters.stages, keys, changed, on) } }));
   const move = (from: string, to: string) => {
@@ -49,10 +53,26 @@ export function PipelineBoardCustomize({ config, onChange, columns, counts }: {
     <Popover.Content align="end" showArrow={false} sideOffset={8} className="max-h-[min(40rem,calc(100dvh-6rem))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto p-0">
       <div className="border-b border-stroke-soft-200 px-4 py-3">
         <h2 className="text-label-md text-text-strong-950">Customize view</h2>
-        <p className="mt-0.5 text-paragraph-xs text-text-sub-600">Changes apply to this view; Save keeps them for everyone.</p>
+        <p className="mt-0.5 text-paragraph-xs text-text-sub-600">Changes save to this view, for everyone.</p>
       </div>
 
-      {columns && <section className="px-4 py-3">
+      <section className="space-y-2 px-4 py-3">
+        <h3 className="text-label-xs uppercase tracking-wide text-text-soft-400">Layout</h3>
+        <SegmentedControl.Root value={config.layout} onValueChange={(value) => onChange((old) => ({ ...old, layout: value as BoardViewConfig["layout"] }))}>
+          <SegmentedControl.List aria-label="Layout">
+            <SegmentedControl.Trigger value="board" className="gap-1.5"><RiKanbanView2 className="size-4" aria-hidden="true" />Board</SegmentedControl.Trigger>
+            <SegmentedControl.Trigger value="list" className="gap-1.5"><RiListUnordered className="size-4" aria-hidden="true" />List</SegmentedControl.Trigger>
+          </SegmentedControl.List>
+        </SegmentedControl.Root>
+        {board && <SegmentedControl.Root value={config.groupBy} onValueChange={(value) => onChange((old) => ({ ...old, groupBy: value as BoardViewConfig["groupBy"] }))}>
+          <SegmentedControl.List aria-label="Columns">
+            <SegmentedControl.Trigger value="stage" className="gap-1.5" title="A column per stage, such as Case Study or Meeting Requested"><RiStackLine className="size-4" aria-hidden="true" />By stage</SegmentedControl.Trigger>
+            <SegmentedControl.Trigger value="status" className="gap-1.5" title="Columns: Needs action, Waiting on them, Follow-ups exhausted"><RiLayoutColumnLine className="size-4" aria-hidden="true" />By status</SegmentedControl.Trigger>
+          </SegmentedControl.List>
+        </SegmentedControl.Root>}
+      </section>
+
+      {columns && <section className="border-t border-stroke-soft-200 px-4 py-3">
         <h3 className="text-label-xs uppercase tracking-wide text-text-soft-400">Columns</h3>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {categoryKeys.map((categoryKey) => {
@@ -107,7 +127,7 @@ export function PipelineBoardCustomize({ config, onChange, columns, counts }: {
         </ol>
       </section>}
 
-      <section className={cn("px-4 py-3", columns && "border-t border-stroke-soft-200")}>
+      {board && <section className="border-t border-stroke-soft-200 px-4 py-3">
         <h3 className="text-label-xs uppercase tracking-wide text-text-soft-400">Card fields</h3>
         <ul className="mt-2 space-y-1">
           {CARD_FIELDS.map((field) => {
@@ -123,7 +143,7 @@ export function PipelineBoardCustomize({ config, onChange, columns, counts }: {
             </li>;
           })}
         </ul>
-      </section>
+      </section>}
     </Popover.Content>
   </Popover.Root>;
 }
