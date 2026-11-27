@@ -52,6 +52,7 @@
  * strips it (29 Oct 2026). The recording keeps the rep left and the lead right.
  */
 
+import { freshTimerWatch, showsMuteNotice, watchTimer, type TimerWatch } from "./callTimer";
 import { createDownsampler } from "./downsample";
 import {
   REP_RELAY_JITTER_MS,
@@ -89,11 +90,11 @@ const NO_TIMER_FALLBACK_MS = 60_000;
 /** The no-timer fallback also needs the call screen without any status this long: an end-of-call screen lasts under 2 s. */
 const NO_STATUS_FOR_FALLBACK_MS = 5_000;
 /**
- * How many checks running the timer, or End call, must be missing before the
- * call counts as over. Background tabs throttle intervals to 1 s, so this is
- * a few seconds — enough to ride out the move into picture-in-picture.
+ * How many checks End call must be missing before the call counts as over.
+ * Background tabs throttle intervals to 1 s, so this is a few seconds —
+ * enough to ride out the move into picture-in-picture. The timer's own
+ * rules (frozen, missing, muted) are in callTimer.ts.
  */
-const TIMER_GONE_CHECKS = 4;
 const END_BUTTON_GONE_CHECKS = 4;
 /** Armed this long with no call UI ever showing: the call was never placed. */
 const ARMED_WITHOUT_CALL_MS = 90_000;
@@ -183,8 +184,12 @@ type Session = {
   answeredAt: number | null;
   lastTimerText: string | null;
   timerSeen: boolean;
-  /** Checks running the (trusted) timer has not moved — a frozen timer means the call ended. */
-  timerStill: number;
+  /** After the pick-up: the running timer, watched for the call's end (callTimer.ts). */
+  timer: TimerWatch | null;
+  /** The timer is missing behind a mute notice; logged once each time it starts. */
+  muteNoticed: boolean;
+  /** Why the timer went missing was logged (once a call): what the call screen said instead. */
+  missingTimerLogged: boolean;
   sawEndButton: boolean;
   endButtonMissing: number;
   /** WhatsApp's last "Calling…" / "Ringing…" text, reported when it changes. */
@@ -553,7 +558,9 @@ function install(): void {
         answeredAt: null,
         lastTimerText: null,
         timerSeen: false,
-        timerStill: 0,
+        timer: null,
+        muteNoticed: false,
+        missingTimerLogged: false,
         sawEndButton: false,
         endButtonMissing: 0,
         lastStatusText: null,
@@ -679,18 +686,27 @@ function install(): void {
       return end();
     }
     // A running call's timer ticks every second. Where it can be trusted to
-    // (see CallUi.timerTrusted), one that stops moving, or disappears, for
-    // a few checks means the call ended — hung up anywhere, even when a stale
-    // End call lingers on the page.
+    // (see CallUi.timerTrusted), one that stops moving means the call ended —
+    // hung up anywhere, even when a stale End call lingers on the page. One
+    // that is gone is the lead muting while a mute notice shows, and ends the
+    // call only after a long wait otherwise (callTimer.ts).
     if (current.timerSeen && ui.timerTrusted) {
-      if (timerText && timerText !== current.lastTimerText) {
-        current.lastTimerText = timerText;
-        current.timerStill = 0;
-      } else {
-        current.timerStill += 1;
+      const muteShown = timerText === null && showsMuteNotice(ui.texts);
+      const verdict = watchTimer(current.timer ?? freshTimerWatch(current.lastTimerText), timerText, muteShown);
+      current.timer = verdict.watch;
+      current.lastTimerText = verdict.watch.lastText;
+      if (timerText === null && !current.missingTimerLogged) {
+        current.missingTimerLogged = true;
+        post({ source: HOOK_SOURCE, type: "diag", callId: current.callId, text: `call timer not shown; the call screen says: ${maskDigits(ui.texts.join(" | ")).slice(0, 300) || "nothing"}` });
       }
-      if (current.timerStill >= TIMER_GONE_CHECKS) {
-        if (agentRig?.callId === current.callId) agentLog(`call timer stopped at ${current.lastTimerText ?? "?"} — ending`);
+      if (verdict.muted !== current.muteNoticed) {
+        current.muteNoticed = verdict.muted;
+        if (agentRig?.callId === current.callId) agentLog(verdict.muted ? "the call shows a mute notice — the call goes on" : "the mute notice is gone");
+      }
+      if (verdict.ended) {
+        if (agentRig?.callId === current.callId) {
+          agentLog(verdict.ended === "frozen" ? `call timer stopped at ${current.lastTimerText ?? "?"} — ending` : `call timer gone at ${current.lastTimerText ?? "?"} — ending`);
+        }
         end();
       }
     }
@@ -1056,6 +1072,8 @@ type CallUi = {
   endButton: HTMLElement | null;
   timerText: string | null;
   statusText: string | null;
+  /** The call screen's text, for a mute notice where the timer was. */
+  texts: string[];
   /** A short account of what was found, for diagnosis. */
   describe: string;
   /** The call UI is WhatsApp's picture-in-picture window, which holds nothing but the call. */
@@ -1091,6 +1109,7 @@ function readCallUi(): CallUi {
       timerTrusted: true,
       endButton,
       timerText: texts.find((text) => TIMER_PATTERN.test(text)) ?? null,
+      texts,
       statusText: texts.find((text) => STATUS_PATTERN.test(text)) ?? null,
       describe: `call UI in picture-in-picture; End call ${endButton ? "found" : "NOT found"}; labels: ${labels.join(" | ") || "none"}`,
     };
@@ -1103,6 +1122,7 @@ function readCallUi(): CallUi {
     endButton,
     timerText: endButton ? findTimerText(endButton) : null,
     statusText: endButton ? findStatusText(endButton) : null,
+    texts: endButton ? callScreenTexts(endButton) : [],
     describe: endButton ? "call UI in the WhatsApp page" : "no call UI found",
   };
 }
@@ -1143,6 +1163,17 @@ function findTimerText(endButton: HTMLElement): string | null {
     container = parent;
   }
   return null;
+}
+
+/** The text around End call, as far out as the timer search goes (the call screen, not the chat). */
+function callScreenTexts(endButton: HTMLElement): string[] {
+  let container: HTMLElement = endButton.parentElement ?? endButton;
+  for (;;) {
+    const parent: HTMLElement | null = container.parentElement;
+    if (!parent || parent.getElementsByTagName("*").length > MAX_TIMER_SEARCH_ELEMENTS) break;
+    container = parent;
+  }
+  return textsIn(container).slice(0, 40);
 }
 
 /** WhatsApp's own call-state line near End call ("Calling…", "Ringing…"), for timing. */
