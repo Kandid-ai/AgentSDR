@@ -595,9 +595,27 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
   // The thread reads oldest first, but the message being replied to is the
   // last one, so the rail opens at the bottom rather than at an introduction
   // from three weeks ago.
+  // Pinned while the reader has not scrolled up. The rail is sized after it
+  // first renders (the workspace height is measured a frame later), and a
+  // rail that shrinks keeps its scrollTop, which left the thread hundreds of
+  // pixels above its newest message; so a resize re-pins it.
+  const pinnedRef = useRef(true);
+  const hasMessages = visible.length > 0;
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
+    const onScroll = () => { pinnedRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48; };
+    element.addEventListener("scroll", onScroll, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      if (pinnedRef.current) element.scrollTop = element.scrollHeight;
+    });
+    observer?.observe(element);
+    return () => { element.removeEventListener("scroll", onScroll); observer?.disconnect(); };
+  }, [hasMessages]);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    pinnedRef.current = true;
     element.scrollTop = element.scrollHeight;
     // A second pass after paint, because bubble heights are only final once
     // the text has wrapped at the rail's real width.
