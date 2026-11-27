@@ -6,6 +6,7 @@ import DialogProvider from "@/components/DialogProvider";
 import { DialerOverlay } from "@/components/calling/ai/DialerOverlay";
 import { RemoteRepCallBar } from "@/components/calls/RemoteRepCallBar";
 import { DemoProvider } from "@/components/demo/DemoProvider";
+import { PopUpFallbackRecovery } from "@/components/PopUpFallbackRecovery";
 import { brandDisplay } from "@/components/brand/font";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/components/theme/ThemeProvider";
 import { isDemoMode } from "@/lib/demo/mode";
@@ -70,6 +71,8 @@ export default async function RootLayout({
             <DemoProvider enabled={demo}>
               <AppShell>{children}</AppShell>
               {modal}
+              {/* A record or Settings page that fell back to a full page (a deploy since this tab opened) reopens as its pop-up. */}
+              <PopUpFallbackRecovery />
               {/* A call the rep talks on through a calling number: survives navigation. */}
               <RemoteRepCallBar />
               {/* The rep dialer's wrap-up and pop-out window: the dialer keeps going on every page. */}
