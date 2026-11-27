@@ -6,6 +6,7 @@ import { RiCheckDoubleLine, RiDraggable, RiFilterOffLine } from "@remixicon/reac
 import * as Button from "@/components/alignui/button";
 import { Frame, FramePanel } from "@/components/analytics/kit/Frame";
 import { EmptyState } from "@/components/page/EmptyState";
+import type { BoardFilters, BoardViewConfig } from "@/lib/crm/boardViews";
 import { cn } from "@/utils/cn";
 import {
   ActionCard,
@@ -17,16 +18,12 @@ import {
   useSyncRecordChanges,
   type Action,
   type Data,
-  type PipelineStage,
 } from "./CrmActionsClient";
 import { ErrorState } from "./CrmLayout";
 import { CATEGORY_LABELS, asList, asObject, categoryColor, crmFetch, errorMessage, type CrmCategory } from "./crm-utils";
-import { moved, ordered, type BoardSettings } from "./pipelineBoardSettings";
 
-/** Per (category, sub-stage) counts under the board's filters, from `/actions?groupCounts=true`. */
+/** Per (category, sub-stage) counts, from `/actions?groupCounts=true` (under every filter but the stage one). */
 export type GroupCount = { categoryKey: string | null; subcategoryId: string | null; total: number };
-
-export type StageBoardFilters = { category: string; channel: string; status: PipelineStage | "" };
 
 /** Cards per column when a column loads more. */
 const COLUMN_PAGE = 20;
@@ -46,22 +43,35 @@ function columnKey(categoryKey: string | null, subcategoryId: string | null) {
   return subcategoryId ?? `none:${categoryKey ?? "unclassified"}`;
 }
 
-function actionColumnKey(action: Action) {
+export function actionColumnKey(action: Action) {
   const subcategoryId = asObject(action.record).subcategoryId;
-  return columnKey(actionCategory(action), subcategoryId ? String(subcategoryId) : null);
+  return columnKey(actionCategory(action) === "unclassified" ? null : actionCategory(action), subcategoryId ? String(subcategoryId) : null);
 }
+
+const DAY = 86_400_000;
+const LAST_CONTACT_TEST: Record<BoardFilters["lastContact"], (age: number | null) => boolean> = {
+  any: () => true,
+  "1d": (age) => age !== null && age <= DAY,
+  "7d": (age) => age !== null && age <= 7 * DAY,
+  "30d": (age) => age !== null && age <= 30 * DAY,
+  over_7d: (age) => age !== null && age > 7 * DAY,
+  over_30d: (age) => age !== null && age > 30 * DAY,
+};
 
 /**
  * Whether a card still belongs on the board. A card re-read after an edit
- * comes back unfiltered, so a lead moved to Not interested, or out of the
- * status being shown, leaves here instead of lingering.
+ * comes back unfiltered, so a lead moved out of the view's stages or
+ * statuses leaves here instead of lingering. (Search is the server's alone.)
  */
-function matchesFilters(action: Action, filters: StageBoardFilters) {
-  const category = actionCategory(action);
-  if (filters.category === "potential" && category === "not_interested") return false;
-  if (filters.category && filters.category !== "potential" && category !== filters.category) return false;
-  if (filters.channel && actionChannel(action) !== filters.channel) return false;
-  if (filters.status && String(action.stage ?? "") !== filters.status) return false;
+export function matchesFilters(action: Action, filters: BoardFilters, now = Date.now()) {
+  if (filters.stages.length && !filters.stages.includes(actionColumnKey(action))) return false;
+  if (filters.statuses.length && !filters.statuses.includes(String(action.stage ?? "") as BoardFilters["statuses"][number])) return false;
+  if (filters.channels.length && !filters.channels.includes(actionChannel(action) as BoardFilters["channels"][number])) return false;
+  if (filters.lastContact !== "any") {
+    const record = asObject(action.record);
+    const times = [record.lastInboundAt, record.lastOutboundAt].filter(Boolean).map((value) => new Date(String(value)).getTime());
+    if (!LAST_CONTACT_TEST[filters.lastContact](times.length ? now - Math.max(...times) : null)) return false;
+  }
   return true;
 }
 
@@ -80,21 +90,15 @@ function describeColumn(categories: Data[], categoryKey: string, subcategoryId: 
   return { key, categoryKey, subcategoryId, title: name, detail: sub?.active === false ? `${categoryLabel} · archived` : categoryLabel, rank: [categoryIndex, 0, stageRank, Number(sub?.sortOrder ?? 0), name] };
 }
 
-function inScope(categoryKey: string, filters: Pick<StageBoardFilters, "category">) {
-  if (filters.category === "potential") return categoryKey !== "not_interested";
-  return !filters.category || filters.category === categoryKey;
-}
-
 /**
- * Every column the filters allow, in funnel order: categories as the CRM
- * settings order them (Unclassified last), each category's active sub-stages
- * by stage rank and position, then its "no sub-stage" column. `extra` adds
- * columns found in the data that the catalog lacks (an archived sub-stage).
+ * Every stage there is, in funnel order: categories as the CRM settings
+ * order them (Unclassified last), each category's active sub-stages by stage
+ * rank and position, then its "no sub-stage" stage. `extra` adds stages
+ * found in the data that the list lacks (an archived sub-stage).
  */
-export function columnCatalog(categories: Data[], filters: Pick<StageBoardFilters, "category">, extra: Array<{ categoryKey: string; subcategoryId: string | null }> = []): ColumnDef[] {
+export function stageCatalog(categories: Data[], extra: Array<{ categoryKey: string; subcategoryId: string | null }> = []): ColumnDef[] {
   const entries = new Map<string, ReturnType<typeof describeColumn>>();
   const add = (categoryKey: string, subcategoryId: string | null) => {
-    if (!inScope(categoryKey, filters)) return;
     const column = describeColumn(categories, categoryKey, subcategoryId);
     if (!entries.has(column.key)) entries.set(column.key, column);
   };
@@ -114,14 +118,6 @@ export function columnCatalog(categories: Data[], filters: Pick<StageBoardFilter
   }).map(({ key, categoryKey, subcategoryId, title, detail }) => ({ key, categoryKey, subcategoryId, title, detail }));
 }
 
-/**
- * The pipeline board with a column per sub-stage (Case Study, Meeting
- * Requested, …) instead of per status. One read loads each column's newest
- * leads (`perGroupLimit`), so a column with one lead shows it at once; a
- * column's "Load more" continues from its own count with a read narrowed to
- * it, which works because every read shares one order. Columns are arranged
- * by the board settings: hidden, reordered (drag a header), empty ones shown.
- */
 /** Leads per column key, from the per-(category, sub-stage) counts. */
 export function groupCountMap(counts: GroupCount[] | null): Map<string, number> {
   const map = new Map<string, number>();
@@ -132,31 +128,50 @@ export function groupCountMap(counts: GroupCount[] | null): Map<string, number> 
   return map;
 }
 
-/** The board's columns in the person's order, hidden ones included: what the board and its Customize panel both list. */
-export function arrangedColumns(categories: Data[], filters: Pick<StageBoardFilters, "category">, counts: GroupCount[] | null, order: readonly string[]): ColumnDef[] {
-  const extra = (counts ?? []).map((row) => ({ categoryKey: row.categoryKey ?? "unclassified", subcategoryId: row.subcategoryId }));
-  return ordered(columnCatalog(categories, filters, extra), order);
+/** `items` in the saved order; any the order does not name keep their own relative order after it. */
+export function ordered<T extends { key: string }>(items: readonly T[], order: readonly string[]): T[] {
+  const position = new Map(order.map((key, index) => [key, index]));
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => (position.get(a.item.key) ?? order.length + a.index) - (position.get(b.item.key) ?? order.length + b.index))
+    .map(({ item }) => item);
 }
 
-export function PipelineStageBoard({ query, actions, setActions, counts, catalog, loaded, loading, error, onRetry, categories, filters, filtered, onReset, onMutated, settings, updateSettings, onCustomize }: {
+/** `keys` reordered so `from` sits where `to` was. */
+export function moved(keys: readonly string[], from: string, to: string): string[] {
+  const fromIndex = keys.indexOf(from);
+  const toIndex = keys.indexOf(to);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return [...keys];
+  const next = keys.filter((key) => key !== from);
+  next.splice(toIndex, 0, from);
+  return next;
+}
+
+/**
+ * The pipeline board with a column per stage (Case Study, Meeting
+ * Requested, …): the view's stages, or every stage when it names none. One
+ * read loads each column's newest leads (`perGroupLimit`), so a column with
+ * one lead shows it at once; a column's "Load more" continues from its own
+ * count with a read narrowed to it, which works because every read shares
+ * one order. Drag a header to reorder.
+ */
+export function PipelineStageBoard({ query, actions, setActions, columns: arranged, countByKey, loaded, loading, error, onRetry, categories, config, onConfigChange, filtered, onReset, onMutated }: {
   query: string;
   actions: Action[];
   setActions: React.Dispatch<React.SetStateAction<Action[]>>;
-  counts: GroupCount[] | null;
-  /** From `arrangedColumns`. */
-  catalog: ColumnDef[];
+  /** The view's stages in its order (every stage when it names none). */
+  columns: ColumnDef[];
+  countByKey: ReadonlyMap<string, number> | null;
   loaded: boolean;
   loading: boolean;
   error: string;
   onRetry: () => void;
   categories: Data[];
-  filters: StageBoardFilters;
+  config: BoardViewConfig;
+  onConfigChange: (change: (old: BoardViewConfig) => BoardViewConfig) => void;
   filtered: boolean;
   onReset: () => void;
   onMutated: () => void;
-  settings: BoardSettings;
-  updateSettings: (change: (old: BoardSettings) => BoardSettings) => void;
-  onCustomize: () => void;
 }) {
   const router = useRouter();
   const [now] = useState(() => Date.now());
@@ -166,7 +181,8 @@ export function PipelineStageBoard({ query, actions, setActions, counts, catalog
   const [dropTarget, setDropTarget] = useState("");
   const { busyIds, notice, setNotice, mutateRow, classify, refreshRow } = useRowMutations({ onActionsChange: setActions, pipeline: true, onMutated });
   useSyncRecordChanges(actions, refreshRow, onMutated);
-  const hiddenFields = useMemo(() => new Set(settings.hiddenFields), [settings.hiddenFields]);
+  const hiddenFields = useMemo(() => new Set(config.hiddenFields), [config.hiddenFields]);
+  const { filters } = config;
 
   const visible = useMemo(() => actions.filter((action) => matchesFilters(action, filters)), [actions, filters]);
   const byColumn = useMemo(() => {
@@ -177,18 +193,15 @@ export function PipelineStageBoard({ query, actions, setActions, counts, catalog
     }
     return map;
   }, [visible]);
-  const countByKey = useMemo(() => groupCountMap(counts), [counts]);
-  const hidden = useMemo(() => new Set(settings.hiddenColumns), [settings.hiddenColumns]);
-  const columns: Column[] = catalog
-    .filter((column) => !hidden.has(column.key))
-    .map((column) => ({ ...column, count: counts ? countByKey.get(column.key) ?? 0 : null }))
-    .filter((column) => settings.showEmptyColumns || column.count === null || column.count > 0 || byColumn.has(column.key));
-  const hiddenWithLeads = catalog.filter((column) => hidden.has(column.key) && (countByKey.get(column.key) ?? 0) > 0);
-  const hiddenLeads = hiddenWithLeads.reduce((sum, column) => sum + (countByKey.get(column.key) ?? 0), 0);
+  // A view naming its stages shows each of them; one showing every stage
+  // shows the ones with leads, unless empty columns are switched on.
+  const columns: Column[] = arranged
+    .map((column) => ({ ...column, count: countByKey ? countByKey.get(column.key) ?? 0 : null }))
+    .filter((column) => filters.stages.length > 0 || config.showEmptyColumns || column.count === null || column.count > 0 || byColumn.has(column.key));
 
   const moveColumn = (from: string, to: string) => {
     if (!from || from === to) return;
-    updateSettings((old) => ({ ...old, columnOrder: moved(catalog.map((column) => column.key), from, to) }));
+    onConfigChange((old) => ({ ...old, columnOrder: moved(arranged.map((column) => column.key), from, to) }));
   };
 
   const loadColumn = useCallback(async (column: Column, offset: number) => {
@@ -196,7 +209,6 @@ export function PipelineStageBoard({ query, actions, setActions, counts, catalog
     setColumnError("");
     try {
       const params = new URLSearchParams(query);
-      params.delete("groupCounts");
       params.delete("perGroupLimit");
       params.set("categoryKey", column.categoryKey);
       params.set("subcategoryId", column.subcategoryId ?? "none");
@@ -215,26 +227,17 @@ export function PipelineStageBoard({ query, actions, setActions, counts, catalog
   }
   if (error && !actions.length) return <div className="mt-4"><ErrorState message={error} onRetry={onRetry} /></div>;
 
-  const hiddenNote = hiddenWithLeads.length > 0 && <p className="mt-3 text-paragraph-xs text-text-sub-600">
-    {hiddenWithLeads.length === 1 ? `“${hiddenWithLeads[0].title}” is hidden` : `${hiddenWithLeads.length} columns are hidden`} ({hiddenLeads.toLocaleString()} {hiddenLeads === 1 ? "lead" : "leads"}).{" "}
-    <button type="button" className="text-label-xs text-primary-base hover:underline" onClick={onCustomize}>Customize</button>
-  </p>;
-
   if (!columns.length) {
-    return <>
-      {hiddenNote}
-      <Frame className="mt-4"><FramePanel className="p-0 sm:p-0">
-        {filtered
-          ? <EmptyState icon={RiFilterOffLine} title="No leads match these filters" description="Try another category, channel or status." action={<Button.Root variant="neutral" mode="stroke" size="small" onClick={onReset}>Reset filters</Button.Root>} />
-          : <EmptyState icon={RiCheckDoubleLine} title="No open leads" description="Anyone who replies will show up here until their record is closed." />}
-      </FramePanel></Frame>
-    </>;
+    return <Frame className="mt-4"><FramePanel className="p-0 sm:p-0">
+      {filtered
+        ? <EmptyState icon={RiFilterOffLine} title="No leads match these filters" description="Try other stages, statuses or channels." action={<Button.Root variant="neutral" mode="stroke" size="small" onClick={onReset}>Clear filters</Button.Root>} />
+        : <EmptyState icon={RiCheckDoubleLine} title="No open leads" description="Anyone who replies will show up here until their record is closed." />}
+    </FramePanel></Frame>;
   }
 
   return <>
-    {hiddenNote}
     <NoticeBar notice={notice ?? (columnError ? { tone: "error", text: columnError } : null)} onDismiss={() => { setNotice(null); setColumnError(""); }} className="mt-3 rounded-lg" />
-    {/* As many columns as there are sub-stages, so the board scrolls sideways; each column scrolls on its own. */}
+    {/* As many columns as there are stages, so the board scrolls sideways; each column scrolls on its own. */}
     <div className={cn("-mx-4 mt-4 flex snap-x items-start gap-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0", loading && "pointer-events-none opacity-60")} aria-busy={loading || undefined}>
       {columns.map((column) => {
         const cards = byColumn.get(column.key) ?? [];
@@ -266,7 +269,7 @@ export function PipelineStageBoard({ query, actions, setActions, counts, catalog
             <span className="flex h-7 min-w-9 shrink-0 items-center justify-center rounded-lg bg-bg-white-0 px-2 text-label-sm tabular-nums text-text-strong-950 shadow-regular-xs ring-1 ring-inset ring-stroke-soft-200">{column.count === null ? "—" : column.count.toLocaleString()}</span>
           </header>
           {!cards.length && !hasMore
-            ? <FramePanel className="p-0 sm:p-0"><EmptyState compact icon={RiCheckDoubleLine} title="No leads here" description={filtered ? "None at this sub-stage fits the filters." : "No open lead is at this sub-stage."} /></FramePanel>
+            ? <FramePanel className="p-0 sm:p-0"><EmptyState compact icon={RiCheckDoubleLine} title="No leads here" description={filtered ? "None at this stage fits the filters." : "No open lead is at this stage."} /></FramePanel>
             : <div className="space-y-2 lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-contain">
               {cards.map((action) => {
                 const id = actionId(action);

@@ -63,7 +63,7 @@ import { useRecordChanged } from "./recordEvents";
 import { publishRecordQueue, withdrawRecordQueue, type RecordQueue } from "./recordQueue";
 import { CRM_DUE_STATE_LABELS, type CrmDueState } from "@/lib/crm/stateMachine";
 import { CRM_ACTION_GROUP_LABELS, CRM_ACTION_GROUPS } from "@/lib/crm/actionGroups";
-import type { CardField } from "./pipelineBoardSettings";
+import type { CardField } from "@/lib/crm/boardViews";
 
 export type Data = Record<string, unknown>;
 export type Action = Data;

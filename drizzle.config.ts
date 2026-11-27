@@ -95,6 +95,7 @@ const OWNED_TABLES = [
   "crm_send_attempts",
   "crm_knowledge_documents",
   "crm_knowledge_document_versions",
+  "crm_board_views",
   "crm_draft_knowledge_citations",
   "crm_jobs",
   "crm_meetings",

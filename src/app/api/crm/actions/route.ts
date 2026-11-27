@@ -4,6 +4,7 @@ import { CRM_ACTION_GROUPS, isCrmActionGroup } from "@/lib/crm/actionGroups";
 import { CRM_CHANNELS, isCrmChannel } from "@/lib/crm/channels";
 import { CRM_PIPELINE_STAGES, listCrmActions, type CrmPipelineStage } from "@/lib/crm/queries";
 import type { CrmCategoryKey, CrmWorkflowState } from "@/lib/crm/schema";
+import { parseBoardFilterParams } from "@/lib/crm/boardViews";
 import { withOrgContext } from "@/lib/auth/context";
 
 export async function GET(request: NextRequest) {
@@ -25,6 +26,7 @@ export async function GET(request: NextRequest) {
       const rawActionGroup = query.get("actionGroup");
       const actionGroup = rawActionGroup && isCrmActionGroup(rawActionGroup) ? rawActionGroup : undefined;
       if (rawActionGroup && !actionGroup) throw new Error(`actionGroup must be one of ${CRM_ACTION_GROUPS.join(", ")}`);
+      const filters = parseBoardFilterParams(query);
       return Response.json(await listCrmActions({
         recordId: query.get("recordId") ?? undefined,
         scope: query.get("scope") === "pipeline" ? "pipeline" : "actions",
@@ -35,6 +37,11 @@ export async function GET(request: NextRequest) {
         groupCounts: query.get("groupCounts") === "true" || undefined,
         perGroupLimit: query.get("perGroupLimit") ? Number(query.get("perGroupLimit")) : undefined,
         channel,
+        stages: filters.stages.length ? filters.stages : undefined,
+        statuses: filters.statuses.length ? filters.statuses : undefined,
+        channels: filters.channels.length ? filters.channels : undefined,
+        lastContact: filters.lastContact,
+        search: filters.search || undefined,
         workflowState: query.get("workflowState") as CrmWorkflowState | undefined,
         classificationReview: query.has("classificationReview") ? query.get("classificationReview") === "true" : undefined,
         sequenceId: query.get("sequenceId") ?? undefined,

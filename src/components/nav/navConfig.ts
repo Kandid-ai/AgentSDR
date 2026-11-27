@@ -132,7 +132,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "CRM",
     entries: [
-      link("/crm/pipeline", "Pipeline", RiRouteLine),
+      link("/crm/pipeline", "Funnel", RiRouteLine),
       link("/crm/sequences", "Sequences", RiTimeLine),
     ],
   },

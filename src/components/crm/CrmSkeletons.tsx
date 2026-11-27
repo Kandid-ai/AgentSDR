@@ -90,7 +90,6 @@ export function PipelinePageSkeleton() {
     <PageContainer>
       <div aria-busy="true" aria-label="Loading" className="space-y-6">
         <PageHeaderSkeleton />
-        <KpiStripSkeleton cells={3} />
         <BoardSkeleton />
       </div>
     </PageContainer>

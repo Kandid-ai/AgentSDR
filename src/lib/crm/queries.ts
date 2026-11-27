@@ -1,4 +1,5 @@
-import { and, asc, count, desc, eq, getTableColumns, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
+import type { LastContactFilter } from "./boardViews";
 import { draftInOrg } from "./records";
 import { db } from "@/lib/db";
 import { inboxContacts, inboxMessages } from "@/lib/inbox/schema";
@@ -138,6 +139,14 @@ export type CrmActionFilters = {
    */
   perGroupLimit?: number;
   channel?: CrmRecordChannel;
+  /** Pipeline: board column keys (a sub-stage id, `none:<category>`, `none:unclassified`); any of them matches. */
+  stages?: string[];
+  /** Pipeline: any of these pipeline statuses. Counted like `stage`: `stageCounts` ignore it. */
+  statuses?: CrmPipelineStage[];
+  /** Any of these channels. */
+  channels?: CrmRecordChannel[];
+  /** When either side last wrote (greatest of last inbound and outbound). */
+  lastContact?: LastContactFilter;
   workflowState?: CrmWorkflowState;
   classificationReview?: boolean;
   sequenceId?: string;
@@ -152,6 +161,33 @@ export type CrmActionFilters = {
   limit?: number;
   offset?: number;
 };
+
+/** `lastContact` on the greatest of last inbound/outbound; a record with neither matches only "any". */
+function lastContactCondition(filter: LastContactFilter | undefined) {
+  if (!filter || filter === "any") return undefined;
+  const last = sql`greatest(${crmRecords.lastInboundAt}, ${crmRecords.lastOutboundAt})`;
+  const days = filter === "1d" ? 1 : filter === "7d" || filter === "over_7d" ? 7 : 30;
+  const age = sql`now() - make_interval(days => ${days})`;
+  return filter.startsWith("over_") ? sql`${last} < ${age}` : sql`${last} >= ${age}`;
+}
+
+/** Board column keys as a condition: sub-stage ids, `none:<category>`, `none:unclassified`. Empty = none. */
+function stagesFilterCondition(keys: readonly string[] | undefined) {
+  if (!keys?.length) return undefined;
+  const ids: string[] = [];
+  const categories: CrmCategoryKey[] = [];
+  let unclassified = false;
+  for (const key of keys) {
+    if (key === "none:unclassified") unclassified = true;
+    else if (key.startsWith("none:")) categories.push(key.slice(5) as CrmCategoryKey);
+    else ids.push(key);
+  }
+  return or(
+    ids.length ? inArray(crmRecords.subcategoryId, ids) : undefined,
+    categories.length ? and(isNull(crmRecords.subcategoryId), inArray(crmRecords.categoryKey, categories)) : undefined,
+    unclassified ? and(isNull(crmRecords.subcategoryId), isNull(crmRecords.categoryKey)) : undefined,
+  );
+}
 
 /** A LIKE pattern matching `text` literally anywhere (its own % and _ escaped). */
 function containsPattern(text: string): string {
@@ -253,6 +289,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
     input.subcategoryId === "none" ? isNull(crmRecords.subcategoryId)
       : input.subcategoryId ? eq(crmRecords.subcategoryId, input.subcategoryId) : undefined,
     input.channel ? eq(crmRecords.activeChannel, input.channel) : undefined,
+    input.channels?.length ? inArray(crmRecords.activeChannel, input.channels) : undefined,
+    lastContactCondition(input.lastContact),
     input.actionGroup ? sql`${actionGroup} = ${input.actionGroup}` : undefined,
     input.search?.trim() ? personSearchCondition(input.search) : undefined,
     input.overdue ? sql`${crmRecords.nextActionAt} <= now()` : undefined,
@@ -269,7 +307,11 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
   // conditions instead drops rows where they are NULL — no next_action_at,
   // or no sequence run at all — which the CASE sends to Waiting.
   const stageCondition = pipeline && input.stage ? sql`${pipelineStage} = ${input.stage}` : undefined;
-  const where = and(...baseConditions, stageCondition);
+  const statusesCondition = pipeline && input.statuses?.length ? inArray(pipelineStage, input.statuses) : undefined;
+  // The board's Stage filter (column keys). Held apart from the base so the
+  // per-stage counts can ignore it and show a number beside every stage.
+  const stagesCondition = stagesFilterCondition(input.stages);
+  const where = and(...baseConditions, stagesCondition, stageCondition, statusesCondition);
   // Newest activity first. nextActionAt used to lead this sort ascending,
   // which put the stalest item on top and — because Postgres sorts NULLs
   // last in ASC — buried every record without a due date below all 38 that
@@ -352,7 +394,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
     pipeline && !input.recordId
       ? db.select({ stage: pipelineStage, total: count() }).from(crmRecords)
         .innerJoin(people, eq(people.id, crmRecords.personId))
-        .where(and(...baseConditions)).groupBy(pipelineStage)
+        .where(and(...baseConditions, stagesCondition)).groupBy(pipelineStage)
       : Promise.resolve([]),
     // The sequence an exhausted record finished, which the active-run read
     // above cannot supply once the run is completed.
@@ -364,12 +406,12 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
         .orderBy(crmSequenceRuns.crmRecordId, desc(crmSequenceRuns.createdAt))
       : Promise.resolve([]),
     dueMeetingsRead,
-    // Under the full filter, stage included: the board's sub-stage columns
-    // count what they would show.
+    // Under every filter except the Stage filter (`stages`), so each stage
+    // shows a count whether or not it is selected.
     pipeline && input.groupCounts && !input.recordId
       ? db.select({ categoryKey: crmRecords.categoryKey, subcategoryId: crmRecords.subcategoryId, total: count() }).from(crmRecords)
         .innerJoin(people, eq(people.id, crmRecords.personId))
-        .where(where).groupBy(crmRecords.categoryKey, crmRecords.subcategoryId)
+        .where(and(...baseConditions, stageCondition, statusesCondition)).groupBy(crmRecords.categoryKey, crmRecords.subcategoryId)
       : Promise.resolve([]),
   ]);
   // Which step each open draft was written for: a follow-up on someone's desk

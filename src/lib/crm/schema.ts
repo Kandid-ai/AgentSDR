@@ -19,7 +19,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { people } from "@/lib/leads/schema";
-import { organizations } from "@/lib/auth/schema";
+import { organizations, users } from "@/lib/auth/schema";
 
 /** The four system-owned CRM category keys. */
 export type CrmCategoryKey = "customer" | "interested" | "not_interested" | "other";
@@ -1201,6 +1201,28 @@ export const crmJobs = pgTable(
         AND (${table.status} <> 'failed' OR length(btrim(${table.lastError})) > 0)`,
     ),
   ],
+);
+
+/**
+ * A saved view of the Funnel page: a name plus its config (layout, grouping,
+ * filters, column order, card fields; shape in boardViews.ts). Shared by the
+ * organization. scripts/create-crm-board-views.ts.
+ */
+export const crmBoardViews = pgTable(
+  "crm_board_views",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    position: integer("position").notNull().default(0),
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("crm_board_views_organization_position_idx").on(table.organizationId, table.position)],
 );
 
 export type CrmMeetingStatus = "booked" | "cancelled";
