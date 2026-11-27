@@ -10,7 +10,6 @@ import {
   RiBugLine,
   RiCheckLine,
   RiCloseLine,
-  RiKanbanView2,
   RiExternalLinkLine,
   RiLightbulbLine,
   RiLogoutBoxRLine,
@@ -32,6 +31,8 @@ import { CommandPalette } from "@/components/nav/CommandPalette";
 import { ThemeToggleButton } from "@/components/theme/ThemeSwitch";
 import { activeHref, activeHrefFrom, isOpenedFromPage, NAV_FOOTER, NAV_SECTIONS, type NavBadges, type NavEntry, type NavGroup, type NavLink } from "@/components/nav/navConfig";
 import { requestOpenView, useFunnelViewList } from "@/components/crm/funnelViewEvents";
+import { VIEW_ICONS } from "@/components/crm/viewIcons";
+import { viewIconKey } from "@/lib/crm/boardViews";
 import { APP_VERSION, bugReportUrl, SUPPORT_LINKS } from "@/lib/support";
 import { useDemoMode } from "@/components/demo/DemoProvider";
 import { cn } from "@/utils/cn";
@@ -343,7 +344,7 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
     const base = group.children[0]?.href ?? "/crm/pipeline";
     const onPage = current === base;
     return {
-      group: { ...group, children: funnelViews.views.map((view) => ({ kind: "link", href: `${base}?view=${view.id}`, label: view.name, icon: RiKanbanView2 })) },
+      group: { ...group, children: funnelViews.views.map((view) => ({ kind: "link", href: `${base}?view=${view.id}`, label: view.name, icon: VIEW_ICONS[viewIconKey({ id: view.id, config: { icon: view.icon } })].icon })) },
       behaviour: {
         isActive: (child) => onPage && child.href.endsWith(`view=${funnelViews.openId}`),
         onFollow: (child, event) => {

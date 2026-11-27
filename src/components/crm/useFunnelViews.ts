@@ -90,6 +90,8 @@ export function useFunnelViews() {
       await crmFetch(`/views/${id}`, { method: "PATCH", body: JSON.stringify({ config: storable(view.config) }) });
       // A later change has its own write coming; only the last one says "Saved".
       if (!pending.current.size) setSaveState("saved");
+      // The sidebar shows each view's icon.
+      announceViewsChanged();
     } catch (cause) {
       setSaveState("error");
       setError(errorMessage(cause));

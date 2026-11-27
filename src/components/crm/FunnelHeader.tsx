@@ -5,9 +5,10 @@ import { RiAddLine, RiArrowDownSLine, RiCheckLine, RiDeleteBinLine, RiErrorWarni
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import { useDialogs } from "@/components/DialogProvider";
-import { VIEW_NAME_MAX } from "@/lib/crm/boardViews";
+import { VIEW_NAME_MAX, viewIconKey } from "@/lib/crm/boardViews";
 import { cn } from "@/utils/cn";
 import type { useFunnelViews } from "./useFunnelViews";
+import { ViewIconPicker } from "./viewIcons";
 
 type Views = ReturnType<typeof useFunnelViews>;
 
@@ -92,6 +93,7 @@ export function FunnelHeader({ views, actions }: { views: Views; actions?: React
   return <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
     <div className="min-w-0">
       <div className="flex min-w-0 items-center gap-1">
+        {current && <ViewIconPicker className="mr-2" value={viewIconKey(current)} onChange={(icon) => views.setConfig((old) => ({ ...old, icon }))} />}
         {editing && current
           ? <InlineName name={current.name} onSave={(name) => void views.rename(current.id, name)} onDone={() => setEditing(false)} />
           : <h1 className={cn("min-w-0 truncate text-title-h5 text-text-strong-950", !current && "text-text-soft-400")}>{current?.name ?? (views.loaded ? "Funnel" : "Loading…")}</h1>}

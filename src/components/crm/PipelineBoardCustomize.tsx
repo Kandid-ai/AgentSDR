@@ -1,14 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { RiArrowDownSLine, RiArrowUpSLine, RiDraggable, RiKanbanView2, RiLayoutColumnLine, RiListUnordered, RiSettings3Line, RiStackLine } from "@remixicon/react";
+import { RiDraggable, RiEyeLine, RiEyeOffLine, RiKanbanView2, RiLayoutColumnLine, RiListUnordered, RiSettings3Line, RiStackLine } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
+import * as Checkbox from "@/components/alignui/checkbox";
 import * as Popover from "@/components/alignui/popover";
-import * as SegmentedControl from "@/components/alignui/segmented-control";
-import * as Switch from "@/components/alignui/switch";
 import { CARD_FIELDS, type BoardViewConfig } from "@/lib/crm/boardViews";
 import { cn } from "@/utils/cn";
-import { CATEGORY_LABELS, categoryColor, type CrmCategory } from "./crm-utils";
+import { categoryColor } from "./crm-utils";
 import { moved, type ColumnDef } from "./PipelineStageBoard";
 
 /** `stages` with `keys` switched on or off; every stage on is stored as none named (= all). */
@@ -19,12 +18,42 @@ export function withStages(stages: readonly string[], allKeys: readonly string[]
   return next.length === allKeys.length ? [] : next;
 }
 
+/** Two options side by side, the picked one raised: smaller than a segmented control. */
+function Toggle<T extends string>({ label, value, options, onChange }: {
+  label: string;
+  value: T;
+  options: ReadonlyArray<{ value: T; label: string; icon: React.ComponentType<{ className?: string }> }>;
+  onChange: (value: T) => void;
+}) {
+  return <div className="flex items-center justify-between gap-3">
+    <span className="text-paragraph-sm text-text-sub-600">{label}</span>
+    <div role="radiogroup" aria-label={label} className="flex rounded-lg bg-bg-weak-50 p-0.5 ring-1 ring-inset ring-stroke-soft-200">
+      {options.map((option) => {
+        const Icon = option.icon;
+        const on = option.value === value;
+        return <button key={option.value} type="button" role="radio" aria-checked={on} onClick={() => onChange(option.value)} className={cn("inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-label-xs outline-none transition focus-visible:ring-2 focus-visible:ring-primary-base", on ? "bg-bg-white-0 text-text-strong-950 shadow-regular-xs" : "text-text-soft-400 hover:text-text-sub-600")}>
+          <Icon className="size-3.5" />{option.label}
+        </button>;
+      })}
+    </div>
+  </div>;
+}
+
+const LAYOUTS = [
+  { value: "board", label: "Board", icon: RiKanbanView2 },
+  { value: "list", label: "List", icon: RiListUnordered },
+] as const;
+const GROUPINGS = [
+  { value: "stage", label: "Stage", icon: RiStackLine },
+  { value: "status", label: "Status", icon: RiLayoutColumnLine },
+] as const;
+
 /**
- * The view's "Customize" panel, after Jira's board settings: the layout
- * (board or list; columns by stage or by status), on the by-stage board
- * which stages are columns (one at a time or a whole category), their order
- * (drag, or the arrows) and whether empty columns show, and which parts of a
- * card show. Every change is the view's, saved as it is made.
+ * The view's display options, kept small (after Linear's Display menu): the
+ * layout and what the columns are, the card fields as chips to switch on and
+ * off, and — on the by-stage board — the columns in a short list to reorder
+ * (drag) and show or hide (the eye). Layout, order and card fields save to
+ * the view; showing or hiding a stage is a filter, kept with Save as default.
  */
 export function PipelineBoardCustomize({ config, onChange, stages, counts }: {
   config: BoardViewConfig;
@@ -33,10 +62,10 @@ export function PipelineBoardCustomize({ config, onChange, stages, counts }: {
   stages: ColumnDef[];
   counts: ReadonlyMap<string, number>;
 }) {
-  const board = config.layout === "board";
-  const columns = board && config.groupBy === "stage" ? stages : null;
   const [dragging, setDragging] = useState("");
   const [dropTarget, setDropTarget] = useState("");
+  const board = config.layout === "board";
+  const byStage = board && config.groupBy === "stage";
   const hiddenFields = new Set(config.hiddenFields);
   const keys = stages.map((column) => column.key);
   const shown = new Set(config.filters.stages.length ? config.filters.stages : keys);
@@ -44,63 +73,46 @@ export function PipelineBoardCustomize({ config, onChange, stages, counts }: {
   const move = (from: string, to: string) => {
     if (from && to && from !== to) onChange((old) => ({ ...old, columnOrder: moved(keys, from, to) }));
   };
-  const categoryKeys = [...new Set(columns?.map((column) => column.categoryKey) ?? [])];
+  // Shown columns first (in their order), then the hidden ones: the list stays short to scan.
+  const listed = [...stages.filter((column) => shown.has(column.key)), ...stages.filter((column) => !shown.has(column.key))];
+  const shownCount = stages.length - listed.filter((column) => !shown.has(column.key)).length;
 
   return <Popover.Root>
     <Popover.Trigger asChild>
       <Button.Root variant="neutral" mode="stroke" size="xsmall" className="gap-1.5"><Button.Icon as={RiSettings3Line} />Customize</Button.Root>
     </Popover.Trigger>
-    <Popover.Content align="end" showArrow={false} sideOffset={8} className="max-h-[min(40rem,calc(100dvh-6rem))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto p-0">
-      <div className="border-b border-stroke-soft-200 px-4 py-3">
-        <h2 className="text-label-md text-text-strong-950">Customize view</h2>
-        <p className="mt-0.5 text-paragraph-xs text-text-sub-600">Layout, column order and card fields save to this view for everyone. Showing or hiding a stage is a filter: keep it with Save as default.</p>
+    <Popover.Content align="end" showArrow={false} sideOffset={8} className="w-[min(20rem,calc(100vw-2rem))] p-0">
+      <div className="space-y-2 p-3">
+        <Toggle label="Layout" value={config.layout} options={LAYOUTS} onChange={(layout) => onChange((old) => ({ ...old, layout }))} />
+        {board && <Toggle label="Columns by" value={config.groupBy} options={GROUPINGS} onChange={(groupBy) => onChange((old) => ({ ...old, groupBy }))} />}
       </div>
 
-      <section className="space-y-2 px-4 py-3">
-        <h3 className="text-label-xs uppercase tracking-wide text-text-soft-400">Layout</h3>
-        <SegmentedControl.Root value={config.layout} onValueChange={(value) => onChange((old) => ({ ...old, layout: value as BoardViewConfig["layout"] }))}>
-          <SegmentedControl.List aria-label="Layout">
-            <SegmentedControl.Trigger value="board" className="gap-1.5"><RiKanbanView2 className="size-4" aria-hidden="true" />Board</SegmentedControl.Trigger>
-            <SegmentedControl.Trigger value="list" className="gap-1.5"><RiListUnordered className="size-4" aria-hidden="true" />List</SegmentedControl.Trigger>
-          </SegmentedControl.List>
-        </SegmentedControl.Root>
-        {board && <SegmentedControl.Root value={config.groupBy} onValueChange={(value) => onChange((old) => ({ ...old, groupBy: value as BoardViewConfig["groupBy"] }))}>
-          <SegmentedControl.List aria-label="Columns">
-            <SegmentedControl.Trigger value="stage" className="gap-1.5" title="A column per stage, such as Case Study or Meeting Requested"><RiStackLine className="size-4" aria-hidden="true" />By stage</SegmentedControl.Trigger>
-            <SegmentedControl.Trigger value="status" className="gap-1.5" title="Columns: Needs action, Waiting on them, Follow-ups exhausted"><RiLayoutColumnLine className="size-4" aria-hidden="true" />By status</SegmentedControl.Trigger>
-          </SegmentedControl.List>
-        </SegmentedControl.Root>}
-      </section>
-
-      {columns && <section className="border-t border-stroke-soft-200 px-4 py-3">
-        <h3 className="text-label-xs uppercase tracking-wide text-text-soft-400">Columns</h3>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {categoryKeys.map((categoryKey) => {
-            const inCategory = columns.filter((column) => column.categoryKey === categoryKey).map((column) => column.key);
-            const anyShown = inCategory.some((key) => shown.has(key));
+      {board && <div className="border-t border-stroke-soft-200 p-3">
+        <p className="mb-2 text-label-xs text-text-soft-400">On each card</p>
+        <div className="flex flex-wrap gap-1.5">
+          {CARD_FIELDS.map((field) => {
+            const on = !hiddenFields.has(field.key);
             return <button
-              key={categoryKey}
+              key={field.key}
               type="button"
-              aria-pressed={anyShown}
-              title={anyShown ? "Hide every stage of this category" : "Show every stage of this category"}
-              onClick={() => setStages(inCategory, !anyShown)}
-              className={cn("inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-label-xs ring-1 ring-inset transition", anyShown ? "bg-bg-weak-50 text-text-strong-950 ring-stroke-sub-300" : "text-text-soft-400 line-through ring-stroke-soft-200")}
-            >
-              <span className="size-2 rounded-full" style={{ backgroundColor: categoryColor(categoryKey === "unclassified" ? null : categoryKey).color }} />
-              {CATEGORY_LABELS[categoryKey as CrmCategory] ?? "Unclassified"}
-            </button>;
+              aria-pressed={on}
+              title={field.detail}
+              onClick={() => onChange((old) => ({ ...old, hiddenFields: on ? [...old.hiddenFields, field.key] : old.hiddenFields.filter((key) => key !== field.key) }))}
+              className={cn("h-7 rounded-lg px-2.5 text-label-xs ring-1 ring-inset outline-none transition focus-visible:ring-2 focus-visible:ring-primary-base", on ? "bg-primary-alpha-10 text-primary-base ring-primary-alpha-16" : "text-text-soft-400 ring-stroke-soft-200 hover:text-text-sub-600")}
+            >{field.label}</button>;
           })}
         </div>
+      </div>}
 
-        {!config.filters.stages.length && <label className="mt-2 flex cursor-pointer items-center gap-3 rounded-lg px-1.5 py-1.5 hover:bg-bg-weak-50">
-          <span className="min-w-0 flex-1 text-label-sm text-text-strong-950">Show empty columns</span>
-          <Switch.Root checked={config.showEmptyColumns} onCheckedChange={(next) => onChange((old) => ({ ...old, showEmptyColumns: next }))} aria-label="Show empty columns" />
-        </label>}
-
-        <p className="mt-2 px-1.5 text-paragraph-xs text-text-sub-600">Drag to reorder, here or by a column&apos;s header on the board.</p>
-        <ol className="mt-1.5 space-y-0.5">
-          {columns.map((column, index) => {
+      {byStage && <div className="border-t border-stroke-soft-200 pb-1 pt-3">
+        <div className="mb-1 flex items-center justify-between px-3">
+          <p className="text-label-xs text-text-soft-400">Columns <span className="tabular-nums">· {shownCount} of {stages.length}</span></p>
+          {config.filters.stages.length > 0 && <button type="button" onClick={() => onChange((old) => ({ ...old, filters: { ...old.filters, stages: [] } }))} className="text-label-xs text-primary-base hover:underline">Show all</button>}
+        </div>
+        <ol className="max-h-64 overflow-y-auto px-1.5">
+          {listed.map((column) => {
             const on = shown.has(column.key);
+            const EyeIcon = on ? RiEyeLine : RiEyeOffLine;
             return <li
               key={column.key}
               draggable
@@ -108,42 +120,25 @@ export function PipelineBoardCustomize({ config, onChange, stages, counts }: {
               onDragEnd={() => { setDragging(""); setDropTarget(""); }}
               onDragOver={(event) => { if (!dragging) return; event.preventDefault(); setDropTarget(column.key); }}
               onDrop={(event) => { event.preventDefault(); move(dragging, column.key); setDragging(""); setDropTarget(""); }}
-              className={cn("group/item flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-bg-weak-50", dragging === column.key && "opacity-50", dropTarget === column.key && dragging !== column.key && "ring-2 ring-inset ring-primary-base")}
+              className={cn("group/item flex h-8 cursor-grab items-center gap-2 rounded-md px-1.5 hover:bg-bg-weak-50 active:cursor-grabbing", dragging === column.key && "opacity-40", dropTarget === column.key && dragging !== column.key && "ring-1 ring-inset ring-primary-base")}
             >
-              <RiDraggable className="size-4 shrink-0 cursor-grab text-text-soft-400" aria-hidden="true" />
-              <span aria-hidden="true" className="size-2 shrink-0 rounded-full" style={{ backgroundColor: categoryColor(column.categoryKey === "unclassified" ? null : column.categoryKey).color }} />
-              <span className={cn("min-w-0 flex-1 truncate text-label-sm", on ? "text-text-strong-950" : "text-text-soft-400")} title={`${column.title} · ${column.detail}`}>
-                {column.title}
-                {!column.subcategoryId && column.categoryKey !== "unclassified" && <span className="text-text-soft-400"> · no sub-stage</span>}
+              <RiDraggable className="size-3.5 shrink-0 text-text-disabled-300 group-hover/item:text-text-soft-400" aria-hidden="true" />
+              <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: categoryColor(column.categoryKey === "unclassified" ? null : column.categoryKey).color }} />
+              <span className={cn("min-w-0 flex-1 truncate text-paragraph-sm", on ? "text-text-strong-950" : "text-text-soft-400")} title={`${column.title} · ${column.detail}`}>
+                {column.title}{!column.subcategoryId && column.categoryKey !== "unclassified" && <span className="text-text-soft-400"> · none</span>}
               </span>
               <span className="shrink-0 text-paragraph-xs tabular-nums text-text-soft-400">{(counts.get(column.key) ?? 0).toLocaleString()}</span>
-              <span className="flex shrink-0 opacity-0 transition group-hover/item:opacity-100 group-focus-within/item:opacity-100">
-                <button type="button" disabled={index === 0} onClick={() => move(column.key, keys[index - 1])} aria-label={`Move ${column.title} left`} className="rounded p-0.5 text-text-sub-600 hover:bg-bg-soft-200 disabled:opacity-30"><RiArrowUpSLine className="size-4" /></button>
-                <button type="button" disabled={index === columns.length - 1} onClick={() => move(column.key, keys[index + 1])} aria-label={`Move ${column.title} right`} className="rounded p-0.5 text-text-sub-600 hover:bg-bg-soft-200 disabled:opacity-30"><RiArrowDownSLine className="size-4" /></button>
-              </span>
-              <Switch.Root checked={on} onCheckedChange={(next) => setStages([column.key], next)} aria-label={`Show ${column.title}`} />
+              <button type="button" onClick={() => setStages([column.key], !on)} aria-pressed={on} aria-label={`${on ? "Hide" : "Show"} ${column.title}`} title={on ? "Hide column" : "Show column"} className={cn("flex size-6 shrink-0 items-center justify-center rounded-md outline-none transition hover:bg-bg-soft-200 focus-visible:ring-2 focus-visible:ring-primary-base", on ? "text-text-sub-600" : "text-text-disabled-300")}>
+                <EyeIcon className="size-4" />
+              </button>
             </li>;
           })}
         </ol>
-      </section>}
-
-      {board && <section className="border-t border-stroke-soft-200 px-4 py-3">
-        <h3 className="text-label-xs uppercase tracking-wide text-text-soft-400">Card fields</h3>
-        <ul className="mt-2 space-y-1">
-          {CARD_FIELDS.map((field) => {
-            const on = !hiddenFields.has(field.key);
-            return <li key={field.key}>
-              <label className="flex cursor-pointer items-center gap-3 rounded-lg px-1.5 py-1.5 hover:bg-bg-weak-50">
-                <span className="min-w-0 flex-1">
-                  <span className="block text-label-sm text-text-strong-950">{field.label}</span>
-                  <span className="block truncate text-paragraph-xs text-text-sub-600">{field.detail}</span>
-                </span>
-                <Switch.Root checked={on} onCheckedChange={(next) => onChange((old) => ({ ...old, hiddenFields: next ? old.hiddenFields.filter((key) => key !== field.key) : [...old.hiddenFields, field.key] }))} aria-label={`Show ${field.label}`} />
-              </label>
-            </li>;
-          })}
-        </ul>
-      </section>}
+        {!config.filters.stages.length && <label className="mx-3 mb-1.5 mt-1 flex cursor-pointer items-center gap-2 text-paragraph-xs text-text-sub-600">
+          <Checkbox.Root checked={config.showEmptyColumns} onCheckedChange={(value) => onChange((old) => ({ ...old, showEmptyColumns: value === true }))} />
+          Show empty columns
+        </label>}
+      </div>}
     </Popover.Content>
   </Popover.Root>;
 }

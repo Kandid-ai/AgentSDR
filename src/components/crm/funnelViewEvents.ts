@@ -35,7 +35,7 @@ export function onViewRequested(handler: (id: string) => void) {
   return () => window.removeEventListener(SELECT, listener);
 }
 
-type ViewItem = { id: string; name: string };
+type ViewItem = { id: string; name: string; icon: string };
 
 /**
  * The sidebar's copy: the organization's views (names only) and the one last
@@ -50,9 +50,9 @@ export function useFunnelViewList(enabled: boolean) {
     const load = () => {
       fetch("/api/crm/views", { cache: "no-store" })
         .then((response) => (response.ok ? response.json() : null))
-        .then((body: { views?: Array<{ id?: unknown; name?: unknown }> } | null) => {
+        .then((body: { views?: Array<{ id?: unknown; name?: unknown; config?: { icon?: unknown } }> } | null) => {
           if (cancelled || !body?.views) return;
-          setViews(body.views.filter((view) => typeof view.id === "string").map((view) => ({ id: String(view.id), name: String(view.name ?? "Untitled") })));
+          setViews(body.views.filter((view) => typeof view.id === "string").map((view) => ({ id: String(view.id), name: String(view.name ?? "Untitled"), icon: typeof view.config?.icon === "string" ? view.config.icon : "" })));
         })
         .catch(() => undefined);
     };

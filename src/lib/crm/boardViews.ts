@@ -50,7 +50,16 @@ export type BoardFilters = {
   lastContact: LastContactFilter;
 };
 
+/** The icons a view can wear (src/components/crm/viewIcons.tsx draws them). */
+export const VIEW_ICON_KEYS = [
+  "kanban", "target", "fire", "rocket", "star", "flag", "calendar", "handshake", "trophy", "money",
+  "briefcase", "mail", "phone", "chat", "user", "team", "lightbulb", "time", "bookmark", "heart",
+] as const;
+export type ViewIconKey = (typeof VIEW_ICON_KEYS)[number];
+
 export type BoardViewConfig = {
+  /** Empty = picked from the view's id, so views differ until someone chooses. */
+  icon: ViewIconKey | "";
   layout: "board" | "list";
   groupBy: "status" | "stage";
   filters: BoardFilters;
@@ -72,6 +81,7 @@ export type BoardView = {
 export const EMPTY_FILTERS: BoardFilters = { stages: [], statuses: [], channels: [], search: "", lastContact: "any" };
 
 export const DEFAULT_VIEW_CONFIG: BoardViewConfig = {
+  icon: "",
   layout: "board",
   groupBy: "stage",
   filters: EMPTY_FILTERS,
@@ -109,6 +119,7 @@ export function normalizeFilters(value: unknown): BoardFilters {
 export function normalizeViewConfig(value: unknown): BoardViewConfig {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
+    icon: oneOf(raw.icon, VIEW_ICON_KEYS) ? raw.icon : "",
     layout: raw.layout === "list" ? "list" : "board",
     groupBy: raw.groupBy === "status" ? "status" : "stage",
     filters: normalizeFilters(raw.filters),
@@ -159,18 +170,29 @@ export function sameViewConfig(a: BoardViewConfig, b: BoardViewConfig): boolean 
  * a call, and everyone from a booked call onwards. A key the organization
  * does not have is skipped; a view left with no stage at all is not created.
  */
-export const DEFAULT_VIEWS: ReadonlyArray<{ name: string; subcategoryKeys: readonly string[]; noSubStage: readonly string[] }> = [
+export const DEFAULT_VIEWS: ReadonlyArray<{ name: string; icon: ViewIconKey; subcategoryKeys: readonly string[]; noSubStage: readonly string[] }> = [
   {
     name: "Interested – not booked",
+    icon: "target",
     subcategoryKeys: ["information_requested", "case_study", "demo_requested", "meeting_requested"],
     noSubStage: ["interested"],
   },
   {
     name: "Booked onwards",
+    icon: "calendar",
     subcategoryKeys: ["meeting_booked", "meeting_no_show", "meeting_done", "trial_requested", "trial_user", "pilot", "customer"],
     noSubStage: ["customer"],
   },
 ];
+
+/** A view's icon: its own, or one picked from its id so that views differ. */
+export function viewIconKey(view: { id: string; config?: { icon?: string } }): ViewIconKey {
+  const own = view.config?.icon;
+  if (own && (VIEW_ICON_KEYS as readonly string[]).includes(own)) return own as ViewIconKey;
+  let hash = 0;
+  for (const character of view.id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return VIEW_ICON_KEYS[hash % VIEW_ICON_KEYS.length];
+}
 
 /** The default views' configs for an organization's sub-stages (key → id). */
 export function defaultViewConfigs(subcategoryIdsByKey: ReadonlyMap<string, string>): Array<{ name: string; config: BoardViewConfig }> {
@@ -178,6 +200,6 @@ export function defaultViewConfigs(subcategoryIdsByKey: ReadonlyMap<string, stri
     const ids = view.subcategoryKeys.map((key) => subcategoryIdsByKey.get(key)).filter((id): id is string => Boolean(id));
     if (!ids.length) return [];
     const stages = [...ids, ...view.noSubStage.map((category) => `none:${category}`)];
-    return [{ name: view.name, config: { ...DEFAULT_VIEW_CONFIG, filters: { ...EMPTY_FILTERS, stages }, columnOrder: stages } }];
+    return [{ name: view.name, config: { ...DEFAULT_VIEW_CONFIG, icon: view.icon, filters: { ...EMPTY_FILTERS, stages }, columnOrder: stages } }];
   });
 }
