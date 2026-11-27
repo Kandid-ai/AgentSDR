@@ -96,11 +96,12 @@ export function PipelinePageSkeleton() {
   );
 }
 
-/** Record workspace: left column (header, facts, reply) beside the conversation. */
+/** Record workspace: the conversation beside the lead column (header, stage line, reply). */
 export function RecordBody() {
   return (
-    <div aria-busy="true" aria-label="Loading" className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(22rem,26rem)_minmax(0,1fr)] xl:gap-6">
-      <div className="space-y-4">
+    <div aria-busy="true" aria-label="Loading" className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)] xl:gap-6">
+      <Skeleton className="order-2 h-96 rounded-2xl xl:order-none xl:h-[min(70dvh,48rem)]" />
+      <div className="order-1 space-y-4 xl:order-none">
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             <Skeleton className="size-10 rounded-full" />
@@ -111,17 +112,12 @@ export function RecordBody() {
           </div>
           <Skeleton className="h-8 w-48 rounded-lg" />
         </div>
-        <div className="space-y-3 rounded-xl p-4 ring-1 ring-inset ring-stroke-soft-200">
-          {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="flex items-center justify-between gap-3">
-              <Skeleton className="h-3.5 w-24" />
-              <Skeleton className="h-3.5 w-28" />
-            </div>
-          ))}
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-6 w-36 rounded-md" />
+          <Skeleton className="h-3.5 w-24" />
         </div>
         <Skeleton className="h-96 rounded-2xl" />
       </div>
-      <Skeleton className="h-96 rounded-2xl xl:h-[min(70dvh,48rem)]" />
     </div>
   );
 }

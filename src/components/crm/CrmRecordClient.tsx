@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   RiArrowDownSLine,
   RiArrowRightUpLine,
@@ -14,7 +14,6 @@ import {
   RiErrorWarningLine,
   RiHistoryLine,
   RiLinkedinLine,
-  RiLoopLeftLine,
   RiMailLine,
   RiMoreLine,
   RiPauseLine,
@@ -26,7 +25,6 @@ import {
   RiSendPlaneLine,
   RiSkipForwardLine,
   RiSparklingLine,
-  RiTimerLine,
   RiUserLine,
 } from "@remixicon/react";
 import { DraftRecipients } from "./DraftRecipients";
@@ -41,7 +39,6 @@ import { CallButton } from "@/components/calls/CallButton";
 import { CallsCard } from "@/components/calls/CallsCard";
 import { EmptyState } from "@/components/page/EmptyState";
 import { PageHeader } from "@/components/page/PageHeader";
-import type { StatRowItem } from "@/components/page/StatRow";
 import { PersonWhatsappPanel } from "@/components/whatsapp/PersonWhatsappPanel";
 import { WhatsappLogo } from "@/components/whatsapp/WhatsappLogo";
 import { cn } from "@/utils/cn";
@@ -208,16 +205,13 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
   const runs = asList<Data>(data.runs);
   const activeRunRow = runs.find((row) => ["active", "paused"].includes(String(asObject(row.run).status)));
   const activeRun = asObject(activeRunRow?.run);
-  const activeSequence = asObject(activeRunRow?.sequence);
   const stepRuns = asList<Data>(data.stepRuns).filter((row) => asObject(row.stepRun).sequenceRunId === activeRun.id);
   const currentStepRow = stepRuns.find((row) => Number(asObject(row.step).position) === Number(activeRun.currentStepPosition));
   const currentStep = asObject(currentStepRow?.step);
   const name = displayName({ ...data, person });
   const avatarUrl = person.profilePictureUrl ? String(person.profilePictureUrl) : null;
-  const channels = [...new Set([...conversations, ...messages].map((item) => item.channel).filter(Boolean))].map(channelLabel);
   const followUp = asObject(data.followUp);
   const lastInbound = data.lastInboundAt ? relativeDate(data.lastInboundAt).replace(" overdue", " ago") : "No reply yet";
-  const nextAction = text(currentStep.name, data.nextActionAt ? relativeDate(data.nextActionAt) : "None scheduled");
   // A call-only record (calls/crmFollowUp.ts): nobody has written, so there is
   // no reply or thread to show; it follows up the lead's last call.
   const callFollowUp = !conversations.length && isCallFollowUpRecord({ activeChannel: data.activeChannel, latestInboundMessageId: data.latestInboundMessageId });
@@ -229,19 +223,19 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
   const lastMessage = ([...messages] as Data[]).filter((message) => message.direction === "inbound")
     .sort((a, b) => String(b.sentAt ?? b.createdAt).localeCompare(String(a.sentAt ?? a.createdAt)))[0];
 
-  // Wide (xl): two columns. The left one holds who this is, where they stand
-  // and the reply, and scrolls on its own; the conversation takes the whole
-  // right side, top to bottom, so the thread is never a scroll away. The
+  // Wide (xl): two columns. The conversation takes the whole left side, top
+  // to bottom, so the thread is never a scroll away; the right one holds who
+  // this is, where they stand and the reply, and scrolls on its own. The
   // measured height only holds because the row is minmax(0,1fr) and each
   // column is min-h-0, so their own scroll areas do the shrinking.
-  // Narrow: the left column dissolves (`contents`) and `order` puts the
+  // Narrow: the lead column dissolves (`contents`) and `order` puts the
   // conversation between the reply and the meetings.
   return (
     <div
       ref={workspaceRef}
       style={workspaceHeight ? { height: workspaceHeight } : undefined}
       className={cn(
-        "flex flex-col gap-5 transition-opacity xl:grid xl:grid-cols-[minmax(22rem,26rem)_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)] xl:items-stretch xl:gap-6",
+        "flex flex-col gap-5 transition-opacity xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)] xl:grid-rows-[minmax(0,1fr)] xl:items-stretch xl:gap-6",
         loading && "opacity-60",
       )}
       aria-busy={loading || undefined}
@@ -271,17 +265,12 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
       {error && <ErrorState message={error} onRetry={() => void load()} />}
       {text(followUp.note) && <div className="flex items-start gap-2 rounded-xl bg-bg-weak-50 px-4 py-2.5 text-paragraph-sm text-text-sub-600 ring-1 ring-inset ring-stroke-soft-200"><RiCalendarScheduleLine className="mt-0.5 size-4 shrink-0 text-text-soft-400" aria-hidden="true" /><p className="min-w-0 flex-1"><span className="text-label-sm text-text-strong-950">Follow up {followUp.dueAt ? `on ${formatDate(followUp.dueAt)}` : "later"}:</span> {text(followUp.note)}{text(followUp.actorRef) ? <span className="text-text-soft-400"> — {text(followUp.actorRef)}</span> : null}</p></div>}
 
-      <RecordFacts
-        items={[
-          callFollowUp
-            ? { label: "Last call", value: lastCall.at ? [lastCallOutcome, relativeDate(lastCall.at).replace(" overdue", " ago")].filter(Boolean).join(" · ") : "No call yet", icon: RiPhoneLine, hint: lastCall.at ? [formatDate(lastCall.at), lastCallSummary].filter(Boolean).join(" — ") : undefined }
-            : { label: "Last reply", value: lastInbound, icon: RiReplyLine, hint: data.lastInboundAt ? formatDate(data.lastInboundAt) : undefined },
-          { label: callFollowUp ? "Follow-up call" : "Next step", value: nextAction, icon: RiTimerLine, hint: data.nextActionAt ? formatDate(data.nextActionAt) : undefined },
-          { label: "Sequence", value: activeSequence.name ? `${String(activeSequence.name)}${activeRun.status === "paused" ? " · paused" : ""}` : "None running", icon: RiLoopLeftLine },
-          { label: channels.length > 1 ? "Channels" : "Channel", value: channels.join(", ") || "—", icon: RiChat3Line },
-        ]}
+      <RecordStatusLine
         stage={<ClassificationSelect record={data} categories={categories} onAction={mutate} />}
         stageNotice={<ProposedClassificationNotice record={data} categories={categories} onAction={mutate} />}
+        last={callFollowUp
+          ? { icon: RiPhoneLine, label: lastCall.at ? `Last call ${[lastCallOutcome, relativeDate(lastCall.at).replace(" overdue", " ago")].filter(Boolean).join(" · ")}` : "No call yet", hint: lastCall.at ? [formatDate(lastCall.at), lastCallSummary].filter(Boolean).join(" — ") : undefined }
+          : { icon: RiReplyLine, label: data.lastInboundAt ? `Replied ${lastInbound}` : lastInbound, hint: data.lastInboundAt ? formatDate(data.lastInboundAt) : undefined }}
       />
       </div>
 
@@ -316,7 +305,7 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
           <CallsCard personId={String(person.id ?? data.personId)} refreshKey={callsRefreshKey} />
         </div>
       </div>
-      <div className="order-3 min-w-0 xl:order-none xl:min-h-0">
+      <div className="order-3 min-w-0 xl:order-first xl:min-h-0">
         {data.activeChannel === "whatsapp"
           ? <WhatsappRecordPanel personId={String(person.id ?? data.personId)} onSent={() => { announceRecordChanged(recordId); void load(); }}>
               <ConversationPanel conversations={conversations} messages={messages} name={name} avatarUrl={avatarUrl} />
@@ -328,30 +317,28 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
 }
 
 /**
- * Where the lead stands, in the left column: the stage (and a stage change
- * the AI is holding for a person), the four live facts that used to be a
- * row of tiles, and the activity history. Compact rows, so the reply below
- * starts high and the conversation beside it gets the height.
+ * Where the lead stands, on one line under the header: the stage (and a
+ * stage change the AI is holding for a person) and when they last replied.
+ * The next step, sequence and channel are left out on purpose: the stage
+ * already says what the sequence is, the avatar's badge the channel, and the
+ * draft below is the next step.
  */
-function RecordFacts({ items, stage, stageNotice }: { items: StatRowItem[]; stage: React.ReactNode; stageNotice: React.ReactNode }) {
+function RecordStatusLine({ stage, stageNotice, last }: {
+  stage: React.ReactNode;
+  stageNotice: React.ReactNode;
+  last: { icon: React.ComponentType<{ className?: string }>; label: string; hint?: string };
+}) {
+  const Icon = last.icon;
   return (
-    <section aria-label="Where this lead stands" className="overflow-hidden rounded-xl bg-bg-white-0 ring-1 ring-inset ring-stroke-soft-200">
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
-        <span className="text-label-xs text-text-sub-600">Stage</span>
+    <section aria-label="Where this lead stands" className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <div className="flex min-w-0 items-center">{stage}</div>
+        <span title={last.hint} className="inline-flex min-w-0 items-center gap-1.5 text-paragraph-xs text-text-sub-600">
+          <Icon className="size-3.5 shrink-0 text-text-soft-400" />
+          <span className="truncate">{last.label}</span>
+        </span>
       </div>
-      <div className="px-2 pb-2 empty:hidden">{stageNotice}</div>
-      <dl className="grid grid-cols-2 gap-px border-t border-stroke-soft-200 bg-stroke-soft-200">
-        {items.map(({ label, value, icon: Icon, hint }) => (
-          <div key={label} title={hint} className="flex min-w-0 items-start gap-2 bg-bg-white-0 px-4 py-2">
-            <Icon className="mt-0.5 size-4 shrink-0 text-text-soft-400" aria-hidden="true" />
-            <div className="min-w-0">
-              <dt className="truncate text-paragraph-xs text-text-sub-600">{label}</dt>
-              <dd className="truncate text-label-sm text-text-strong-950">{value}</dd>
-            </div>
-          </div>
-        ))}
-      </dl>
+      <div className="empty:hidden">{stageNotice}</div>
     </section>
   );
 }
@@ -591,6 +578,8 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
   const visible = useMemo(() => messages.filter((message) => filter === "all" || message.channel === filter).sort((a, b) => String(a.sentAt ?? a.createdAt).localeCompare(String(b.sentAt ?? b.createdAt))), [messages, filter]);
   const channels = new Set([...conversations, ...messages].map((item) => item.channel));
   const present = (["email", "linkedin", "whatsapp"] as Channel[]).filter((item) => channels.has(item));
+  // The newest message from them: the one the draft answers.
+  const answering = [...visible].reverse().find((message) => message.direction === "inbound");
   const channelSummary = [...channels].filter(Boolean).map(channelLabel);
   // The thread reads oldest first, but the message being replied to is the
   // last one, so the rail opens at the bottom rather than at an introduction
@@ -656,6 +645,7 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
       {visible.length ? (
         <div ref={scrollRef} className="max-h-[60vh] min-h-0 flex-1 space-y-6 overflow-y-auto p-4 sm:p-5 xl:max-h-none">
           {visible.map((message, index) => {
+            // The message being answered opens whole; the rest stay short.
             const inbound = message.direction === "inbound";
             const subject = text(message.subject);
             const body = text(message.body ?? message.bodyText, "Message content unavailable");
@@ -673,7 +663,7 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
                   </div>
                   <div className={cn("rounded-2xl px-4 py-3 text-left ring-1 ring-inset", inbound ? "rounded-tl-md bg-bg-white-0 shadow-regular-xs ring-stroke-soft-200" : "rounded-tr-md bg-primary-alpha-10 ring-primary-alpha-16")}>
                     {subject && <p className="mb-2 text-label-sm text-text-strong-950">{subject}</p>}
-                    <p className="whitespace-pre-wrap break-words text-paragraph-sm leading-6 text-text-strong-950">{body}</p>
+                    <ClampedMessage body={body} defaultOpen={message === answering} />
                   </div>
                 </div>
               </article>
@@ -683,6 +673,43 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
       ) : <EmptyState className="min-h-80 flex-1" icon={RiChat3Line} title={messages.length ? "No messages on this channel" : "No messages yet"} description={messages.length ? "Pick All to see the whole thread." : "Messages will appear here when this contact replies."} />}
       </FramePanel>
     </Frame>
+  );
+}
+
+/** Lines a message shows before "Show more", so a thread reads as a run of messages, not a few long ones. */
+const MESSAGE_LINES = 4;
+
+/**
+ * A message cut to MESSAGE_LINES lines, with Show more / Show less when it is
+ * longer. Measured, not guessed from the text: whether it overflows depends
+ * on how it wraps at the panel's width.
+ */
+function ClampedMessage({ body, defaultOpen = false }: { body: string; defaultOpen?: boolean }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [open, setOpen] = useState(defaultOpen);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || open) return;
+    const measure = () => setOverflows(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    return () => observer?.disconnect();
+  }, [open, body]);
+  return (
+    <>
+      <p
+        ref={ref}
+        className="whitespace-pre-wrap break-words text-paragraph-sm leading-6 text-text-strong-950"
+        style={open ? undefined : { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: MESSAGE_LINES, overflow: "hidden" }}
+      >{body}</p>
+      {(open ? overflows || !defaultOpen : overflows) && (
+        <button type="button" aria-expanded={open} onClick={() => { setOpen((value) => !value); if (!open) setOverflows(true); }} className="mt-1.5 text-label-xs text-primary-base transition hover:text-primary-darker">
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
+    </>
   );
 }
 
