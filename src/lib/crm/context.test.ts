@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { buildClassificationContext } from "./context";
+import { buildClassificationContext, withoutQuotedHistory } from "./context";
 import type { ClassificationContextInput } from "./ai/types";
 
 function fixture(): ClassificationContextInput {
@@ -104,7 +104,40 @@ describe("CRM classification context", () => {
     assert.equal("participants" in (second ?? {}), false);
   });
 
-  test("keeps the prompt inside the requested budget and drops whole older messages", () => {
+  test("keeps the thread over Knowledge: a long reply chain no longer empties it", () => {
+    const input = fixture();
+    input.knowledge = Array.from({ length: 4 }, (_, index) => ({
+      documentId: `doc-${index}`,
+      title: `Doc ${index}`,
+      kind: "product",
+      content: "knowledge ".repeat(400),
+    }));
+    // Our last email carries the whole thread again below it.
+    input.recentConversation = [{
+      id: "our-last",
+      channel: "email",
+      direction: "outbound",
+      sentAt: "2026-08-30T12:00:00.000Z",
+      bodyText: `Would a 15-minute demo on Thursday work?\n\nOn Mon, 24 Aug 2026 at 10:00, Priya wrote:\n${"> old text\n".repeat(2_000)}`,
+    }];
+    input.latestInboundMessage.bodyText = "Yes";
+
+    const context = buildClassificationContext(input, { maxTokens: 2_000 });
+
+    assert.ok(context.prompt.length <= 2_000 * 4);
+    assert.deepEqual(context.snapshot.recentConversation.map((message) => message.id), ["our-last"]);
+    assert.equal(context.snapshot.recentConversation[0]?.bodyText, "Would a 15-minute demo on Thursday work?");
+    assert.ok(context.snapshot.knowledge.length < 4);
+  });
+
+  test("strips quoted email history but keeps a message that is only a quote", () => {
+    assert.equal(withoutQuotedHistory("Sounds good.\n\nOn Tue, Nov 3, 2026 at 9:00 AM Bhavya <b@x.com> wrote:\n> Hi"), "Sounds good.");
+    assert.equal(withoutQuotedHistory("Done.\n\nFrom: Roy <roy@x.com>\nSent: 17 November 2026 16:30\nTo: Soumya"), "Done.");
+    assert.equal(withoutQuotedHistory("> only quoted"), "> only quoted");
+    assert.equal(withoutQuotedHistory("No quote here"), "No quote here");
+  });
+
+  test("keeps the prompt inside the requested budget, shortening and then dropping older messages", () => {
     const input = fixture();
     input.latestInboundMessage.bodyText = "latest ".repeat(1_000);
     input.recentConversation = Array.from({ length: 6 }, (_, index) => ({
@@ -121,8 +154,12 @@ describe("CRM classification context", () => {
     assert.ok(context.estimatedTokens <= 512);
     assert.equal(context.truncated, true);
     assert.ok(context.omittedMessageCount > 0);
+    // What is kept is the newest contiguous window, each a prefix of the original.
+    const ids = context.snapshot.recentConversation.map((message) => message.id);
+    assert.deepEqual(ids, input.recentConversation.slice(input.recentConversation.length - ids.length).map((message) => message.id));
     for (const message of context.snapshot.recentConversation) {
-      assert.equal(message.bodyText, input.recentConversation.find((item) => item.id === message.id)?.bodyText);
+      const original = input.recentConversation.find((item) => item.id === message.id)!.bodyText;
+      assert.ok(original.startsWith(message.bodyText.replace("…[truncated]", "")));
     }
   });
 

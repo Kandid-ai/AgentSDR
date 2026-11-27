@@ -9,7 +9,15 @@ import type {
   ClassificationPersonProfile,
 } from "./ai/types";
 
-const DEFAULT_CONTEXT_TOKENS = 6_000;
+// The thread is what makes a short reply ("Yes", "Sure") classifiable, so the
+// budget leaves room for it after the taxonomy and Knowledge. At 6,000 almost
+// every request sat at the cap and 18% of email replies went in with no
+// thread at all (Nov 2026).
+const DEFAULT_CONTEXT_TOKENS = 10_000;
+/** The two newest prior messages: usually our last message and their last. */
+const NEWEST_PRIOR_MESSAGE_CHARS = 2_500;
+const OLDER_PRIOR_MESSAGE_CHARS = 900;
+const NEWEST_PRIOR_MESSAGES = 2;
 const MIN_CONTEXT_TOKENS = 512;
 const MAX_CONTEXT_TOKENS = 32_000;
 const APPROXIMATE_CHARS_PER_TOKEN = 4;
@@ -134,6 +142,33 @@ function messageSnapshot(
   };
 }
 
+/**
+ * A prior email usually carries the whole thread again below it ("On …
+ * wrote:", "> …", Outlook's "From: … Sent:"). The thread already holds those
+ * messages, so the copy only spends budget. Returns the text above the first
+ * quote marker, or the text unchanged when nothing would be left.
+ */
+export function withoutQuotedHistory(text: string): string {
+  const markers = [
+    /^\s*On .{1,300}wrote:\s*$/im,
+    /^\s*>/m,
+    /^\s*-{2,}\s*Original Message\s*-{2,}/im,
+    /^\s*_{5,}\s*$/m,
+    /^\s*From:\s.+\n(?:.*\n){0,3}?\s*(?:Sent|Date):\s/im,
+  ];
+  let cut = text.length;
+  for (const marker of markers) {
+    const match = marker.exec(text);
+    if (match && match.index < cut) cut = match.index;
+  }
+  const kept = text.slice(0, cut).trim();
+  return kept || text;
+}
+
+function priorMessageLimit(newestFirstIndex: number): number {
+  return newestFirstIndex < NEWEST_PRIOR_MESSAGES ? NEWEST_PRIOR_MESSAGE_CHARS : OLDER_PRIOR_MESSAGE_CHARS;
+}
+
 function serializedLength(snapshot: ClassificationContextSnapshot): number {
   return JSON.stringify(snapshot, null, 2).length;
 }
@@ -203,9 +238,10 @@ export function estimateContextTokens(text: string): number {
 
 /**
  * Creates the exact auditable context sent to the classifier. The newest
- * contiguous conversation window is retained, and prior messages are never
- * partially sliced: when the next complete message does not fit, older
- * messages are omitted as a group.
+ * contiguous conversation window is retained. Each prior message loses its
+ * quoted history and is shortened (the two newest least), and the thread
+ * outranks Knowledge: a message that does not fit first pushes Knowledge
+ * documents out, and only then are it and the older messages omitted.
  */
 export function buildClassificationContext(
   input: ClassificationContextInput,
@@ -279,8 +315,16 @@ export function buildClassificationContext(
 
   const selectedNewestFirst: typeof priorMessages = [];
   for (let index = priorMessages.length - 1; index >= 0; index -= 1) {
-    const candidate = priorMessages[index];
+    const original = priorMessages[index];
+    const limit = priorMessageLimit(selectedNewestFirst.length);
+    const bodyText = boundedText(withoutQuotedHistory(original.bodyText), limit) ?? original.bodyText;
+    if (bodyText !== original.bodyText) truncated = true;
+    const candidate = { ...original, bodyText };
     snapshot.recentConversation = [candidate, ...selectedNewestFirst];
+    while (serializedLength(snapshot) > maxCharacters && snapshot.knowledge.length) {
+      snapshot.knowledge = snapshot.knowledge.slice(0, -1);
+      truncated = true;
+    }
     if (serializedLength(snapshot) > maxCharacters) {
       snapshot.recentConversation = [...selectedNewestFirst];
       truncated = true;

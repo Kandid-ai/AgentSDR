@@ -7,6 +7,7 @@
  *   bun run --conditions=react-server scripts/seed-langfuse-prompts.ts --org <id> --update   # also push the code's copy as a new
  *                                                                                           # version where production differs
  *   bun run --conditions=react-server scripts/seed-langfuse-prompts.ts --org <id> --check    # list differences, change nothing
+ *   … --update --only crm/classify-system                                                    # push only the named prompts (comma-separated)
  *
  * Saving the integration already creates the missing ones; this is for
  * --update and --check. Without --update a prompt already in Langfuse is
@@ -25,6 +26,10 @@ import { syncLangfusePrompts, type PromptSyncMode } from "@/lib/observability/la
 
 const update = process.argv.includes("--update");
 const check = process.argv.includes("--check");
+// --only a,b: sync just these prompts, so --update pushes one changed prompt
+// without overwriting others someone edited in Langfuse on purpose.
+const onlyFlag = process.argv.indexOf("--only");
+const only = onlyFlag >= 0 ? process.argv[onlyFlag + 1]?.split(",").map((name) => name.trim()).filter(Boolean) : undefined;
 const mode: PromptSyncMode = check ? "check" : update ? "update" : "create";
 
 const orgFlag = process.argv.indexOf("--org");
@@ -48,7 +53,7 @@ async function main(): Promise<void> {
     if (result.outcome === "same") return;
     const lacks = result.missingVariables?.length ? ` (Langfuse's version lacks: ${result.missingVariables.join(", ")})` : "";
     console.log(`${result.outcome.padEnd(8)} ${result.name}${lacks}`);
-  });
+  }, only);
 
   console.log(
     check

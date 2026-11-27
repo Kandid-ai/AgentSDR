@@ -287,6 +287,9 @@ export async function classifyCrmReply(
         ...input.trace?.metadata,
         latestInboundMessageId: input.latestInboundMessage.id,
         channel: input.latestInboundMessage.channel,
+        contextMessages: context.snapshot.recentConversation.length,
+        contextOmittedMessages: context.omittedMessageCount,
+        contextTruncated: context.truncated,
       },
     },
   });

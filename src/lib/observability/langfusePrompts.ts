@@ -78,9 +78,11 @@ export async function syncLangfusePrompts(
   credentials: PlatformCredentials["langfuse"],
   mode: PromptSyncMode,
   onResult?: (result: PromptSyncResult) => void,
+  /** Limit the sync to these prompts (e.g. push one changed prompt without the rest). */
+  only?: readonly string[],
 ): Promise<PromptSyncResult[]> {
   const client = langfuseClientFor(credentials);
-  const names = Object.keys(PROMPTS).sort() as PromptName[];
+  const names = (Object.keys(PROMPTS).sort() as PromptName[]).filter((name) => !only || only.includes(name));
   const results: PromptSyncResult[] = new Array(names.length);
   let next = 0;
   async function worker() {

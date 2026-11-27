@@ -111,9 +111,14 @@ async function classificationContext(messageId: string): Promise<{
     db.select().from(crmSubcategories)
       .where(and(eq(crmSubcategories.pipelineId, scope.record.pipelineId), eq(crmSubcategories.active, true)))
       .orderBy(asc(crmSubcategories.sortOrder)),
-    db.select().from(crmConversationMessages)
-      .where(eq(crmConversationMessages.conversationId, scope.conversation.id))
-      .orderBy(asc(crmConversationMessages.sentAt), asc(crmConversationMessages.id)),
+    // Every conversation of the record, not just this one: our last message
+    // may have gone from another mailbox or channel (30 of 73 email replies
+    // classified with an empty thread had their outbound elsewhere, Nov 2026).
+    db.select({ message: crmConversationMessages }).from(crmConversationMessages)
+      .innerJoin(crmConversations, eq(crmConversations.id, crmConversationMessages.conversationId))
+      .where(and(inOrg(crmConversations), eq(crmConversations.crmRecordId, scope.record.id)))
+      .orderBy(asc(crmConversationMessages.sentAt), asc(crmConversationMessages.id))
+      .then((rows) => rows.map((row) => row.message)),
     db.select().from(crmSettings).where(eq(crmSettings.pipelineId, scope.record.pipelineId)).limit(1),
     scope.record.subcategoryId
       ? db.select().from(crmSubcategories).where(eq(crmSubcategories.id, scope.record.subcategoryId)).limit(1)
