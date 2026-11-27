@@ -406,10 +406,21 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
         .innerJoin(people, eq(people.id, crmRecords.personId))
         .where(and(...baseConditions, stagesCondition)).groupBy(pipelineStage)
       : Promise.resolve([]),
-    // The sequence an exhausted record finished, which the active-run read
-    // above cannot supply once the run is completed.
+    // The record's newest run — the active one, or the sequence an exhausted
+    // record finished, which the active-run read cannot supply once the run
+    // is completed — with how many follow-ups it has and how many went out
+    // (the card's progress dashes).
     pipeline
-      ? db.selectDistinctOn([crmSequenceRuns.crmRecordId], { recordId: crmSequenceRuns.crmRecordId, status: crmSequenceRuns.status, sequenceName: crmSequences.name })
+      ? db.selectDistinctOn([crmSequenceRuns.crmRecordId], {
+        recordId: crmSequenceRuns.crmRecordId,
+        status: crmSequenceRuns.status,
+        sequenceName: crmSequences.name,
+        followUpsTotal: sql<number>`(select count(*)::int from crm_sequence_steps total_step
+          where total_step.sequence_version_id = ${crmSequenceRuns.sequenceVersionId} and total_step.step_type = 'follow_up')`,
+        followUpsSent: sql<number>`(select count(*)::int from crm_sequence_step_runs sent_run
+          join crm_sequence_steps sent_step on sent_step.id = sent_run.sequence_step_id
+          where sent_run.sequence_run_id = ${crmSequenceRuns.id} and sent_run.status = 'sent' and sent_step.step_type = 'follow_up')`,
+      })
         .from(crmSequenceRuns)
         .innerJoin(crmSequences, eq(crmSequences.id, crmSequenceRuns.sequenceId))
         .where(inArray(crmSequenceRuns.crmRecordId, pageRecordIds))

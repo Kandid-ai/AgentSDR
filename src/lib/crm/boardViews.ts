@@ -35,7 +35,7 @@ export const CARD_FIELDS = [
   { key: "draft", label: "Draft reply", detail: "The waiting draft, with Edit and Send" },
   { key: "lastContact", label: "Last contact", detail: "When either side last wrote, and who" },
   { key: "status", label: "Status", detail: "What is due or scheduled next" },
-  { key: "sequence", label: "Sequence", detail: "The follow-up sequence and its step" },
+  { key: "sequence", label: "Follow-ups", detail: "How many of the sequence's follow-ups have gone out" },
 ] as const;
 export type CardField = (typeof CARD_FIELDS)[number]["key"];
 

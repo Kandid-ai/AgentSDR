@@ -1052,6 +1052,28 @@ function lastContactOf(record: Data): { at: string; by: "them" | "us" } | null {
 
 const NO_HIDDEN_FIELDS: ReadonlySet<CardField> = new Set();
 
+/** The record's newest sequence run, as follow-ups sent of the sequence's total (pipeline reads only). */
+function followUpsOf(action: Action): { sent: number; total: number; sequence: string } | null {
+  const run = asObject(action.lastRun);
+  const total = Number(run.followUpsTotal ?? 0);
+  if (!total) return null;
+  return { sent: Math.min(total, Number(run.followUpsSent ?? 0)), total, sequence: String(run.sequenceName ?? "") };
+}
+
+/** One dash per follow-up in the sequence; the ones already sent are lit. */
+function FollowUpProgress({ sent, total, sequence }: { sent: number; total: number; sequence: string }) {
+  const label = `${sent} of ${total} follow-up${total === 1 ? "" : "s"} sent${sequence ? ` · ${sequence}` : ""}`;
+  return <div className="mt-2.5 flex items-center gap-2" title={label} aria-label={label} role="img">
+    <div className="flex flex-1 gap-1">
+      {Array.from({ length: Math.min(total, 12) }, (_, index) => <span
+        key={index}
+        className={cn("h-1 flex-1 rounded-full", index < sent ? "bg-primary-base shadow-[0_0_6px_var(--color-primary-base,currentColor)]" : "bg-bg-soft-200")}
+      />)}
+    </div>
+    <span className="shrink-0 text-paragraph-xs tabular-nums text-text-soft-400">{sent}/{total}</span>
+  </div>;
+}
+
 /**
  * One action as a card: the pipeline board's unit, and the Action required
  * list's below md, where a six-column table would only scroll sideways.
@@ -1084,6 +1106,7 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
   // record is waiting for rather than a due action it does not have.
   const chipRow = row.stage === "needs_action" ? row : { ...row, dueLabel: row.actionText };
   const show = (field: CardField) => !hiddenFields.has(field);
+  const followUps = followUpsOf(action);
   const lastContact = show("lastContact") ? lastContactOf(record) : null;
 
   return <article
@@ -1185,6 +1208,10 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
       {/* The quote above already says when they replied; this is the when of the chip. */}
       <span className="shrink-0 text-paragraph-xs tabular-nums text-text-sub-600" title={formatDate(row.repliedAt)}>{row.dueDetail && row.dueDetail !== "—" ? row.dueDetail : row.latestReply || row.lastCall ? "" : timeAgo(row.repliedAt)}</span>
     </div>}
-    {show("sequence") && row.sequenceLabel && <p className="mt-1.5 truncate text-paragraph-xs text-text-soft-400" title={row.sequenceLabel}>{row.sequenceLabel}</p>}
+    {/* The chip above already says where the record stands; under it, how far
+        its sequence has got. Off the pipeline (no counts), the sequence's name. */}
+    {show("sequence") && (followUps
+      ? <FollowUpProgress sent={followUps.sent} total={followUps.total} sequence={followUps.sequence} />
+      : !pipeline && row.sequenceLabel && <p className="mt-1.5 truncate text-paragraph-xs text-text-soft-400" title={row.sequenceLabel}>{row.sequenceLabel}</p>)}
   </article>;
 }
