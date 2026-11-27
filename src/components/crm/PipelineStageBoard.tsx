@@ -183,6 +183,8 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
   useSyncRecordChanges(actions, refreshRow, onMutated);
   const hiddenFields = useMemo(() => new Set(config.hiddenFields), [config.hiddenFields]);
   const { filters } = config;
+  // Filters beyond the stages themselves (which only pick the columns).
+  const narrowed = filters.statuses.length > 0 || filters.channels.length > 0 || Boolean(filters.search.trim()) || filters.lastContact !== "any";
 
   const visible = useMemo(() => actions.filter((action) => matchesFilters(action, filters)), [actions, filters]);
   const byColumn = useMemo(() => {
@@ -269,7 +271,7 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
             <span className="flex h-7 min-w-9 shrink-0 items-center justify-center rounded-lg bg-bg-white-0 px-2 text-label-sm tabular-nums text-text-strong-950 shadow-regular-xs ring-1 ring-inset ring-stroke-soft-200">{column.count === null ? "—" : column.count.toLocaleString()}</span>
           </header>
           {!cards.length && !hasMore
-            ? <FramePanel className="p-0 sm:p-0"><EmptyState compact icon={RiCheckDoubleLine} title="No leads here" description={filtered ? "None at this stage fits the filters." : "No open lead is at this stage."} /></FramePanel>
+            ? <FramePanel className="p-0 sm:p-0"><EmptyState compact icon={RiCheckDoubleLine} title="No leads here" description={narrowed ? "None at this stage fits the filters." : "No open lead is at this stage."} /></FramePanel>
             : <div className="space-y-2 lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-contain">
               {cards.map((action) => {
                 const id = actionId(action);

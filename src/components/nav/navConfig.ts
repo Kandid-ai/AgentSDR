@@ -74,6 +74,12 @@ export type NavGroup = {
   children: NavLink[];
   /** Closed until opened, unless it holds the current page. */
   defaultOpen?: boolean;
+  /**
+   * Children the sidebar fills in at runtime: "funnelViews" lists the
+   * organization's saved Funnel views (the static children stand in until
+   * they load, and are what the ⌘K palette offers).
+   */
+  dynamic?: "funnelViews";
 };
 
 export type NavEntry = NavLink | NavGroup;
@@ -132,7 +138,15 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "CRM",
     entries: [
-      link("/crm/pipeline", "Funnel", RiRouteLine),
+      {
+        kind: "group",
+        id: "funnel",
+        label: "Funnel",
+        icon: RiRouteLine,
+        dynamic: "funnelViews",
+        defaultOpen: true,
+        children: [link("/crm/pipeline", "Funnel", RiRouteLine)],
+      },
       link("/crm/sequences", "Sequences", RiTimeLine),
     ],
   },
@@ -216,6 +230,8 @@ export function paletteItems(): PaletteItem[] {
   for (const section of NAV_SECTIONS) {
     for (const e of section.entries) {
       if (e.kind === "link") items.push({ href: e.href, label: e.label, group: section.label ?? "Pages", icon: e.icon });
+      // A runtime-filled group (the Funnel's views) is one destination here: its page.
+      else if (e.dynamic) for (const c of e.children) items.push({ href: c.href, label: e.label, group: section.label ?? "Pages", icon: c.icon });
       else for (const c of e.children) items.push({ href: c.href, label: `${e.label} · ${c.label}`, group: section.label ?? "Pages", icon: c.icon });
     }
   }

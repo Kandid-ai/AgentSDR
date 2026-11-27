@@ -10,6 +10,7 @@ import {
   RiBugLine,
   RiCheckLine,
   RiCloseLine,
+  RiKanbanView2,
   RiExternalLinkLine,
   RiLightbulbLine,
   RiLogoutBoxRLine,
@@ -30,6 +31,7 @@ import { SETTINGS_HOME } from "@/components/settings/settingsNav";
 import { CommandPalette } from "@/components/nav/CommandPalette";
 import { ThemeToggleButton } from "@/components/theme/ThemeSwitch";
 import { activeHref, activeHrefFrom, isOpenedFromPage, NAV_FOOTER, NAV_SECTIONS, type NavBadges, type NavEntry, type NavGroup, type NavLink } from "@/components/nav/navConfig";
+import { requestOpenView, useFunnelViewList } from "@/components/crm/funnelViewEvents";
 import { APP_VERSION, bugReportUrl, SUPPORT_LINKS } from "@/lib/support";
 import { useDemoMode } from "@/components/demo/DemoProvider";
 import { cn } from "@/utils/cn";
@@ -185,8 +187,19 @@ function GroupIcon({ group, className }: { group: NavGroup; className?: string }
   );
 }
 
-function GroupRow({ group, current, open, onToggle, badges, collapsed, compact }: { group: NavGroup; current: string | undefined; open: boolean; onToggle: () => void; badges: NavBadges | null; collapsed: boolean; compact?: boolean }) {
-  const holdsActive = group.children.some((c) => c.href === current);
+/**
+ * A group's children may light up and follow links their own way: the
+ * Funnel's views share one path and differ by `?view=`, and on the Funnel
+ * page itself a click switches the view in place instead of navigating.
+ */
+type ChildBehaviour = {
+  isActive?: (child: NavLink) => boolean;
+  onFollow?: (child: NavLink, event: React.MouseEvent) => void;
+};
+
+function GroupRow({ group, current, open, onToggle, badges, collapsed, compact, behaviour = {} }: { group: NavGroup; current: string | undefined; open: boolean; onToggle: () => void; badges: NavBadges | null; collapsed: boolean; compact?: boolean; behaviour?: ChildBehaviour }) {
+  const isActive = behaviour.isActive ?? ((c: NavLink) => c.href === current);
+  const holdsActive = group.children.some((c) => c.href.split("?")[0] === current);
   const childBadge = group.children.reduce((sum, c) => sum + (c.badge && badges ? badges[c.badge] : 0), 0);
 
   if (collapsed) {
@@ -203,8 +216,8 @@ function GroupRow({ group, current, open, onToggle, badges, collapsed, compact }
         <Dropdown.Content side="right" align="start" sideOffset={10} className="w-52">
           <p className="px-2 pb-1 pt-1.5 text-paragraph-xs text-text-soft-400">{group.label}</p>
           {group.children.map((c) => (
-            <Dropdown.Item key={c.href} asChild className={cn(c.href === current && "bg-bg-weak-50 text-text-strong-950")}>
-              <Link href={c.href}>
+            <Dropdown.Item key={c.href} asChild className={cn(isActive(c) && "bg-bg-weak-50 text-text-strong-950")}>
+              <Link href={c.href} onClick={(event) => behaviour.onFollow?.(c, event)}>
                 <Dropdown.ItemIcon as={c.icon} />
                 <span className="flex-1">{c.label}</span>
                 <Badge link={c} badges={badges} />
@@ -227,11 +240,11 @@ function GroupRow({ group, current, open, onToggle, badges, collapsed, compact }
       {open && (
         <ul className="mt-0.5 space-y-0.5 pl-3">
           {group.children.map((c) => {
-            const active = c.href === current;
+            const active = isActive(c);
             const ChildIcon = c.icon;
             return (
               <li key={c.href}>
-                <Link href={c.href} aria-current={active ? "page" : undefined} className={cn(rowBase, rowState(active), "h-8 gap-2 px-2 text-paragraph-sm", active && "text-label-sm")}>
+                <Link href={c.href} onClick={(event) => behaviour.onFollow?.(c, event)} aria-current={active ? "page" : undefined} className={cn(rowBase, rowState(active), "h-8 gap-2 px-2 text-paragraph-sm", active && "text-label-sm")}>
                   <ChildIcon className={cn("size-4 shrink-0", active ? "text-text-strong-950" : "text-text-soft-400")} />
                   <span className="min-w-0 flex-1 truncate">{c.label}</span>
                   <Badge link={c} badges={badges} />
@@ -323,12 +336,32 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
     window.location.replace("/sign-in");
   }
 
-  const renderEntry = (e: NavEntry, compact?: boolean) =>
-    e.kind === "link" ? (
-      <LinkRow key={e.href} link={e} active={e.href === current} badges={badges} collapsed={collapsed} compact={compact} />
-    ) : (
-      <GroupRow key={e.id} group={e} current={current} open={isOpen(e)} onToggle={() => toggleGroup(e)} badges={badges} collapsed={collapsed} compact={compact} />
-    );
+  // Funnel: one child per saved view, the open one lit while on the page.
+  const funnelViews = useFunnelViewList(Boolean(session));
+  const withViews = (group: NavGroup): { group: NavGroup; behaviour?: ChildBehaviour } => {
+    if (group.dynamic !== "funnelViews" || !funnelViews.views?.length) return { group };
+    const base = group.children[0]?.href ?? "/crm/pipeline";
+    const onPage = current === base;
+    return {
+      group: { ...group, children: funnelViews.views.map((view) => ({ kind: "link", href: `${base}?view=${view.id}`, label: view.name, icon: RiKanbanView2 })) },
+      behaviour: {
+        isActive: (child) => onPage && child.href.endsWith(`view=${funnelViews.openId}`),
+        onFollow: (child, event) => {
+          if (!onPage || pathname !== base) return;
+          // Already on the Funnel: switch the view in place.
+          event.preventDefault();
+          requestOpenView(new URL(child.href, window.location.origin).searchParams.get("view") ?? "");
+          onClose?.();
+        },
+      },
+    };
+  };
+
+  const renderEntry = (e: NavEntry, compact?: boolean) => {
+    if (e.kind === "link") return <LinkRow key={e.href} link={e} active={e.href === current} badges={badges} collapsed={collapsed} compact={compact} />;
+    const { group, behaviour } = withViews(e);
+    return <GroupRow key={e.id} group={group} current={current} open={isOpen(e)} onToggle={() => toggleGroup(e)} badges={badges} collapsed={collapsed} compact={compact} behaviour={behaviour} />;
+  };
 
   return (
     <Tooltip.Provider delayDuration={200}>

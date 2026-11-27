@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DEFAULT_VIEW_CONFIG, normalizeViewConfig, sameViewConfig, type BoardView, type BoardViewConfig } from "@/lib/crm/boardViews";
 import { asList, asObject, crmFetch, errorMessage } from "./crm-utils";
-
-const LAST_VIEW_KEY = "agentsdr.funnel.view";
+import { LAST_VIEW_KEY, announceOpenView, announceViewsChanged, onViewRequested } from "./funnelViewEvents";
 
 function asView(value: unknown): BoardView {
   const raw = asObject(value);
@@ -57,7 +56,9 @@ export function useFunnelViews() {
   }, []);
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (currentId) rememberView(currentId); }, [currentId]);
+  useEffect(() => { if (currentId) { rememberView(currentId); announceOpenView(currentId); } }, [currentId]);
+  // A view picked in the sidebar while this page is open.
+  useEffect(() => onViewRequested((id) => { if (views.some((view) => view.id === id)) setCurrentId(id); }), [views]);
 
   const current = views.find((view) => view.id === currentId) ?? null;
   const config = useMemo(() => (current ? drafts[current.id] ?? current.config : DEFAULT_VIEW_CONFIG), [current, drafts]);
@@ -93,6 +94,7 @@ export function useFunnelViews() {
   const create = useCallback((name: string, from: BoardViewConfig = config) => run(async () => {
     const view = asView(asObject(await crmFetch("/views", { method: "POST", body: JSON.stringify({ name, config: from }) })).view);
     replaceView(view);
+    announceViewsChanged();
     // The view it was made from goes back to how it was saved.
     if (current) setDrafts((old) => { const next = { ...old }; delete next[current.id]; return next; });
     setCurrentId(view.id);
@@ -102,6 +104,7 @@ export function useFunnelViews() {
   const rename = useCallback((id: string, name: string) => run(async () => {
     const view = asView(asObject(await crmFetch(`/views/${id}`, { method: "PATCH", body: JSON.stringify({ name }) })).view);
     replaceView(view);
+    announceViewsChanged();
     return view;
   }), [run, replaceView]);
 
@@ -112,6 +115,7 @@ export function useFunnelViews() {
     setViews(rest);
     if (id === currentId) setCurrentId(rest[0]?.id ?? "");
     if (!rest.length) await load();
+    announceViewsChanged();
     return true;
   }), [run, views, currentId, load]);
 
