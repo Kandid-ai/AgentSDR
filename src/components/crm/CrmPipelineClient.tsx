@@ -244,7 +244,7 @@ export function CrmPipelineClient() {
     </div>
     {categoryError && <div className="mt-3"><ErrorState message={categoryError} /></div>}
 
-    {stageBoard ? <PipelineStageBoard
+    {stageBoard ? <HoverPreviewProvider><PipelineStageBoard
       query={stageBoardQuery}
       actions={bySubStage.actions}
       setActions={bySubStage.setActions}
@@ -258,7 +258,7 @@ export function CrmPipelineClient() {
       filtered={filtered}
       onReset={resetFilters}
       onMutated={onMutated}
-    /> : view === "board" ? <>
+    /></HoverPreviewProvider> : view === "board" ? <>
       <SegmentedControl.Root value={mobileStage} onValueChange={(value) => setMobileStage(value as PipelineStage)} className="mt-4 lg:hidden">
         <SegmentedControl.List aria-label="Stage">
           {STAGES.map((stage) => <SegmentedControl.Trigger key={stage} value={stage} className="gap-1 px-1.5 text-label-xs sm:gap-1.5 sm:px-2">
