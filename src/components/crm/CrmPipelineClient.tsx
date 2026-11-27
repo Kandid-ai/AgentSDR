@@ -41,14 +41,17 @@ import {
 } from "./CrmActionsClient";
 import { ErrorState } from "./CrmLayout";
 import { RowsSkeleton } from "./CrmSkeletons";
-import { PipelineStageBoard, type GroupCount } from "./PipelineStageBoard";
+import { PipelineBoardCustomize } from "./PipelineBoardCustomize";
+import { PipelineStageBoard, arrangedColumns, groupCountMap, type GroupCount } from "./PipelineStageBoard";
+import { useBoardSettings, type CardField } from "./pipelineBoardSettings";
 import { asList, asObject, crmFetch, errorMessage } from "./crm-utils";
 
 const STAGES = Object.keys(STAGE_META) as PipelineStage[];
 /** Cards per column per request; a board shows three columns at once. */
 const BOARD_PAGE = 20;
-/** The sub-stage board's first read, shared by every column (see PipelineStageBoard). */
-const STAGE_BOARD_PAGE = 100;
+/** The sub-stage board's first read: each column's newest few, in one request (see PipelineStageBoard). */
+const STAGE_BOARD_PAGE = 200;
+const STAGE_BOARD_PER_COLUMN = 8;
 
 const EMPTY_COPY: Record<PipelineStage | "all", { title: string; detail: string }> = {
   all: { title: "No open leads", detail: "Anyone who replies will show up here until their record is closed." },
@@ -138,6 +141,8 @@ export function CrmPipelineClient() {
     setGroupByState(value);
     try { window.localStorage.setItem(GROUP_BY_KEY, value); } catch { /* storage unavailable */ }
   };
+  const { settings: boardSettings, update: updateBoardSettings } = useBoardSettings();
+  const [customizeOpen, setCustomizeOpen] = useState(false);
   // With sub-stage columns, the status is a filter instead.
   const [status, setStatus] = useState<PipelineStage | "">("");
   const [categories, setCategories] = useState<Data[]>([]);
@@ -165,6 +170,7 @@ export function CrmPipelineClient() {
   const stageBoardQuery = useMemo(() => {
     const params = new URLSearchParams(base);
     params.set("groupCounts", "true");
+    params.set("perGroupLimit", String(STAGE_BOARD_PER_COLUMN));
     if (status) params.set("stage", status);
     return params.toString();
   }, [base, status]);
@@ -192,6 +198,10 @@ export function CrmPipelineClient() {
   const countFor = (stage: PipelineStage | "all") => counts
     ? stage === "all" ? STAGES.reduce((sum, key) => sum + Number(counts[key] ?? 0), 0) : Number(counts[stage] ?? 0)
     : null;
+  const subStageCounts = freshGroupCounts ?? bySubStage.groupCounts;
+  const subStageColumns = useMemo(() => arrangedColumns(categories, filters, subStageCounts, boardSettings.columnOrder), [categories, filters, subStageCounts, boardSettings.columnOrder]);
+  const subStageCountMap = useMemo(() => groupCountMap(subStageCounts), [subStageCounts]);
+  const hiddenFields = useMemo(() => new Set(boardSettings.hiddenFields), [boardSettings.hiddenFields]);
   const filtered = filters.category !== DEFAULT_FILTERS.category || Boolean(filters.channel) || (stageBoard && Boolean(status));
   const resetFilters = () => { setFilters(DEFAULT_FILTERS); setStatus(""); };
   // On the sub-stage board the status cards filter it; select again to clear.
@@ -240,6 +250,14 @@ export function CrmPipelineClient() {
         </CompactSelect>
         <CompactSelect label="Channel" placeholder="All channels" value={filters.channel} onChange={(value) => setFilter("channel", value)}><Select.Item value="">All channels</Select.Item>{channelItems()}</CompactSelect>
         {filtered && <Button.Root variant="neutral" mode="ghost" size="xsmall" onClick={resetFilters}>Reset</Button.Root>}
+        {view === "board" && <PipelineBoardCustomize
+          open={customizeOpen}
+          onOpenChange={setCustomizeOpen}
+          settings={boardSettings}
+          update={updateBoardSettings}
+          columns={stageBoard ? subStageColumns : null}
+          counts={subStageCountMap}
+        />}
       </div>
     </div>
     {categoryError && <div className="mt-3"><ErrorState message={categoryError} /></div>}
@@ -248,7 +266,8 @@ export function CrmPipelineClient() {
       query={stageBoardQuery}
       actions={bySubStage.actions}
       setActions={bySubStage.setActions}
-      counts={freshGroupCounts ?? bySubStage.groupCounts}
+      counts={subStageCounts}
+      catalog={subStageColumns}
       loaded={bySubStage.loaded}
       loading={bySubStage.loading}
       error={bySubStage.error}
@@ -258,6 +277,9 @@ export function CrmPipelineClient() {
       filtered={filtered}
       onReset={resetFilters}
       onMutated={onMutated}
+      settings={boardSettings}
+      updateSettings={updateBoardSettings}
+      onCustomize={() => setCustomizeOpen(true)}
     /></HoverPreviewProvider> : view === "board" ? <>
       <SegmentedControl.Root value={mobileStage} onValueChange={(value) => setMobileStage(value as PipelineStage)} className="mt-4 lg:hidden">
         <SegmentedControl.List aria-label="Stage">
@@ -280,6 +302,7 @@ export function CrmPipelineClient() {
             filtered={filtered}
             onReset={() => setFilters(DEFAULT_FILTERS)}
             onMutated={onMutated}
+            hiddenFields={hiddenFields}
             className={stage === mobileStage ? undefined : "hidden lg:flex"}
           />)}
         </div>
@@ -326,7 +349,7 @@ export function CrmPipelineClient() {
 
 type Page = ReturnType<typeof usePipelinePage>;
 
-function BoardColumn({ stage, page, columns, count, categories, filtered, onReset, onMutated, className }: {
+function BoardColumn({ stage, page, columns, count, categories, filtered, onReset, onMutated, hiddenFields, className }: {
   stage: PipelineStage;
   page: Page;
   columns: Record<PipelineStage, Page>;
@@ -335,6 +358,7 @@ function BoardColumn({ stage, page, columns, count, categories, filtered, onRese
   filtered: boolean;
   onReset: () => void;
   onMutated: () => void;
+  hiddenFields: ReadonlySet<CardField>;
   className?: string;
 }) {
   const router = useRouter();
@@ -390,6 +414,7 @@ function BoardColumn({ stage, page, columns, count, categories, filtered, onRese
             onOpen={() => router.push(`/crm/records/${id}`)}
             onMutate={(path, body, method, success, onError) => mutateRow(id, path, body, method, success, onError)}
             onClassify={(choice) => classify(action, choice)}
+            hiddenFields={hiddenFields}
             pipeline
           />;
         })}

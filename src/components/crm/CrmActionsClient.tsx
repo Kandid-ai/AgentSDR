@@ -36,6 +36,7 @@ import {
   RiSendPlaneFill,
   RiSendPlaneLine,
   RiSparklingFill,
+  RiHistoryLine,
   RiTimeLine,
   RiTimerLine,
   RiWhatsappFill,
@@ -62,6 +63,7 @@ import { useRecordChanged } from "./recordEvents";
 import { publishRecordQueue, withdrawRecordQueue, type RecordQueue } from "./recordQueue";
 import { CRM_DUE_STATE_LABELS, type CrmDueState } from "@/lib/crm/stateMachine";
 import { CRM_ACTION_GROUP_LABELS, CRM_ACTION_GROUPS } from "@/lib/crm/actionGroups";
+import type { CardField } from "./pipelineBoardSettings";
 
 export type Data = Record<string, unknown>;
 export type Action = Data;
@@ -1035,13 +1037,28 @@ export function CompanyFavicon({ domain }: { domain: string }) {
 }
 
 /**
+ * The most recent message either way, and who sent it. Calls are not
+ * counted: a call-only lead's card already shows its last call.
+ */
+function lastContactOf(record: Data): { at: string; by: "them" | "us" } | null {
+  const inbound = record.lastInboundAt ? new Date(String(record.lastInboundAt)).getTime() : 0;
+  const outbound = record.lastOutboundAt ? new Date(String(record.lastOutboundAt)).getTime() : 0;
+  if (!inbound && !outbound) return null;
+  return outbound > inbound ? { at: String(record.lastOutboundAt), by: "us" } : { at: String(record.lastInboundAt), by: "them" };
+}
+
+const NO_HIDDEN_FIELDS: ReadonlySet<CardField> = new Set();
+
+/**
  * One action as a card: the pipeline board's unit, and the Action required
  * list's below md, where a six-column table would only scroll sideways.
  * Drafts are sent from the card or opened in the record pop-up; the inline
  * editor needs the table's width.
  */
-export function ActionCard({ action, categories, now, busy, onOpen, onMutate, onClassify, pipeline }: {
+export function ActionCard({ action, categories, now, busy, onOpen, onMutate, onClassify, pipeline, hiddenFields = NO_HIDDEN_FIELDS }: {
   pipeline?: boolean;
+  /** Parts of the card the board's settings switched off. */
+  hiddenFields?: ReadonlySet<CardField>;
   action: Action;
   categories: Data[];
   now: number;
@@ -1063,6 +1080,8 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
   // Off the queue (pipeline Waiting / Exhausted) the chip names what the
   // record is waiting for rather than a due action it does not have.
   const chipRow = row.stage === "needs_action" ? row : { ...row, dueLabel: row.actionText };
+  const show = (field: CardField) => !hiddenFields.has(field);
+  const lastContact = show("lastContact") ? lastContactOf(record) : null;
 
   return <article
     tabIndex={0}
@@ -1079,7 +1098,7 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
       <ChannelAvatar src={row.avatarUrl} name={row.name} channel={row.channel} className="size-8" />
       <div className="min-w-0 flex-1">
         <Link href={href} className="block truncate text-label-sm text-text-strong-950 hover:text-primary-base" title={row.name}>{row.name}</Link>
-        {row.companyLabel && <p className="mt-0.5 flex items-center gap-1.5 text-paragraph-xs text-text-sub-600">
+        {show("company") && row.companyLabel && <p className="mt-0.5 flex items-center gap-1.5 text-paragraph-xs text-text-sub-600">
           {row.companyDomain && <CompanyFavicon domain={row.companyDomain} />}
           <span className="truncate" title={row.companyLabel}>{row.companyLabel}</span>
         </p>}
@@ -1095,7 +1114,7 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
       </div>
     </div>
 
-    <div className="mt-3 flex flex-wrap items-center gap-1.5" data-row-tools>
+    {show("stage") && <div className="mt-3 flex flex-wrap items-center gap-1.5" data-row-tools>
       <ClassificationPicker
         compact
         quiet
@@ -1114,14 +1133,15 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
         onAccept={() => void onClassify(row.proposedCategoryKey ? { categoryKey: row.proposedCategoryKey, subcategoryId: row.proposedSubcategoryId } : { categoryKey: row.keepCategoryKey, subcategoryId: row.keepSubcategoryId })}
         onKeep={() => void onClassify({ categoryKey: row.keepCategoryKey, subcategoryId: row.keepSubcategoryId })}
       />}
-    </div>
+    </div>}
 
-    {row.lastCall ? <div className="mt-3"><ReplyQuote row={row} lines={2} /></div>
+    {!show("reply") ? null : row.lastCall ? <div className="mt-3"><ReplyQuote row={row} lines={2} /></div>
       : row.latestReply && <HoverPreview title={String(row.inbound.subject ?? "").trim() || row.name} meta={formatDate(row.inbound.sentAt ?? row.repliedAt)} body={row.latestReplyFull} className="mt-3">
       <ReplyQuote row={row} lines={2} />
     </HoverPreview>}
 
     {row.dueMeeting ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200"><MeetingOutcomeTools recordId={id} meeting={row.dueMeeting} busy={busy} onMutate={onMutate} /></div>
+      : !show("draft") ? null
       : row.draftReply ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200">
       <HoverPreview
         title={String(row.draft.subject ?? "").trim() || "Draft reply"}
@@ -1145,13 +1165,22 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
     </div>
       : row.stage === "needs_action" && <div className="mt-3"><DraftSummary row={row} /></div>}
 
-    <div className="mt-3 flex items-center justify-between gap-2 border-t border-stroke-soft-200 pt-3">
+    {lastContact && <p className="mt-3 flex min-w-0 items-center gap-1.5 text-paragraph-xs text-text-sub-600">
+      <RiHistoryLine className="size-3.5 shrink-0 text-text-soft-400" aria-hidden="true" />
+      <span className="shrink-0">Last contact</span>
+      <span className="shrink-0 tabular-nums text-text-strong-950" title={formatDate(lastContact.at)}>{timeAgo(lastContact.at)}</span>
+      <span aria-hidden="true" className="text-text-disabled-300">·</span>
+      <span className="truncate">{lastContact.by === "us" ? "you wrote" : "they wrote"}</span>
+      <ChannelMark channel={row.channel} className="ml-auto" />
+    </p>}
+
+    {show("status") && <div className="mt-3 flex items-center justify-between gap-2 border-t border-stroke-soft-200 pt-3">
       <Badge.Root variant="lighter" size="medium" color={chipRow.dueColor} className="h-6 min-w-0 shrink gap-1 px-2" title={chipRow.dueLabel}>
         <Badge.Icon as={chipRow.dueIcon} className="-ml-0.5 mr-0 size-3.5" /><span className="truncate">{chipRow.dueLabel === "—" ? "Nothing due" : chipRow.dueLabel}</span>
       </Badge.Root>
       {/* The quote above already says when they replied; this is the when of the chip. */}
       <span className="shrink-0 text-paragraph-xs tabular-nums text-text-sub-600" title={formatDate(row.repliedAt)}>{row.dueDetail && row.dueDetail !== "—" ? row.dueDetail : row.latestReply || row.lastCall ? "" : timeAgo(row.repliedAt)}</span>
-    </div>
-    {row.sequenceLabel && <p className="mt-1.5 truncate text-paragraph-xs text-text-soft-400" title={row.sequenceLabel}>{row.sequenceLabel}</p>}
+    </div>}
+    {show("sequence") && row.sequenceLabel && <p className="mt-1.5 truncate text-paragraph-xs text-text-soft-400" title={row.sequenceLabel}>{row.sequenceLabel}</p>}
   </article>;
 }

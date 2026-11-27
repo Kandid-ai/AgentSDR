@@ -131,6 +131,12 @@ export type CrmActionFilters = {
   subcategoryId?: string;
   /** Pipeline only: also count the filtered records per (category, sub-stage), for the board's stage columns. */
   groupCounts?: boolean;
+  /**
+   * Pipeline only: the page holds at most this many of each (category,
+   * sub-stage)'s newest records, so every board column gets its first cards
+   * from one read instead of the busiest columns taking the whole page.
+   */
+  perGroupLimit?: number;
   channel?: CrmRecordChannel;
   workflowState?: CrmWorkflowState;
   classificationReview?: boolean;
@@ -275,16 +281,27 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
     ? sql`coalesce(greatest(${crmRecords.lastInboundAt}, ${crmRecords.lastOutboundAt}), ${crmRecords.createdAt})`
     : sql`coalesce(${crmRecords.lastInboundAt}, ${crmRecords.createdAt})`;
   const orderBy = [desc(lastActivity), asc(crmRecords.id)] as const;
+  const perGroupLimit = pipeline && input.perGroupLimit ? Math.max(1, Math.min(50, Math.floor(input.perGroupLimit))) : 0;
+  const ranked = perGroupLimit
+    ? db.select({
+      id: crmRecords.id,
+      rank: sql<number>`row_number() over (partition by ${crmRecords.categoryKey}, ${crmRecords.subcategoryId} order by ${lastActivity} desc, ${crmRecords.id} asc)`.as("group_rank"),
+    }).from(crmRecords).innerJoin(people, eq(people.id, crmRecords.personId)).where(where).as("ranked")
+    : null;
+  // The page's rows: the filter, narrowed to each group's newest when asked.
+  const pageWhere = ranked
+    ? and(where, inArray(crmRecords.id, db.select({ id: ranked.id }).from(ranked).where(sql`${ranked.rank} <= ${perGroupLimit}`)))
+    : where;
   // The child reads scope themselves to this page with the same subquery the
   // page itself runs, so the whole list is a single round trip rather than a
   // page read followed by a batch keyed on its ids. Each child asks for only
   // the newest row per record (DISTINCT ON), which is all the table shows.
   const pageRecordIds = db.select({ id: crmRecords.id }).from(crmRecords)
     .innerJoin(people, eq(people.id, crmRecords.personId))
-    .where(where).orderBy(...orderBy).limit(limit).offset(offset);
+    .where(pageWhere).orderBy(...orderBy).limit(limit).offset(offset);
   const pagePersonIds = db.select({ personId: crmRecords.personId }).from(crmRecords)
     .innerJoin(people, eq(people.id, crmRecords.personId))
-    .where(where).orderBy(...orderBy).limit(limit).offset(offset);
+    .where(pageWhere).orderBy(...orderBy).limit(limit).offset(offset);
   // The meeting each row asks "Did they show up?" about: over, unanswered,
   // not cancelled (the oldest first, which is the one to answer first).
   const dueMeetingsRead = db.selectDistinctOn([crmMeetings.crmRecordId], {
@@ -304,7 +321,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       .innerJoin(people, eq(people.id, crmRecords.personId))
       .leftJoin(companies, eq(companies.id, people.companyId))
       .leftJoin(crmSubcategories, eq(crmSubcategories.id, crmRecords.subcategoryId))
-      .where(where)
+      .where(pageWhere)
       .orderBy(...orderBy)
       .limit(limit).offset(offset),
     // Joined like the page read: the search filter reads people's columns.

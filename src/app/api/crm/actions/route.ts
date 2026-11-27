@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
         categoryKey: (query.get("categoryKey") ?? query.get("category")) as CrmCategoryKey | "unclassified" | undefined,
         subcategoryId: query.get("subcategoryId") ?? undefined,
         groupCounts: query.get("groupCounts") === "true" || undefined,
+        perGroupLimit: query.get("perGroupLimit") ? Number(query.get("perGroupLimit")) : undefined,
         channel,
         workflowState: query.get("workflowState") as CrmWorkflowState | undefined,
         classificationReview: query.has("classificationReview") ? query.get("classificationReview") === "true" : undefined,
