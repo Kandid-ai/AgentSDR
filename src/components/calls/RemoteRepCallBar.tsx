@@ -29,7 +29,7 @@ const BAR = "pointer-events-auto fixed inset-x-4 bottom-4 z-[90] mx-auto max-w-m
  */
 export function RemoteRepCallBar() {
   const call = useSyncExternalStore(subscribeRemoteRepCall, remoteRepCallSnapshot, () => null);
-  const { campaign, phase } = useDialer();
+  const { campaign, phase, wrapUp } = useDialer();
   const pipSupported = usePipSupported();
   const pip = usePipWindow();
   const popOut = pipSupported && !pip ? () => void openPip() : null;
@@ -40,6 +40,9 @@ export function RemoteRepCallBar() {
     const timer = window.setTimeout(dismissRemoteRepCall, ENDED_HIDE_MS);
     return () => window.clearTimeout(timer);
   }, [stage]);
+
+  // The wrap-up dialog (DialerOverlay) is the whole story then; the bar would only cover its buttons.
+  if (!pip && phase.name === "wrap-up" && wrapUp) return <PickupAlerts />;
 
   // A running dialer keeps the bar up between calls: once a call is over, its status (and Pause) take the bar.
   const status = campaign ? dialerStatus(phase) : null;
