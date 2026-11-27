@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { RiAddLine, RiArrowDownSLine, RiCheckLine, RiDeleteBinLine, RiErrorWarningLine, RiFileCopyLine, RiLoader4Line, RiPencilLine } from "@remixicon/react";
+import { RiAddLine, RiArrowDownSLine, RiCheckLine, RiDeleteBinLine, RiErrorWarningLine, RiFileCopyLine, RiLoader4Line, RiPencilLine, RiSave3Line } from "@remixicon/react";
+import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import { useDialogs } from "@/components/DialogProvider";
 import { VIEW_NAME_MAX } from "@/lib/crm/boardViews";
@@ -75,7 +76,7 @@ export function FunnelHeader({ views, actions }: { views: Views; actions?: React
   const duplicate = async () => {
     if (!current) return;
     const name = await askName("Duplicate view", `${current.name} (copy)`, "Duplicate");
-    if (name) await views.create(name, current.config);
+    if (name) await views.create(name, views.config);
   };
   const remove = async () => {
     if (!current) return;
@@ -110,10 +111,16 @@ export function FunnelHeader({ views, actions }: { views: Views; actions?: React
           </Dropdown.Root>
         </>}
       </div>
-      <p className="mt-1 text-paragraph-sm text-text-sub-600">A Funnel view, shared with your team. Changes save as you make them.</p>
+      <p className="mt-1 text-paragraph-sm text-text-sub-600">{views.filtersChanged ? "Filtered for you. The view stays as saved until you choose Save as default." : "A Funnel view, shared with your team."}</p>
     </div>
-    <div className="flex items-center gap-3 pt-1">
+    <div className="flex items-center gap-2 pt-1">
       <SaveNote state={views.saveState} onRetry={views.retrySave} />
+      {views.filtersChanged && <>
+        <Button.Root variant="neutral" mode="ghost" size="xsmall" onClick={views.resetFilters} title="Back to this view's saved filters">Reset</Button.Root>
+        <Button.Root variant="neutral" mode="stroke" size="xsmall" onClick={views.saveFiltersAsDefault} title="Make these filters the view's own, for everyone">
+          <Button.Icon as={RiSave3Line} />Save as default
+        </Button.Root>
+      </>}
       {views.error && views.saveState !== "error" && <span className="max-w-64 truncate text-paragraph-xs text-error-base" title={views.error}>{views.error}</span>}
       {actions}
     </div>

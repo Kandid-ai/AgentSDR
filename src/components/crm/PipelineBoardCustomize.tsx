@@ -53,7 +53,7 @@ export function PipelineBoardCustomize({ config, onChange, stages, counts }: {
     <Popover.Content align="end" showArrow={false} sideOffset={8} className="max-h-[min(40rem,calc(100dvh-6rem))] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto p-0">
       <div className="border-b border-stroke-soft-200 px-4 py-3">
         <h2 className="text-label-md text-text-strong-950">Customize view</h2>
-        <p className="mt-0.5 text-paragraph-xs text-text-sub-600">Changes save to this view, for everyone.</p>
+        <p className="mt-0.5 text-paragraph-xs text-text-sub-600">Layout, column order and card fields save to this view for everyone. Showing or hiding a stage is a filter: keep it with Save as default.</p>
       </div>
 
       <section className="space-y-2 px-4 py-3">

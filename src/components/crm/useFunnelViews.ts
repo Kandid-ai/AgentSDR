@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DEFAULT_VIEW_CONFIG, normalizeViewConfig, type BoardView, type BoardViewConfig } from "@/lib/crm/boardViews";
+import { DEFAULT_VIEW_CONFIG, normalizeFilters, normalizeViewConfig, type BoardFilters, type BoardView, type BoardViewConfig } from "@/lib/crm/boardViews";
 import { asList, asObject, crmFetch, errorMessage } from "./crm-utils";
 import { LAST_VIEW_KEY, announceOpenView, announceViewsChanged, onViewRequested } from "./funnelViewEvents";
 
@@ -36,12 +36,19 @@ function storable(config: BoardViewConfig): BoardViewConfig {
   return { ...config, filters: { ...config.filters, search: "" } };
 }
 
+function sameFilters(a: BoardFilters, b: BoardFilters) {
+  return JSON.stringify(normalizeFilters({ ...a, search: "" })) === JSON.stringify(normalizeFilters({ ...b, search: "" }));
+}
+
 /**
- * The organization's saved Funnel views and the one being looked at. A
- * change to the page is the view: it shows at once and is written a moment
- * later (debounced, the newest config wins), with a quiet saving/saved state
- * instead of a Save prompt. Switching views or leaving the page writes what
- * is still waiting.
+ * The organization's saved Funnel views and the one being looked at.
+ *
+ * Two kinds of change. How the view looks (layout, grouping, column order,
+ * card fields) is the view's at once: written a moment later (debounced,
+ * the newest wins) with a quiet saving/saved state. What it shows (the
+ * filters, including which stages are columns) is the viewer's own until
+ * they choose "Save as default": until then it is a draft for this page,
+ * kept per view while the page is open, and `filtersChanged` says so.
  */
 export function useFunnelViews() {
   const [views, setViews] = useState<BoardView[]>([]);
@@ -49,6 +56,7 @@ export function useFunnelViews() {
   const [error, setError] = useState("");
   const [currentId, setCurrentId] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [filterDrafts, setFilterDrafts] = useState<Record<string, BoardFilters>>({});
   const viewsRef = useRef<BoardView[]>([]);
   useEffect(() => { viewsRef.current = views; }, [views]);
   const pending = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -95,11 +103,12 @@ export function useFunnelViews() {
   useEffect(() => () => flush(), [flush]);
 
   const current = views.find((view) => view.id === currentId) ?? null;
-  const config = current?.config ?? DEFAULT_VIEW_CONFIG;
+  const draftFilters = current ? filterDrafts[current.id] : undefined;
+  const config = current ? (draftFilters ? { ...current.config, filters: draftFilters } : current.config) : DEFAULT_VIEW_CONFIG;
+  const filtersChanged = Boolean(current && draftFilters && !sameFilters(draftFilters, current.config.filters));
 
-  const setConfig = useCallback((change: (old: BoardViewConfig) => BoardViewConfig) => {
-    const id = currentId;
-    if (!id) return;
+  /** Write the view's saved config `change` a moment from now. */
+  const changeSaved = useCallback((id: string, change: (old: BoardViewConfig) => BoardViewConfig) => {
     setViews((old) => {
       const next = old.map((view) => view.id === id ? { ...view, config: storable(normalizeViewConfig(change(view.config))) } : view);
       viewsRef.current = next;
@@ -110,7 +119,43 @@ export function useFunnelViews() {
     pending.current.set(id, setTimeout(() => void write(id), SAVE_DELAY_MS));
     setSaveState("saving");
     setError("");
-  }, [currentId, write]);
+  }, [write]);
+
+  /**
+   * Change the page. The filters part becomes (or stops being) a draft;
+   * everything else is saved to the view.
+   */
+  const setConfig = useCallback((change: (old: BoardViewConfig) => BoardViewConfig) => {
+    const view = viewsRef.current.find((item) => item.id === currentId);
+    if (!view) return;
+    const effective = { ...view.config, filters: filterDrafts[view.id] ?? view.config.filters };
+    const next = normalizeViewConfig(change(effective));
+    const filters = { ...next.filters, search: "" };
+    setFilterDrafts((old) => {
+      const rest = { ...old };
+      if (sameFilters(filters, view.config.filters)) delete rest[view.id]; else rest[view.id] = filters;
+      return rest;
+    });
+    const { filters: _filters, ...look } = next;
+    void _filters;
+    const { filters: _saved, ...savedLook } = view.config;
+    void _saved;
+    if (JSON.stringify(look) !== JSON.stringify(savedLook)) changeSaved(view.id, (old) => ({ ...old, ...look }));
+  }, [currentId, filterDrafts, changeSaved]);
+
+  /** The filters on the page become the view's own, for everyone. */
+  const saveFiltersAsDefault = useCallback(() => {
+    const id = currentId;
+    const draft = filterDrafts[id];
+    if (!id || !draft) return;
+    changeSaved(id, (old) => ({ ...old, filters: draft }));
+    setFilterDrafts((old) => { const rest = { ...old }; delete rest[id]; return rest; });
+  }, [currentId, filterDrafts, changeSaved]);
+
+  /** Back to the view's saved filters. */
+  const resetFilters = useCallback(() => {
+    setFilterDrafts((old) => { const rest = { ...old }; delete rest[currentId]; return rest; });
+  }, [currentId]);
 
   const select = useCallback((id: string) => { flush(); setCurrentId(id); }, [flush]);
 
@@ -119,7 +164,7 @@ export function useFunnelViews() {
     try { return await work(); } catch (cause) { setError(errorMessage(cause)); return null; }
   }, []);
 
-  /** A new view (from `from`, else an empty board), which opens at once. */
+  /** A new view (from `from`, else an empty board), which opens at once. A duplicate takes the filters on the page. */
   const create = useCallback((name: string, from: BoardViewConfig = DEFAULT_VIEW_CONFIG) => run(async () => {
     flush();
     const view = asView(asObject(await crmFetch("/views", { method: "POST", body: JSON.stringify({ name, config: storable(from) }) })).view);
@@ -149,5 +194,5 @@ export function useFunnelViews() {
     return true;
   }), [run, currentId, load]);
 
-  return { views, loaded, error, current, config, setConfig, saveState, retrySave: () => { if (currentId) void write(currentId); }, select, create, rename, remove, reload: load };
+  return { views, loaded, error, current, config, setConfig, filtersChanged, saveFiltersAsDefault, resetFilters, saveState, retrySave: () => { if (currentId) void write(currentId); }, select, create, rename, remove, reload: load };
 }
