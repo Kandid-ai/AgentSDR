@@ -31,7 +31,7 @@ import { RowsSkeleton } from "./CrmSkeletons";
 import { FunnelFilterBar, activeFilterCount } from "./FunnelFilterBar";
 import { FunnelHeader } from "./FunnelHeader";
 import { PipelineBoardCustomize } from "./PipelineBoardCustomize";
-import { ColumnLoadMore, ColumnSkeleton, PipelineStageBoard, groupCountMap, ordered, stageCatalog, type GroupCount } from "./PipelineStageBoard";
+import { COLUMN_CARDS, COLUMN_FRAME, ColumnLoadMore, ColumnSkeleton, PipelineStageBoard, useBoardHeight, groupCountMap, ordered, stageCatalog, type GroupCount } from "./PipelineStageBoard";
 import { useFunnelViews } from "./useFunnelViews";
 import { asList, asObject, crmFetch, errorMessage } from "./crm-utils";
 
@@ -182,6 +182,7 @@ export function CrmPipelineClient() {
   }, [base]);
   const byStage = usePipelinePage(stageBoardQuery, STAGE_BOARD_PAGE, stageBoard);
   const summary = useSummary(base, ready);
+  const { attach: attachStatusBoard, style: statusBoardStyle } = useBoardHeight<HTMLDivElement>();
 
   const stageCounts = useMemo(() => summary.groupCounts ? groupCountMap(summary.groupCounts) : null, [summary.groupCounts]);
   // Every stage in funnel order (the Stage filter's checklist), and in the
@@ -248,7 +249,7 @@ export function CrmPipelineClient() {
           </SegmentedControl.List>
         </SegmentedControl.Root>
         <HoverPreviewProvider>
-          <div className={cn("mt-4 grid grid-cols-1 items-start gap-4 lg:gap-5", shownStatuses.length === 3 ? "lg:grid-cols-3" : shownStatuses.length === 2 ? "lg:grid-cols-2" : "lg:grid-cols-1")}>
+          <div ref={attachStatusBoard} style={statusBoardStyle} className={cn("mt-4 grid grid-cols-1 items-start gap-4 lg:gap-5", shownStatuses.length === 3 ? "lg:grid-cols-3" : shownStatuses.length === 2 ? "lg:grid-cols-2" : "lg:grid-cols-1")}>
             {shownStatuses.map((stage) => <BoardColumn
               key={stage}
               stage={stage}
@@ -326,7 +327,7 @@ function BoardColumn({ stage, page, columns, count, categories, filtered, onRese
   useSyncRecordChanges(page.actions, refreshRow, onMutated);
   const meta = STAGE_META[stage];
 
-  return <Frame className={cn("min-w-0", className)} aria-busy={page.loading || undefined} aria-labelledby={`stage-${stage}`}>
+  return <Frame className={cn("min-w-0", COLUMN_FRAME, className)} aria-busy={page.loading || undefined} aria-labelledby={`stage-${stage}`}>
     <header className="flex items-center gap-3 px-3 pb-3 pt-2.5">
       <StageIcon stage={stage} className="size-9 rounded-xl" iconClassName="size-[18px]" />
       <div className="min-w-0 flex-1">
@@ -345,7 +346,7 @@ function BoardColumn({ stage, page, columns, count, categories, filtered, onRese
       </FramePanel>
       // From lg each column scrolls on its own, like a board: the three stages
       // stay side by side instead of the page growing to the longest column.
-      : <div className={cn("space-y-2 transition-opacity lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-y-contain", page.loading && "pointer-events-none opacity-60")}>
+      : <div className={cn("space-y-2 transition-opacity", COLUMN_CARDS, page.loading && "pointer-events-none opacity-60")}>
         {page.actions.map((action) => {
           const id = actionId(action);
           return <ActionCard

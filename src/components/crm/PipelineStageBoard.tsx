@@ -28,6 +28,53 @@ export type GroupCount = { categoryKey: string | null; subcategoryId: string | n
 /** Cards per column when a column loads more. */
 const COLUMN_PAGE = 20;
 
+/** The element whose scrolling moves `node` (the app's main pane), or null for the window. */
+function scrollParent(node: HTMLElement): HTMLElement | null {
+  for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+    const { overflowY } = getComputedStyle(parent);
+    if ((overflowY === "auto" || overflowY === "scroll") && parent.scrollHeight > parent.clientHeight) return parent;
+  }
+  return null;
+}
+
+/**
+ * Board columns end at the bottom of the screen, so the page never scrolls
+ * and only the columns do: measures where the board starts (inside the
+ * pane that scrolls, whatever its scroll position) and exposes the height
+ * left below it as `--column-max` on the board. Desktop only; below lg the
+ * columns stack and the page scrolls as usual. Re-measured on resize and
+ * whenever the content above it changes height (the filter bar wrapping).
+ */
+export function useBoardHeight<T extends HTMLElement>() {
+  // A callback ref: the board appears only once its leads have loaded.
+  const [node, setNode] = useState<T | null>(null);
+  const [height, setHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (!node) return;
+    const scroller = scrollParent(node);
+    const measure = () => {
+      const paneTop = scroller ? scroller.getBoundingClientRect().top : 0;
+      const scrolled = scroller ? scroller.scrollTop : window.scrollY;
+      const top = node.getBoundingClientRect().top - paneTop + scrolled;
+      const viewport = scroller ? scroller.clientHeight : window.innerHeight;
+      // The page's own bottom padding stays visible below the board.
+      setHeight(Math.max(320, Math.floor(viewport - top - 36)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (node.parentElement) observer.observe(node.parentElement);
+    if (scroller) observer.observe(scroller);
+    window.addEventListener("resize", measure);
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
+  }, [node]);
+  const style = height ? ({ "--column-max": `${height}px` } as React.CSSProperties) : undefined;
+  return { attach: setNode, style };
+}
+
+/** A column that fills the board's height and scrolls its cards inside (desktop). */
+export const COLUMN_FRAME = "lg:max-h-[var(--column-max,calc(100dvh-12rem))]";
+export const COLUMN_CARDS = "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-y-contain";
+
 /** Placeholder cards for a column whose leads are on their way. */
 export function ColumnSkeleton({ cards = 3 }: { cards?: number }) {
   return <div className="space-y-2" aria-hidden="true">
@@ -213,6 +260,7 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
   const [dragging, setDragging] = useState("");
   const [dropTarget, setDropTarget] = useState("");
   const { busyIds, notice, setNotice, mutateRow, classify, refreshRow } = useRowMutations({ onActionsChange: setActions, pipeline: true, onMutated });
+  const { attach: attachBoard, style: boardStyle } = useBoardHeight<HTMLDivElement>();
   useSyncRecordChanges(actions, refreshRow, onMutated);
   const hiddenFields = useMemo(() => new Set(config.hiddenFields), [config.hiddenFields]);
   const { filters } = config;
@@ -276,14 +324,14 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
   return <>
     <NoticeBar notice={notice ?? (columnError ? { tone: "error", text: columnError } : null)} onDismiss={() => { setNotice(null); setColumnError(""); }} className="mt-3 rounded-lg" />
     {/* As many columns as there are stages, so the board scrolls sideways; each column scrolls on its own. */}
-    <div className="-mx-4 mt-4 flex snap-x items-start gap-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0" aria-busy={loading || undefined}>
+    <div ref={attachBoard} style={boardStyle} className="-mx-4 mt-4 flex snap-x items-start gap-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0" aria-busy={loading || undefined}>
       {columns.map((column) => {
         const cards = byColumn.get(column.key) ?? [];
         const hasMore = column.count !== null && cards.length < column.count;
         const dot = categoryColor(column.categoryKey === "unclassified" ? null : column.categoryKey).color;
         return <Frame
           key={column.key}
-          className={cn("w-[min(20rem,85vw)] shrink-0 snap-start transition", dragging === column.key && "opacity-50", dropTarget === column.key && dragging !== column.key && "ring-2 ring-primary-base")}
+          className={cn("w-[min(20rem,85vw)] shrink-0 snap-start transition", COLUMN_FRAME, dragging === column.key && "opacity-50", dropTarget === column.key && dragging !== column.key && "ring-2 ring-primary-base")}
           aria-labelledby={`column-${column.key}`}
           onDragOver={(event) => { if (!dragging) return; event.preventDefault(); setDropTarget(column.key); }}
           onDragLeave={() => setDropTarget((current) => current === column.key ? "" : current)}
@@ -310,7 +358,7 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
             ? <ColumnSkeleton />
             : !cards.length && !hasMore
             ? <FramePanel className="p-0 sm:p-0"><EmptyState compact icon={RiCheckDoubleLine} title="No leads here" description={narrowed ? "None at this stage fits the filters." : "No open lead is at this stage."} /></FramePanel>
-            : <div className="space-y-2 lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-y-contain">
+            : <div className={cn("space-y-2", COLUMN_CARDS)}>
               {cards.map((action) => {
                 const id = actionId(action);
                 return <ActionCard
