@@ -41,7 +41,8 @@ export function PageHeader({
           </div>
           {description && <div className="mt-1 max-w-2xl text-paragraph-sm text-text-sub-600">{description}</div>}
         </div>
-        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2 self-start">{actions}</div>}
+        {/* Stacked, the actions row spans the column, so an action can push a group to the right edge (ml-auto). */}
+        {actions && <div className={stacked ? "flex flex-wrap items-center gap-2" : "flex shrink-0 flex-wrap items-center gap-2 self-start"}>{actions}</div>}
       </div>
     </header>
   );

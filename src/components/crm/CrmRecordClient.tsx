@@ -48,7 +48,6 @@ import {
   fieldClass,
   primaryButtonClass,
   secondaryButtonClass,
-  subtleButtonClass,
 } from "./CrmLayout";
 import { RecordBody } from "./CrmSkeletons";
 import { asList, asObject, crmFetch, displayName, errorMessage, formatDate, relativeDate } from "./crm-utils";
@@ -517,8 +516,9 @@ function RecordHeader({ back, stacked, data, person, name, avatarUrl, currentSte
         {linkedin && <a href={linkedinHref} target="_blank" rel="noreferrer" title={`Open ${name} on LinkedIn`} className="inline-flex min-w-0 items-center gap-1.5 transition hover:text-text-strong-950"><RiLinkedinLine className="size-4 shrink-0 text-text-soft-400" aria-hidden="true" /><span className="truncate">{linkedinSlug}</span><RiArrowRightUpLine className="size-3.5 shrink-0 text-text-soft-400" aria-hidden="true" /></a>}
       </div>}
       actions={<>
-        <CallButton personId={personId} crmRecordId={id} phone={phone} onCallStarted={onCallStarted} />
-        {activity}
+        {/* Doing something with the lead on the left; the record's history and
+            management on the right, over "Replied …" on the stage line below. */}
+        <CallButton personId={personId} crmRecordId={id} phone={phone} onCallStarted={onCallStarted} size="xsmall" />
         {canSkip && <Button.Root
           variant="neutral"
           mode="stroke"
@@ -526,6 +526,8 @@ function RecordHeader({ back, stacked, data, person, name, avatarUrl, currentSte
           title={`Mark "${String(currentStep.name)}" as done without sending it; the next step waits its usual delay`}
           onClick={() => void onAction(`/records/${id}/skip`, {}, "POST", "Step skipped — the next one is scheduled")}
         aria-label="Skip step"><Button.Icon as={RiSkipForwardLine} /><span className="hidden sm:inline">Skip step</span></Button.Root>}
+        <div className="ml-auto flex items-center gap-2">
+        {activity}
         <DiscardLeadDialog open={discardOpen} onOpenChange={setDiscardOpen} name={name} onConfirm={async () => { await onAction(`/records/${id}/close`, { reason: DISCARD_LEAD_REASON }, "POST", DISCARD_LEAD_SUCCESS); return true; }} />
         <FollowUpDialog open={followUpOpen} onOpenChange={setFollowUpOpen} onSubmit={(at, note, onError) => onAction(`/records/${id}/follow-up`, { at: at.toISOString(), note }, "POST", followUpSuccessMessage(at), onError)} />
         <Dropdown.Root>
@@ -552,6 +554,7 @@ function RecordHeader({ back, stacked, data, person, name, avatarUrl, currentSte
             </Dropdown.Item>
           </Dropdown.Content>
         </Dropdown.Root>
+        </div>
       </>}
     />
   );
@@ -1015,11 +1018,11 @@ function ActivityDrawer({ events, drafts, sendAttempts }: { events: Data[]; draf
   return (
     <Modal.Root>
       <Modal.Trigger asChild>
-        <button type="button" className={subtleButtonClass} title="Activity history" aria-label={`Activity history, ${events.length} events`}>
-          <RiHistoryLine className="size-4" aria-hidden="true" />
+        <Button.Root variant="neutral" mode="stroke" size="xsmall" className="gap-1.5" title="Activity history" aria-label={`Activity history, ${events.length} events`}>
+          <Button.Icon as={RiHistoryLine} />
           Activity
-          {events.length > 0 && <span className="ml-0.5 rounded-full bg-bg-weak-50 px-1.5 text-label-xs text-text-sub-600">{events.length}</span>}
-        </button>
+          {events.length > 0 && <span className="rounded-full bg-bg-weak-50 px-1.5 text-label-xs tabular-nums text-text-sub-600">{events.length}</span>}
+        </Button.Root>
       </Modal.Trigger>
       <Modal.SideContent size="max-w-xl">
         <Modal.Header icon={RiHistoryLine}>

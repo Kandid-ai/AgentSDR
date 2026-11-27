@@ -48,7 +48,7 @@ function savedAgentVoice(): string {
   return AGENT_VOICES.some((candidate) => candidate.id === voice) ? voice : DEFAULT_AGENT_VOICE;
 }
 
-export function CallButton({ personId, crmRecordId, campaignContactId, phone, onCallStarted, numberMenu = true }: {
+export function CallButton({ personId, crmRecordId, campaignContactId, phone, onCallStarted, numberMenu = true, size = "xxsmall" }: {
   personId: string;
   crmRecordId?: string | null;
   /** The Calling-section contact this call is placed from, when there is one. */
@@ -57,6 +57,8 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
   onCallStarted?: (callId: string) => void;
   /** Show the dropdown arrow with "Change number". Default true. */
   numberMenu?: boolean;
+  /** `xsmall` matches the other buttons in a row of xsmall ones (the lead record's header). */
+  size?: "xxsmall" | "xsmall";
 }) {
   // Anything that is not about the number itself — no extension, an
   // outdated one, the extension refusing — is a notice, not the number modal:
@@ -263,14 +265,14 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
         <Button.Root
           variant="neutral"
           mode="stroke"
-          size="xxsmall"
+          size={size}
           disabled={busy}
           onClick={handleCallClick}
-          className={cn("gap-1.5 whitespace-nowrap px-2.5 text-label-xs", phone && numberMenu && "rounded-r-none")}
+          className={cn("gap-1.5 whitespace-nowrap px-2.5", size === "xsmall" ? "text-label-sm" : "text-label-xs", phone && numberMenu && "rounded-r-none")}
         >
           {busy
-            ? <RiLoader4Line className="size-3.5 animate-spin" aria-hidden="true" />
-            : <RiPhoneLine className="size-3.5" aria-hidden="true" />}
+            ? <RiLoader4Line className={cn(size === "xsmall" ? "size-4" : "size-3.5", "animate-spin")} aria-hidden="true" />
+            : <RiPhoneLine className={size === "xsmall" ? "size-4" : "size-3.5"} aria-hidden="true" />}
           {label}
         </Button.Root>
         {/* A number is already known — the button above dials it directly.
@@ -282,7 +284,7 @@ export function CallButton({ personId, crmRecordId, campaignContactId, phone, on
               <Button.Root
                 variant="neutral"
                 mode="stroke"
-                size="xxsmall"
+                size={size}
                 disabled={busy}
                 aria-label="Call options"
                 title={`Calling ${phone}`}
