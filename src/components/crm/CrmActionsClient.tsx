@@ -1058,24 +1058,32 @@ function lastContactOf(record: Data): { at: string; by: "them" | "us" } | null {
 const NO_HIDDEN_FIELDS: ReadonlySet<CardField> = new Set();
 
 /** The record's newest sequence run, as follow-ups sent of the sequence's total (pipeline reads only). */
-function followUpsOf(action: Action): { sent: number; total: number; sequence: string } | null {
+function followUpsOf(action: Action): { sent: number; skipped: number; total: number; sequence: string } | null {
   const run = asObject(action.lastRun);
   const total = Number(run.followUpsTotal ?? 0);
   if (!total) return null;
-  return { sent: Math.min(total, Number(run.followUpsSent ?? 0)), total, sequence: String(run.sequenceName ?? "") };
+  const sent = Math.min(total, Number(run.followUpsSent ?? 0));
+  return { sent, skipped: Math.min(total - sent, Number(run.followUpsSkipped ?? 0)), total, sequence: String(run.sequenceName ?? "") };
 }
 
-/** One dash per follow-up in the sequence; the ones already sent are lit. */
-function FollowUpProgress({ sent, total, sequence }: { sent: number; total: number; sequence: string }) {
-  const label = `${sent} of ${total} follow-up${total === 1 ? "" : "s"} sent${sequence ? ` · ${sequence}` : ""}`;
+/**
+ * One dash per follow-up in the sequence: sent ones lit, skipped ones (a
+ * before-meeting step with no meeting ahead, a stale draft) hollow, the
+ * rest still to come.
+ */
+function FollowUpProgress({ sent, skipped, total, sequence }: { sent: number; skipped: number; total: number; sequence: string }) {
+  const label = `${sent} of ${total} follow-up${total === 1 ? "" : "s"} sent${skipped ? `, ${skipped} skipped` : ""}${sequence ? ` · ${sequence}` : ""}`;
   return <div className="mt-2.5 flex items-center gap-2" title={label} aria-label={label} role="img">
     <div className="flex flex-1 gap-1">
       {Array.from({ length: Math.min(total, 12) }, (_, index) => <span
         key={index}
-        className={cn("h-1 flex-1 rounded-full", index < sent ? "bg-primary-base shadow-[0_0_6px_var(--color-primary-base,currentColor)]" : "bg-bg-soft-200")}
+        className={cn("h-1 flex-1 rounded-full",
+          index < sent ? "bg-primary-base shadow-[0_0_6px_var(--color-primary-base,currentColor)]"
+          : index < sent + skipped ? "ring-1 ring-inset ring-stroke-sub-300"
+          : "bg-bg-soft-200")}
       />)}
     </div>
-    <span className="shrink-0 text-paragraph-xs tabular-nums text-text-soft-400">{sent}/{total}</span>
+    <span className="shrink-0 text-paragraph-xs tabular-nums text-text-soft-400">{sent}/{total}{skipped ? ` · ${skipped} skipped` : ""}</span>
   </div>;
 }
 
@@ -1218,7 +1226,7 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
     {/* The chip above already says where the record stands; under it, how far
         its sequence has got. Off the pipeline (no counts), the sequence's name. */}
     {show("sequence") && (followUps
-      ? <FollowUpProgress sent={followUps.sent} total={followUps.total} sequence={followUps.sequence} />
+      ? <FollowUpProgress sent={followUps.sent} skipped={followUps.skipped} total={followUps.total} sequence={followUps.sequence} />
       : !pipeline && row.sequenceLabel && <p className="mt-1.5 truncate text-paragraph-xs text-text-soft-400" title={row.sequenceLabel}>{row.sequenceLabel}</p>)}
   </article>;
 }

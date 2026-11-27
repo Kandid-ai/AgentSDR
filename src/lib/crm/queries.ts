@@ -420,6 +420,11 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
         followUpsSent: sql<number>`(select count(*)::int from crm_sequence_step_runs sent_run
           join crm_sequence_steps sent_step on sent_step.id = sent_run.sequence_step_id
           where sent_run.sequence_run_id = ${crmSequenceRuns.id} and sent_run.status = 'sent' and sent_step.step_type = 'follow_up')`,
+        // Skipped (a before-meeting step with no meeting ahead, a stale draft)
+        // or cancelled: the run can finish without them having gone out.
+        followUpsSkipped: sql<number>`(select count(*)::int from crm_sequence_step_runs skipped_run
+          join crm_sequence_steps skipped_step on skipped_step.id = skipped_run.sequence_step_id
+          where skipped_run.sequence_run_id = ${crmSequenceRuns.id} and skipped_run.status in ('skipped', 'cancelled', 'failed') and skipped_step.step_type = 'follow_up')`,
       })
         .from(crmSequenceRuns)
         .innerJoin(crmSequences, eq(crmSequences.id, crmSequenceRuns.sequenceId))
@@ -493,8 +498,11 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
     const referralPending = Boolean(referral) && row.record.workflowState !== "closed" && draft?.status !== "delivery_uncertain";
     // Off the queue there is no action to name, so say what the record is
     // waiting on instead of falling through to "Human review".
+    // "All follow-ups sent" only when they were: a run also finishes when its
+    // follow-ups were skipped (no meeting ahead for a before-meeting step).
+    const finishedRun = lastRunByRecord.get(row.record.id);
     const actionType = row.stage === "exhausted"
-      ? "All follow-ups sent"
+      ? finishedRun && Number(finishedRun.followUpsSkipped) > 0 ? "Sequence finished" : "All follow-ups sent"
       : row.stage === "waiting"
       ? row.record.workflowState === "classifying" || row.record.workflowState === "unclassified"
         ? "Classifying reply"
