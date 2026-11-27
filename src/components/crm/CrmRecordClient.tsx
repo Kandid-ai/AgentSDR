@@ -248,10 +248,11 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
     >
       <div className="contents xl:-mr-2 xl:flex xl:min-h-0 xl:flex-col xl:gap-5 xl:overflow-y-auto xl:overscroll-contain xl:pr-2">
       {/* The column's first screen: who, where they stand and the reply,
-          stretched to the column's height so the reply gets the rest of it.
+          exactly the column's height (never under 34rem), so the reply gets
+          what is left and its own body scrolls with Approve & send pinned.
           Meetings and calls start below, a scroll away. */}
-      <div className="contents xl:flex xl:min-h-full xl:shrink-0 xl:flex-col xl:gap-5">
-      <div className="order-1 space-y-4">
+      <div className="contents xl:flex xl:h-full xl:min-h-[34rem] xl:shrink-0 xl:flex-col xl:gap-5">
+      <div className="order-1 space-y-4 xl:shrink-0">
       <RecordHeader
         stacked
         back={variant === "page" ? BACK : undefined}
@@ -284,9 +285,7 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
       />
       </div>
 
-        {/* Takes whatever height the column has left, so Approve & send
-            stays on screen; its own body scrolls when that is tight. */}
-        <div className="order-2 min-w-0 xl:flex xl:min-h-[18rem] xl:flex-1 xl:flex-col">
+        <div className="order-2 min-w-0 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
           <ReplyComposer
             record={data}
             personEmail={text(person.email) || null}
@@ -755,8 +754,11 @@ function ReplyComposer({ record, personEmail, draft, conversations, citations, u
 
         {!editingCurrentDraft && Boolean(draft.id) && <div className="rounded-lg bg-information-lighter p-3 text-paragraph-xs text-information-dark ring-1 ring-inset ring-information-light">You switched channels. This will create a separate {channelLabel(channel)} draft; the existing {channelLabel(draft.channel)} draft is preserved.</div>}
 
-        {channel === "email" && <DraftRecipients draft={editingCurrentDraft ? draft : {}} personEmail={personEmail} />}
-        {channel === "email" && <label className="block"><span className="mb-1.5 block text-label-xs text-text-sub-600">Subject</span><input className={fieldClass} value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" /></label>}
+        {channel === "email" && <DraftRecipients
+          draft={editingCurrentDraft ? draft : {}}
+          personEmail={personEmail}
+          subject={<input aria-label="Subject" className="h-7 min-w-0 flex-1 bg-transparent text-paragraph-sm text-text-strong-950 outline-none placeholder:text-text-soft-400" value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" />}
+        />}
         <div className="flex min-h-40 flex-1 flex-col">
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-2">
@@ -780,10 +782,12 @@ function ReplyComposer({ record, personEmail, draft, conversations, citations, u
             <div className="flex gap-2"><button disabled={!reconciliationNote.trim()} type="button" className={primaryButtonClass} onClick={() => void onAction(`/send-attempts/${String(uncertainAttempt.id)}/reconcile`, { delivered: true, providerMessageId: providerMessageId || null, note: reconciliationNote }, "POST", "Delivery confirmed")}>Confirm delivered</button><button disabled={!reconciliationNote.trim()} type="button" className={dangerButtonClass} onClick={() => void onAction(`/send-attempts/${String(uncertainAttempt.id)}/reconcile`, { delivered: false, note: reconciliationNote }, "POST", "Marked not delivered")}>Not delivered</button></div>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Who the reply goes out as — the account, not the provider. */}
+          <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap">
+            {/* One line at xl, where the column is narrow and height is what
+                the draft needs: the sender shortens rather than wrapping.
+                Who the reply goes out as — the account, not the provider. */}
             <SenderPicker conversations={conversations} value={conversationId} onChange={changeConversation} />
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               {editingCurrentDraft ? <>
                 <RegenerateDraftDialog open={regenerateOpen} onOpenChange={setRegenerateOpen} onSubmit={async (feedback) => { await onAction(`/drafts/${String(draft.id)}/regenerate`, { feedback }, "POST", "Draft rewritten with your notes"); return true; }} />
                 <button type="button" disabled={!ready} className={secondaryButtonClass} onClick={() => void onAction(`/drafts/${String(draft.id)}`, { subject: requestSubject, body, revision }, "PATCH", "Draft saved")}><RiSaveLine className="size-4" aria-hidden="true" />Save</button>
@@ -821,7 +825,7 @@ function SenderPicker({ conversations, value, onChange }: { conversations: Data[
     <>
       <ContactAvatar src={item.accountAvatarUrl ? String(item.accountAvatarUrl) : null} fallback={initials(senderName(item))} className="size-6 shrink-0 bg-primary-alpha-10 text-[10px] text-primary-base" />
       <span className="min-w-0 truncate text-label-sm text-text-strong-950">{senderName(item)}</span>
-      <span className="inline-flex shrink-0 items-center gap-1 text-paragraph-xs text-text-soft-400">{channelIcon(item.channel, "size-3.5")}{channelLabel(item.channel)}{item.status === "closed" ? " · closed" : ""}</span>
+      <span className="inline-flex shrink-0 items-center gap-1 text-paragraph-xs text-text-soft-400">{channelIcon(item.channel, "size-3.5")}<span className="xl:sr-only">{channelLabel(item.channel)}</span>{item.status === "closed" ? " · closed" : ""}</span>
     </>
   );
   const title = `Sending as ${text(current.accountLabel ?? current.accountRef, "a connected account")} via ${channelLabel(current.channel)}`;
