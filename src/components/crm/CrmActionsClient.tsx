@@ -790,7 +790,9 @@ export function ProposalInline({ label, busy, onAccept, onKeep, className }: { l
 function ClassificationCell({ row, categories, busy, onClassify }: { row: Row; categories: Data[]; busy: boolean; onClassify: (choice: { categoryKey: string; subcategoryId: string | null }, extra?: StageChangeExtra) => Promise<void> }) {
   const categoryKey = row.category === "unclassified" ? null : row.category;
   const subcategoryName = row.subcategory.name ? String(row.subcategory.name) : null;
-  return <div className="min-w-0">
+  // `contents`: the marker without a box of its own, so it covers the picker
+  // and the proposal buttons, not the cell's empty space.
+  return <div data-row-tools className="contents">
     <ClassificationPicker
       compact
       quiet
@@ -947,7 +949,10 @@ function ActionRow({ action, categories, busy, editing, pipeline, now, onOpen, o
           </div>
         </div>
       </Table.Cell>
-      <Table.Cell className="px-4 py-3 align-middle" data-row-tools>
+      {/* Only the controls inside stay out of the row's click (data-row-tools
+          on ClassificationCell); the cell's empty space opens the record like
+          every other cell. */}
+      <Table.Cell className="px-4 py-3 align-middle">
         <ClassificationCell row={row} categories={categories} busy={busy} onClassify={onClassify} />
       </Table.Cell>
       <Table.Cell className="px-4 py-3">
@@ -1140,7 +1145,9 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
       </div>
     </div>
 
-    {show("stage") && <div className="mt-3 flex flex-wrap items-center gap-1.5" data-row-tools>
+    {/* The marker is on the controls only (`contents`, no box), so the line's
+        empty space opens the record like the rest of the card. */}
+    {show("stage") && <div className="mt-3 flex flex-wrap items-center gap-1.5"><div data-row-tools className="contents">
       <ClassificationPicker
         compact
         quiet
@@ -1159,7 +1166,7 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
         onAccept={() => void onClassify(row.proposedCategoryKey ? { categoryKey: row.proposedCategoryKey, subcategoryId: row.proposedSubcategoryId } : { categoryKey: row.keepCategoryKey, subcategoryId: row.keepSubcategoryId })}
         onKeep={() => void onClassify({ categoryKey: row.keepCategoryKey, subcategoryId: row.keepSubcategoryId })}
       />}
-    </div>}
+    </div></div>}
 
     {!show("reply") ? null : row.lastCall ? <div className="mt-3"><ReplyQuote row={row} lines={2} /></div>
       : row.latestReply && <HoverPreview title={String(row.inbound.subject ?? "").trim() || row.name} meta={formatDate(row.inbound.sentAt ?? row.repliedAt)} body={row.latestReplyFull} className="mt-3">
