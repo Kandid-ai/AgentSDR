@@ -234,8 +234,9 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
   const pendingReferral = referrals.some((referral) => referral.status === "pending");
   const referralCard = <ReferralCard recordId={recordId} referrals={referrals} onChanged={(message) => { setNotice(message); announceRecordChanged(recordId); void load(); }} />;
 
-  // Wide (xl): two columns. The conversation takes the whole left side, top
-  // to bottom, so the thread is never a scroll away; the right one holds who
+  // Wide (xl): two columns, 60/40 (never under 22rem for the lead). The
+  // conversation takes the whole left side, top to bottom, so the thread is
+  // never a scroll away; the right one holds who
   // this is, where they stand and the reply, and scrolls on its own. The
   // measured height only holds because the row is minmax(0,1fr) and each
   // column is min-h-0, so their own scroll areas do the shrinking.
@@ -246,7 +247,7 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
       ref={workspaceRef}
       style={workspaceHeight ? { height: workspaceHeight } : undefined}
       className={cn(
-        "flex flex-col gap-5 transition-opacity xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)] xl:grid-rows-[minmax(0,1fr)] xl:items-stretch xl:gap-6",
+        "flex flex-col gap-5 transition-opacity xl:grid xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)] xl:grid-rows-[minmax(0,1fr)] xl:items-stretch xl:gap-6",
         loading && "opacity-60",
       )}
       aria-busy={loading || undefined}

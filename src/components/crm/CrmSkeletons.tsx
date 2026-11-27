@@ -99,7 +99,7 @@ export function PipelinePageSkeleton() {
 /** Record workspace: the conversation beside the lead column (header, stage line, reply). */
 export function RecordBody() {
   return (
-    <div aria-busy="true" aria-label="Loading" className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,26rem)] xl:gap-6">
+    <div aria-busy="true" aria-label="Loading" className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)] xl:gap-6">
       <Skeleton className="order-2 h-96 rounded-2xl xl:order-none xl:h-[min(70dvh,48rem)]" />
       <div className="order-1 space-y-4 xl:order-none">
         <div className="space-y-3">
