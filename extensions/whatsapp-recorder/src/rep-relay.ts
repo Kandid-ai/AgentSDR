@@ -110,6 +110,10 @@ export class RepRelay {
   private attempt: AbortController | null = null;
   /** For the log, once: the first of the rep's audio. */
   private heardRep = false;
+  /** The lead's mute as last seen, as last told to AgentSDR, and whether a report is under way. */
+  private mutedWanted: boolean | null = null;
+  private mutedSent: boolean | null = null;
+  private mutedSending = false;
 
   constructor(private readonly options: RepRelayOptions) {
     this.fetch = options.fetch ?? ((url, init) => fetch(url, init));
@@ -134,6 +138,42 @@ export class RepRelay {
     this.attempt?.abort();
     this.attempt = null;
     this.uplink.close();
+  }
+
+  /**
+   * The lead muted or unmuted: the rep's tab shows it. Reports go out one at
+   * a time, latest wins, so a quick mute-unmute cannot arrive in the wrong order.
+   */
+  leadMuted(muted: boolean): void {
+    if (this.closed) return;
+    this.mutedWanted = muted;
+    if (!this.mutedSending) void this.sendMuted();
+  }
+
+  private async sendMuted(): Promise<void> {
+    this.mutedSending = true;
+    try {
+      while (!this.closed && this.mutedWanted !== null && this.mutedWanted !== this.mutedSent) {
+        const muted = this.mutedWanted;
+        try {
+          const response = await this.fetch(`${this.options.url}/muted`, {
+            method: "POST",
+            headers: { ...this.headers(), "Content-Type": "application/json" },
+            body: JSON.stringify({ muted }),
+          });
+          if (!response.ok) {
+            this.options.trace(`could not tell the rep the lead ${muted ? "muted" : "unmuted"} (HTTP ${response.status})`);
+            return;
+          }
+          this.mutedSent = muted;
+        } catch (error) {
+          this.options.trace(`could not tell the rep the lead ${muted ? "muted" : "unmuted"}: ${describe(error)}`);
+          return;
+        }
+      }
+    } finally {
+      this.mutedSending = false;
+    }
   }
 
   /** A block of the lead's side (mono 16-bit PCM at REP_RELAY_SAMPLE_RATE), for the rep. */
@@ -242,6 +282,8 @@ export class RepRelay {
         this.uplink.heard();
         return null;
       case "ping":
+      // For the rep's tab only.
+      case "lead-muted":
         return null;
     }
   }

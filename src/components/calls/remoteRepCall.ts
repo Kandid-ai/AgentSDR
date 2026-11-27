@@ -50,6 +50,8 @@ export type RemoteRepCallState = {
   /** Ended or failed: what to tell the rep. */
   message: string | null;
   muted: boolean;
+  /** The lead has muted their microphone (the calling number sees "Muted" in WhatsApp). */
+  leadMuted: boolean;
   /** On call, but the relay to the number is down for now; the call ends if it does not come back. */
   unstable: boolean;
   /** The browser held back the lead's audio until a click (autoplay rules). */
@@ -149,7 +151,7 @@ export async function startRemoteRepCall({ leadName, leadCompany = null, numberN
   // A finished call still on the bar: drop it, so its late reads cannot touch this one.
   if (session) clearBackgroundTimeout(session.timer);
   session = null;
-  emit({ callId: null, leadName, leadCompany, numberName, stage: "mic", answeredAt: null, message: null, muted: false, unstable: false, audioBlocked: false, endedBy: null });
+  emit({ callId: null, leadName, leadCompany, numberName, stage: "mic", answeredAt: null, message: null, muted: false, leadMuted: false, unstable: false, audioBlocked: false, endedBy: null });
 
   if (typeof AudioContext === "undefined" || !navigator.mediaDevices?.getUserMedia || typeof ReadableStream === "undefined") {
     emit({ ...state!, stage: "error", message: "This browser can't place calls — use a recent Chrome, Edge or Firefox." });
@@ -427,6 +429,9 @@ function onRelayLine(s: Session, line: string) {
       return;
     case "uplink":
       s.uplink?.heard();
+      return;
+    case "lead-muted":
+      patch(s, { leadMuted: event.muted });
       return;
   }
 }

@@ -196,3 +196,27 @@ export function hangUpRelay(callId: string): void {
     throw error;
   }
 }
+
+/** The station's report that the lead muted or unmuted: `{ "muted": boolean }`. */
+export function parseLeadMutedBody(text: string): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new CallApiError(400, "Request body must contain valid JSON");
+  }
+  if (!value || typeof value !== "object" || typeof (value as { muted?: unknown }).muted !== "boolean") {
+    throw new CallApiError(400, "muted must be true or false");
+  }
+  return (value as { muted: boolean }).muted;
+}
+
+/** The lead muted or unmuted — run after the station's credential was checked. */
+export function reportLeadMuted(callId: string, muted: boolean): void {
+  try {
+    repRelay().leadMuted(callId, muted);
+  } catch (error) {
+    if (error instanceof RelayFullError) throw new CallApiError(503, error.message);
+    throw error;
+  }
+}

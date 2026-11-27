@@ -163,7 +163,13 @@ function StageText({ call }: { call: RemoteRepCallState }) {
       return (
         <>
           On call · <OnCallTimer answeredAt={call.answeredAt} />
-          {call.muted && " · muted"}
+          {call.muted && " · you're muted"}
+          {call.leadMuted && (
+            <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-md bg-warning-lighter px-1.5 py-px align-middle text-label-xs text-warning-dark">
+              <RiMicOffLine className="size-3" aria-hidden />
+              {leadFirstName(call.leadName)} muted
+            </span>
+          )}
           {call.unstable && " · connection unstable…"}
         </>
       );
@@ -180,4 +186,10 @@ function OnCallTimer({ answeredAt }: { answeredAt: number | null }) {
     return () => window.clearInterval(interval);
   }, []);
   return <span className="tabular-nums">{answeredAt ? formatElapsed(now - answeredAt) : "0:00"}</span>;
+}
+
+/** "Arjun Bhatia" → "Arjun"; a bare number or no name → "They". */
+function leadFirstName(name: string): string {
+  const first = name.trim().split(/\s+/)[0] ?? "";
+  return first && !/^\+?\d/.test(first) ? first : "They";
 }

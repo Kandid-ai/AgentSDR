@@ -702,6 +702,7 @@ function install(): void {
       if (verdict.muted !== current.muteNoticed) {
         current.muteNoticed = verdict.muted;
         if (agentRig?.callId === current.callId) agentLog(verdict.muted ? "the call shows a mute notice — the call goes on" : "the mute notice is gone");
+        post({ source: HOOK_SOURCE, type: "lead-muted", callId: current.callId, muted: verdict.muted });
       }
       if (verdict.ended) {
         if (agentRig?.callId === current.callId) {

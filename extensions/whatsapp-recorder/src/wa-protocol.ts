@@ -76,6 +76,8 @@ export type HookToAgent =
   | { source: typeof HOOK_SOURCE; type: "call-status"; callId: string; text: string }
   /** What wa-hook can see of the call UI, when that changes — for the timing table. */
   | { source: typeof HOOK_SOURCE; type: "diag"; callId: string; text: string }
+  /** The lead muted or unmuted: WhatsApp shows "Muted" where the call timer was (callTimer.ts). */
+  | { source: typeof HOOK_SOURCE; type: "lead-muted"; callId: string; muted: boolean }
   | { source: typeof HOOK_SOURCE; type: "probe-result"; callId: string | null }
   /** WhatsApp's call screen appeared for this call — the rep can go back to AgentSDR. */
   | { source: typeof HOOK_SOURCE; type: "call-ui"; callId: string }

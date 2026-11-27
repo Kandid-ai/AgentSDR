@@ -670,6 +670,13 @@ export type RepRelayEvent =
   | { t: "hangup" }
   /** This side's upload stream delivered audio: streaming works (sent once per stream, and again on reconnecting). */
   | { t: "uplink" }
+  /**
+   * To the rep only: the lead muted (or unmuted) their microphone — WhatsApp
+   * shows "Muted" in place of the call timer. Sent when it changes, and on a
+   * rep stream that opens while they are muted. The station reports it with
+   * POST /api/call-recorder/calls/:id/relay/muted ({ muted }).
+   */
+  | { t: "lead-muted"; muted: boolean }
   | { t: "ping" };
 
 // --- AI voice agent (trial) --------------------------------------------------

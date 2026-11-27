@@ -6,6 +6,7 @@ import {
   assertRelayable,
   isRelayUploadStream,
   parseCallAiLeadBody,
+  parseLeadMutedBody,
   parseRemoteRep,
   readRelayPcm,
   receiveRelayUpload,
@@ -168,5 +169,13 @@ describe("upload streams", () => {
       if (previous === undefined) delete process.env.DEMO_MODE;
       else process.env.DEMO_MODE = previous;
     }
+  });
+});
+
+describe("parseLeadMutedBody", () => {
+  test("reads { muted } and refuses anything else", () => {
+    expect(parseLeadMutedBody('{"muted":true}')).toBe(true);
+    expect(parseLeadMutedBody('{"muted":false}')).toBe(false);
+    for (const bad of ["", "nope", "{}", '{"muted":"yes"}', "null"]) expect(() => parseLeadMutedBody(bad)).toThrow(CallApiError);
   });
 });

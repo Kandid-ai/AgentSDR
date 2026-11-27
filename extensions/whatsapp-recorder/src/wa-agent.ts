@@ -746,6 +746,10 @@ function onHookMessage(event: MessageEvent): void {
     case "relay-audio":
       relay?.sendLead(data.pcm);
       break;
+    case "lead-muted":
+      trace(callId, data.muted ? "the lead muted their microphone" : "the lead unmuted");
+      relay?.leadMuted(data.muted);
+      break;
     case "call-status":
       trace(callId, `WhatsApp shows "${data.text}"`);
       // The greeting is made while it rings and held until they pick up. It

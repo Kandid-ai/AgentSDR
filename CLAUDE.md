@@ -762,6 +762,13 @@ with the same credential skip the database (`isAuthorized`). Route rules are
 in `src/lib/calls/remoteRep.ts`; contract: contract.ts, "a rep talking
 through a calling station".
 
+When the lead mutes, WhatsApp shows "Muted" where the call timer was. The
+station must not read that as a hang-up: only a timer frozen on screen ends
+the call quickly; a missing one never does behind a mute notice, and
+otherwise only after ~15 s (`extensions/whatsapp-recorder/src/callTimer.ts`).
+The station reports the change (`POST …/relay/muted`), and the rep's bar
+shows "<name> muted" (relay event `lead-muted`).
+
 The tab (`src/components/calls/remoteRepCall.ts`, its bar mounted in the root
 layout): mic (echo cancellation on) → AudioWorklet → 16 kHz low-passed
 (`src/lib/calls/relayPcm.ts`, the extension's downsampler copied) → the uplink;

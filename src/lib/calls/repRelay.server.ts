@@ -130,6 +130,8 @@ type Relay = {
   repSeen: boolean;
   /** Hung up (the rep, or their tab gone): a station that connects later is told at once. */
   hungUp: boolean;
+  /** The lead has muted their microphone (the station says so); a rep stream that opens is told at once. */
+  leadMuted: boolean;
   repGone: TimerHandle | null;
   idle: TimerHandle | null;
 };
@@ -190,6 +192,7 @@ export class RepRelayHub {
     send(subscriber, { t: "peer", present: !!other });
     if (!previous && other) send(other.subscriber, { t: "peer", present: true });
     if (side === "station" && relay.hungUp) send(subscriber, { t: "hangup" });
+    if (side === "rep" && relay.leadMuted) send(subscriber, { t: "lead-muted", muted: true });
     // A stream reopened while its side's upload stream works: say so again, the first telling may have been lost with the old one.
     if (newestUplink(relay, side)?.heard) send(subscriber, { t: "uplink" });
     return () => this.detach(callId, side, attached);
@@ -257,6 +260,15 @@ export class RepRelayHub {
     }
   }
 
+  /** The station saw the lead mute or unmute: the rep's tab is told. Throws RelayFullError. */
+  leadMuted(callId: string, muted: boolean): void {
+    const relay = this.ensure(callId);
+    if (relay.leadMuted === muted) return;
+    relay.leadMuted = muted;
+    const rep = relay.sides.rep;
+    if (rep) send(rep.subscriber, { t: "lead-muted", muted });
+  }
+
   /** The rep hung up: the station is told to end the WhatsApp call. Throws RelayFullError. */
   hangup(callId: string): void {
     const relay = this.ensure(callId);
@@ -317,7 +329,7 @@ export class RepRelayHub {
     const existing = this.relays.get(callId);
     if (existing) return existing;
     if (this.relays.size >= this.maxRelays) throw new RelayFullError();
-    const relay: Relay = { sides: {}, uplinks: [], repSeen: false, hungUp: false, repGone: null, idle: null };
+    const relay: Relay = { sides: {}, uplinks: [], repSeen: false, hungUp: false, leadMuted: false, repGone: null, idle: null };
     this.relays.set(callId, relay);
     this.scheduleIdle(callId, relay);
     return relay;

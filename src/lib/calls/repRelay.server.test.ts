@@ -190,6 +190,28 @@ describe("RepRelayHub", () => {
     expect(late.kinds()).toEqual(["peer:false", "hangup"]);
   });
 
+  test("the lead muting reaches the rep (not the station), once per change, and a rep stream that opens later hears it", () => {
+    const { hub } = setup();
+    const rep = new FakeSubscriber();
+    const station = new FakeSubscriber();
+    hub.attach(CALL, "rep", rep, "r");
+    hub.attach(CALL, "station", station, "s");
+    hub.leadMuted(CALL, true);
+    hub.leadMuted(CALL, true);
+    expect(rep.events.filter((event) => event.t === "lead-muted")).toEqual([{ t: "lead-muted", muted: true }]);
+    expect(station.kinds()).not.toContain("lead-muted");
+
+    const reopened = new FakeSubscriber();
+    hub.attach(CALL, "rep", reopened, "r");
+    expect(reopened.events).toContainEqual({ t: "lead-muted", muted: true });
+    hub.leadMuted(CALL, false);
+    expect(reopened.events.at(-1)).toEqual({ t: "lead-muted", muted: false });
+
+    const unmuted = new FakeSubscriber();
+    hub.attach(CALL, "rep", unmuted, "r");
+    expect(unmuted.kinds()).not.toContain("lead-muted");
+  });
+
   test("the rep's tab gone for REP_RELAY_REP_GONE_MS hangs up; back in time, it does not", () => {
     const { hub, timers } = setup();
     const station = new FakeSubscriber();

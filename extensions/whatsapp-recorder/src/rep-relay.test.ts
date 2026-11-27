@@ -69,6 +69,40 @@ describe("RepRelay", () => {
     expect((requests[0].headers as Record<string, string>).Authorization).toBe("Bearer tok");
   });
 
+  test("tells AgentSDR the lead muted, one report at a time, ending on the latest", async () => {
+    const reports: { url: string; body: string; auth: string }[] = [];
+    const gates: Array<() => void> = [];
+    const relay = new RepRelay({
+      url: "https://app.example/api/call-recorder/calls/c1/relay",
+      token: "tok",
+      play: () => {},
+      hangup: () => {},
+      trace: () => {},
+      canStream: false,
+      fetch: async (url, init) => {
+        reports.push({ url, body: String(init.body), auth: (init.headers as Record<string, string>).Authorization });
+        await new Promise<void>((resolve) => gates.push(resolve));
+        return new Response(null, { status: 204 });
+      },
+    });
+    relay.leadMuted(true);
+    relay.leadMuted(false);
+    relay.leadMuted(true);
+    expect(reports).toHaveLength(1);
+    gates.shift()!();
+    // Already told "muted", and the latest is still muted: nothing more to send.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(reports).toHaveLength(1);
+    relay.leadMuted(false);
+    await waitFor(() => reports.length === 2);
+    expect(reports.map((r) => [r.url, r.body, r.auth])).toEqual([
+      ["https://app.example/api/call-recorder/calls/c1/relay/muted", '{"muted":true}', "Bearer tok"],
+      ["https://app.example/api/call-recorder/calls/c1/relay/muted", '{"muted":false}', "Bearer tok"],
+    ]);
+    gates.shift()!();
+    relay.close();
+  });
+
   test("a refused stream hangs up without retrying", async () => {
     const hangups: string[] = [];
     let calls = 0;
@@ -90,9 +124,9 @@ describe("RepRelay", () => {
     expect(calls).toBe(1);
   });
 
-  test("where streaming is not possible, sends the lead's audio in batches, one request in flight", async () => {
+  test("where streaming is not possible, sends the lead's audio in batches without waiting for the previous answer", async () => {
     const bodies: number[][] = [];
-    const gate = { release: () => {} };
+    const gates: Array<() => void> = [];
     const relay = new RepRelay({
       url: "u",
       token: "t",
@@ -103,7 +137,7 @@ describe("RepRelay", () => {
       fetch: async (_url, init) => {
         const bytes = init.body as Uint8Array;
         bodies.push(Array.from(new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)));
-        await new Promise<void>((resolve) => (gate.release = resolve));
+        await new Promise<void>((resolve) => gates.push(resolve));
         return new Response(null, { status: 204 });
       },
     });
@@ -113,14 +147,12 @@ describe("RepRelay", () => {
     relay.sendLead(new Int16Array(100).fill(2).buffer);
     await waitFor(() => bodies.length === 1);
     expect(bodies[0]).toHaveLength(700);
-    // While that request is out, more queues up and goes as one.
+    // The next batch goes while the first request is still out (relayUplink.ts pipelines chunks).
     relay.sendLead(new Int16Array(400).fill(3).buffer);
     relay.sendLead(new Int16Array(400).fill(4).buffer);
-    expect(bodies).toHaveLength(1);
-    gate.release();
     await waitFor(() => bodies.length === 2);
     expect(bodies[1]).toHaveLength(800);
-    gate.release();
+    for (const release of gates) release();
     relay.close();
   });
 });
