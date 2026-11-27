@@ -13,6 +13,7 @@ export function PageHeader({
   back,
   badge,
   actions,
+  stacked = false,
 }: {
   title: ReactNode;
   description?: ReactNode;
@@ -21,6 +22,8 @@ export function PageHeader({
   /** State that qualifies the page (a status badge), not the section. */
   badge?: ReactNode;
   actions?: ReactNode;
+  /** Actions go under the title at every width — for a header in a narrow column. */
+  stacked?: boolean;
 }) {
   return (
     <header>
@@ -30,7 +33,7 @@ export function PageHeader({
           {back.label}
         </Link>
       )}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className={stacked ? "flex flex-col gap-3" : "flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="min-w-0 truncate text-title-h5 text-text-strong-950">{title}</h1>

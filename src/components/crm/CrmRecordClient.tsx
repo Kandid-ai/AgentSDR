@@ -41,7 +41,7 @@ import { CallButton } from "@/components/calls/CallButton";
 import { CallsCard } from "@/components/calls/CallsCard";
 import { EmptyState } from "@/components/page/EmptyState";
 import { PageHeader } from "@/components/page/PageHeader";
-import { StatRow } from "@/components/page/StatRow";
+import type { StatRowItem } from "@/components/page/StatRow";
 import { PersonWhatsappPanel } from "@/components/whatsapp/PersonWhatsappPanel";
 import { WhatsappLogo } from "@/components/whatsapp/WhatsappLogo";
 import { cn } from "@/utils/cn";
@@ -229,9 +229,31 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
   const lastMessage = ([...messages] as Data[]).filter((message) => message.direction === "inbound")
     .sort((a, b) => String(b.sentAt ?? b.createdAt).localeCompare(String(a.sentAt ?? a.createdAt)))[0];
 
+  // Wide (xl): two columns. The left one holds who this is, where they stand
+  // and the reply, and scrolls on its own; the conversation takes the whole
+  // right side, top to bottom, so the thread is never a scroll away. The
+  // measured height only holds because the row is minmax(0,1fr) and each
+  // column is min-h-0, so their own scroll areas do the shrinking.
+  // Narrow: the left column dissolves (`contents`) and `order` puts the
+  // conversation between the reply and the meetings.
   return (
-    <div className={cn("space-y-5 transition-opacity", loading && "opacity-60")} aria-busy={loading || undefined}>
+    <div
+      ref={workspaceRef}
+      style={workspaceHeight ? { height: workspaceHeight } : undefined}
+      className={cn(
+        "flex flex-col gap-5 transition-opacity xl:grid xl:grid-cols-[minmax(22rem,26rem)_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)] xl:items-stretch xl:gap-6",
+        loading && "opacity-60",
+      )}
+      aria-busy={loading || undefined}
+    >
+      <div className="contents xl:-mr-2 xl:flex xl:min-h-0 xl:flex-col xl:gap-5 xl:overflow-y-auto xl:overscroll-contain xl:pr-2">
+      {/* The column's first screen: who, where they stand and the reply,
+          stretched to the column's height so the reply gets the rest of it.
+          Meetings and calls start below, a scroll away. */}
+      <div className="contents xl:flex xl:min-h-full xl:shrink-0 xl:flex-col xl:gap-5">
+      <div className="order-1 space-y-4">
       <RecordHeader
+        stacked
         back={variant === "page" ? BACK : undefined}
         data={data}
         person={person}
@@ -241,28 +263,30 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
         activeRun={activeRun}
         onAction={mutate}
         onCallStarted={() => setCallsRefreshKey((key) => key + 1)}
+        activity={<ActivityDrawer events={events} drafts={drafts} sendAttempts={sendAttempts} />}
       />
 
       {notice && <div role="status" className="flex items-center gap-2 rounded-xl bg-success-lighter px-4 py-2.5 text-paragraph-sm text-success-dark ring-1 ring-inset ring-success-light"><RiCheckLine className="size-4 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1">{notice}</span><button type="button" onClick={() => setNotice("")} className="text-label-xs opacity-70 hover:opacity-100">Dismiss</button></div>}
       {error && <ErrorState message={error} onRetry={() => void load()} />}
       {text(followUp.note) && <div className="flex items-start gap-2 rounded-xl bg-bg-weak-50 px-4 py-2.5 text-paragraph-sm text-text-sub-600 ring-1 ring-inset ring-stroke-soft-200"><RiCalendarScheduleLine className="mt-0.5 size-4 shrink-0 text-text-soft-400" aria-hidden="true" /><p className="min-w-0 flex-1"><span className="text-label-sm text-text-strong-950">Follow up {followUp.dueAt ? `on ${formatDate(followUp.dueAt)}` : "later"}:</span> {text(followUp.note)}{text(followUp.actorRef) ? <span className="text-text-soft-400"> — {text(followUp.actorRef)}</span> : null}</p></div>}
 
-      <StatRow items={[
-        callFollowUp
-          ? { label: "Last call", value: lastCall.at ? [lastCallOutcome, relativeDate(lastCall.at).replace(" overdue", " ago")].filter(Boolean).join(" · ") : "No call yet", icon: RiPhoneLine, hint: lastCall.at ? [formatDate(lastCall.at), lastCallSummary].filter(Boolean).join(" — ") : undefined }
-          : { label: "Last reply", value: lastInbound, icon: RiReplyLine, hint: data.lastInboundAt ? formatDate(data.lastInboundAt) : undefined },
-        { label: callFollowUp ? "Follow-up call" : "Next step", value: nextAction, icon: RiTimerLine, hint: data.nextActionAt ? formatDate(data.nextActionAt) : undefined },
-        { label: "Sequence", value: activeSequence.name ? `${String(activeSequence.name)}${activeRun.status === "paused" ? " · paused" : ""}` : "None running", icon: RiLoopLeftLine },
-        { label: channels.length > 1 ? "Channels" : "Channel", value: channels.join(", ") || "—", icon: RiChat3Line },
-      ]} />
+      <RecordFacts
+        items={[
+          callFollowUp
+            ? { label: "Last call", value: lastCall.at ? [lastCallOutcome, relativeDate(lastCall.at).replace(" overdue", " ago")].filter(Boolean).join(" · ") : "No call yet", icon: RiPhoneLine, hint: lastCall.at ? [formatDate(lastCall.at), lastCallSummary].filter(Boolean).join(" — ") : undefined }
+            : { label: "Last reply", value: lastInbound, icon: RiReplyLine, hint: data.lastInboundAt ? formatDate(data.lastInboundAt) : undefined },
+          { label: callFollowUp ? "Follow-up call" : "Next step", value: nextAction, icon: RiTimerLine, hint: data.nextActionAt ? formatDate(data.nextActionAt) : undefined },
+          { label: "Sequence", value: activeSequence.name ? `${String(activeSequence.name)}${activeRun.status === "paused" ? " · paused" : ""}` : "None running", icon: RiLoopLeftLine },
+          { label: channels.length > 1 ? "Channels" : "Channel", value: channels.join(", ") || "—", icon: RiChat3Line },
+        ]}
+        stage={<ClassificationSelect record={data} categories={categories} onAction={mutate} />}
+        stageNotice={<ProposedClassificationNotice record={data} categories={categories} onAction={mutate} />}
+      />
+      </div>
 
-      {/* The measured height only holds if the grid row is allowed to be
-          smaller than its content: an auto row grows to the longest thread and
-          pushes the page down regardless of the container's height, so the row
-          is minmax(0,1fr) and each column is min-h-0 so the panels' own scroll
-          areas do the shrinking. */}
-      <div ref={workspaceRef} style={workspaceHeight ? { height: workspaceHeight } : undefined} className="grid items-start gap-5 xl:grid-cols-2 xl:grid-rows-[minmax(0,1fr)] xl:items-stretch">
-        <div className="min-w-0 xl:min-h-0">
+        {/* Takes whatever height the column has left, so Approve & send
+            stays on screen; its own body scrolls when that is tight. */}
+        <div className="order-2 min-w-0 xl:flex xl:min-h-[18rem] xl:flex-1 xl:flex-col">
           <ReplyComposer
             record={data}
             personEmail={text(person.email) || null}
@@ -272,9 +296,6 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
             uncertainAttempt={uncertainAttempt}
             lastMessage={lastMessage}
             onAction={mutate}
-            stage={<ClassificationSelect record={data} categories={categories} onAction={mutate} />}
-            activity={<ActivityDrawer events={events} drafts={drafts} sendAttempts={sendAttempts} />}
-            stageNotice={<ProposedClassificationNotice record={data} categories={categories} onAction={mutate} />}
             callFollowUp={callFollowUp ? <CallFollowUpNotice
               dueAt={data.nextActionAt}
               outcome={lastCallOutcome}
@@ -284,23 +305,55 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
             /> : undefined}
           />
         </div>
-        <div className="min-w-0 xl:min-h-0">
-          {data.activeChannel === "whatsapp"
-            ? <WhatsappRecordPanel personId={String(person.id ?? data.personId)} onSent={() => { announceRecordChanged(recordId); void load(); }}>
-                <ConversationPanel conversations={conversations} messages={messages} name={name} avatarUrl={avatarUrl} />
-              </WhatsappRecordPanel>
-            : <ConversationPanel conversations={conversations} messages={messages} name={name} avatarUrl={avatarUrl} />}
+        </div>
+        <div className="order-4 space-y-5 empty:hidden">
+          <MeetingsCard
+            meetings={asList<Data>(data.meetings)}
+            linkSentCount={Number(data.bookingLinkSentCount ?? 0)}
+            linkFirstSentAt={data.bookingLinkFirstSentAt}
+            onAction={mutate}
+            recordId={recordId}
+          />
+          <CallsCard personId={String(person.id ?? data.personId)} refreshKey={callsRefreshKey} />
         </div>
       </div>
-      <MeetingsCard
-        meetings={asList<Data>(data.meetings)}
-        linkSentCount={Number(data.bookingLinkSentCount ?? 0)}
-        linkFirstSentAt={data.bookingLinkFirstSentAt}
-        onAction={mutate}
-        recordId={recordId}
-      />
-      <CallsCard personId={String(person.id ?? data.personId)} refreshKey={callsRefreshKey} />
+      <div className="order-3 min-w-0 xl:order-none xl:min-h-0">
+        {data.activeChannel === "whatsapp"
+          ? <WhatsappRecordPanel personId={String(person.id ?? data.personId)} onSent={() => { announceRecordChanged(recordId); void load(); }}>
+              <ConversationPanel conversations={conversations} messages={messages} name={name} avatarUrl={avatarUrl} />
+            </WhatsappRecordPanel>
+          : <ConversationPanel conversations={conversations} messages={messages} name={name} avatarUrl={avatarUrl} />}
+      </div>
     </div>
+  );
+}
+
+/**
+ * Where the lead stands, in the left column: the stage (and a stage change
+ * the AI is holding for a person), the four live facts that used to be a
+ * row of tiles, and the activity history. Compact rows, so the reply below
+ * starts high and the conversation beside it gets the height.
+ */
+function RecordFacts({ items, stage, stageNotice }: { items: StatRowItem[]; stage: React.ReactNode; stageNotice: React.ReactNode }) {
+  return (
+    <section aria-label="Where this lead stands" className="overflow-hidden rounded-xl bg-bg-white-0 ring-1 ring-inset ring-stroke-soft-200">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+        <span className="text-label-xs text-text-sub-600">Stage</span>
+        <div className="flex min-w-0 items-center">{stage}</div>
+      </div>
+      <div className="px-2 pb-2 empty:hidden">{stageNotice}</div>
+      <dl className="grid grid-cols-2 gap-px border-t border-stroke-soft-200 bg-stroke-soft-200">
+        {items.map(({ label, value, icon: Icon, hint }) => (
+          <div key={label} title={hint} className="flex min-w-0 items-start gap-2 bg-bg-white-0 px-4 py-2">
+            <Icon className="mt-0.5 size-4 shrink-0 text-text-soft-400" aria-hidden="true" />
+            <div className="min-w-0">
+              <dt className="truncate text-paragraph-xs text-text-sub-600">{label}</dt>
+              <dd className="truncate text-label-sm text-text-strong-950">{value}</dd>
+            </div>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
@@ -355,13 +408,13 @@ function MeetingsCard({ meetings, linkSentCount, linkFirstSentAt, onAction, reco
 const BACK = { href: "/crm/actions", label: "Action required" };
 
 /**
- * Height of the workspace row, measured rather than assumed.
+ * Height of the two-column workspace, measured rather than assumed.
  *
- * The page chrome above it — header, stat row, notices — is variable: the
- * meta line wraps at narrow widths and a notice adds a row. A hard-coded
- * `100vh - Nrem` was wrong by roughly the height of the send row, which is
- * exactly the part that must stay on screen. Below the two-column breakpoint
- * the columns stack and the page scrolls normally, so no height is imposed.
+ * What sits above it differs — the full page's own header and back link, the
+ * pop-up's padding — so it runs from its own top to the bottom of whatever
+ * scrolls it (the pop-up's scroll area, else the window), and each column
+ * scrolls inside that. Below the two-column breakpoint the columns stack and
+ * the page scrolls normally, so no height is imposed.
  */
 const WORKSPACE_MIN_HEIGHT = 520;
 const TWO_COLUMN_WIDTH = 1280;
@@ -387,7 +440,11 @@ function useWorkspaceHeight<T extends HTMLElement>(ready: boolean) {
     // Fonts and the header settle a frame after the data lands.
     const frame = requestAnimationFrame(measure);
     window.addEventListener("resize", measure);
-    return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", measure); };
+    // The pop-up's scroll area can change size without the window doing so.
+    const bounds = ref.current?.closest("[data-record-scroll]");
+    const observer = bounds && typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    if (bounds) observer?.observe(bounds);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", measure); observer?.disconnect(); };
   }, [ready]);
   return [ref, height] as const;
 }
@@ -403,9 +460,13 @@ const WORKFLOW_BADGE: Record<string, { label: string; color: React.ComponentProp
   idle: { label: "Idle", color: "gray" },
 };
 
-function RecordHeader({ back, data, person, name, avatarUrl, currentStep, activeRun, onAction, onCallStarted }: {
+function RecordHeader({ back, stacked, data, person, name, avatarUrl, currentStep, activeRun, onAction, onCallStarted, activity }: {
+  /** The activity-history drawer's trigger, beside the record's other actions. */
+  activity?: React.ReactNode;
   /** The full page's way back to its list; the pop-up has its own close. */
   back?: { href: string; label: string };
+  /** Actions under the name rather than beside it: the header sits in the narrow left column. */
+  stacked?: boolean;
   data: Data;
   person: Data;
   name: string;
@@ -440,6 +501,7 @@ function RecordHeader({ back, data, person, name, avatarUrl, currentStep, active
   return (
     <PageHeader
       back={back}
+      stacked={stacked}
       title={<span className="flex min-w-0 items-center gap-3">
         <ChannelAvatar src={avatarUrl} name={name} channel={String(data.activeChannel ?? "")} className="size-10" />
         <span className="truncate">{name}</span>
@@ -456,6 +518,7 @@ function RecordHeader({ back, data, person, name, avatarUrl, currentStep, active
       </div>}
       actions={<>
         <CallButton personId={personId} crmRecordId={id} phone={phone} onCallStarted={onCallStarted} />
+        {activity}
         {canSkip && <Button.Root
           variant="neutral"
           mode="stroke"
@@ -528,6 +591,7 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
   const scrollRef = useRef<HTMLDivElement>(null);
   const visible = useMemo(() => messages.filter((message) => filter === "all" || message.channel === filter).sort((a, b) => String(a.sentAt ?? a.createdAt).localeCompare(String(b.sentAt ?? b.createdAt))), [messages, filter]);
   const channels = new Set([...conversations, ...messages].map((item) => item.channel));
+  const present = (["email", "linkedin", "whatsapp"] as Channel[]).filter((item) => channels.has(item));
   const channelSummary = [...channels].filter(Boolean).map(channelLabel);
   // The thread reads oldest first, but the message being replied to is the
   // last one, so the rail opens at the bottom rather than at an introduction
@@ -549,14 +613,27 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
           <h2 className="text-label-sm text-text-strong-950">Conversation</h2>
           <p className="mt-0.5 text-paragraph-xs text-text-sub-600">{messages.length} {messages.length === 1 ? "message" : "messages"}{channelSummary.length ? ` across ${channelSummary.join(" and ")}` : ""}</p>
         </div>
-        <SegmentedControl.Root value={filter} onValueChange={(value) => setFilter(value as TimelineFilter)}>
-          <SegmentedControl.List className="w-auto" aria-label="Channel">
-            {(["all", "email", "linkedin", "whatsapp"] as TimelineFilter[]).map((item) => {
-              const disabled = item !== "all" && !channels.has(item);
-              return <SegmentedControl.Trigger key={item} value={item} disabled={disabled} className={cn("gap-1.5 px-2 text-label-xs sm:px-2.5", disabled && "opacity-40")}>{item !== "all" && channelIcon(item, "size-3.5")}{item === "all" ? "All" : channelLabel(item)}</SegmentedControl.Trigger>;
-            })}
-          </SegmentedControl.List>
-        </SegmentedControl.Root>
+        {/* Most threads are on one channel, so the filter is a small menu,
+            and only there when the thread spans more than one. */}
+        {present.length > 1 && <Dropdown.Root>
+          <Dropdown.Trigger asChild>
+            <Button.Root variant="neutral" mode="stroke" size="xsmall" title="Show channel" aria-label={`Showing ${filter === "all" ? "all channels" : channelLabel(filter)}. Change`}>
+              {filter !== "all" && channelIcon(filter, "size-3.5")}
+              <span>{filter === "all" ? "All channels" : channelLabel(filter)}</span>
+              <Button.Icon as={RiMoreLine} />
+            </Button.Root>
+          </Dropdown.Trigger>
+          <Dropdown.Content align="end">
+            {(["all", ...present] as TimelineFilter[]).map((item) => (
+              <Dropdown.Item key={item} onSelect={() => setFilter(item)}>
+                {item === "all" ? <RiChat3Line className="size-4" aria-hidden="true" /> : channelIcon(item, "size-4")}
+                {item === "all" ? "All channels" : channelLabel(item)}
+                <span className="text-paragraph-xs text-text-soft-400">{item === "all" ? messages.length : messages.filter((message) => message.channel === item).length}</span>
+                {item === filter && <RiCheckLine className="ml-auto size-4 text-primary-base" aria-hidden="true" />}
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Content>
+        </Dropdown.Root>}
       </div>
       <FramePanel className="flex min-h-0 flex-col overflow-hidden p-0 sm:p-0">
       {visible.length ? (
@@ -571,7 +648,7 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
                 {inbound
                   ? <ContactAvatar src={avatarUrl} fallback={initials(name)} className="mt-1 size-8 bg-bg-white-0 text-label-xs text-text-sub-600 ring-1 ring-inset ring-stroke-soft-200" />
                   : <span className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-primary-alpha-10 text-label-xs text-primary-base">You</span>}
-                <div className={cn("min-w-0 max-w-[88%]", !inbound && "text-right")}>
+                <div className={cn("min-w-0 max-w-[min(88%,48rem)]", !inbound && "text-right")}>
                   <div className={cn("mb-1.5 flex flex-wrap items-center gap-2 text-paragraph-xs text-text-soft-400", !inbound && "justify-end")}>
                     <span className="inline-flex items-center gap-1" style={{ color: channelColor(message.channel) }}>{channelIcon(message.channel, "size-3.5")}<span className="text-text-soft-400">{channelLabel(message.channel)}</span></span>
                     {label && <span className="rounded bg-bg-weak-50 px-1.5 py-0.5 text-label-xs text-text-sub-600 ring-1 ring-inset ring-stroke-soft-200">{label}</span>}
@@ -592,7 +669,7 @@ function ConversationPanel({ conversations, messages, name, avatarUrl }: { conve
   );
 }
 
-function ReplyComposer({ record, personEmail, draft, conversations, citations, uncertainAttempt, lastMessage, onAction, stage, activity, stageNotice, callFollowUp }: {
+function ReplyComposer({ record, personEmail, draft, conversations, citations, uncertainAttempt, lastMessage, onAction, callFollowUp }: {
   record: Data;
   /** For a call-only record: what stands in for "no reply channel" — the follow-up call to make. */
   callFollowUp?: React.ReactNode;
@@ -600,12 +677,6 @@ function ReplyComposer({ record, personEmail, draft, conversations, citations, u
   personEmail: string | null;
   /** Their newest message, quoted above the reply when the thread is not beside it. */
   lastMessage?: Data;
-  /** The stage picker: where this lead is, and fixing a misread. */
-  stage: React.ReactNode;
-  /** The activity-history drawer's trigger. */
-  activity: React.ReactNode;
-  /** A stage change the AI proposed and is holding for a person to decide. */
-  stageNotice: React.ReactNode;
   draft: Data;
   conversations: Data[];
   citations: Data[];
@@ -657,17 +728,10 @@ function ReplyComposer({ record, personEmail, draft, conversations, citations, u
   };
 
   return (
-    <Frame className="h-full min-h-0">
-      {/* Classification lives in the reply header because it is a property
-          of the reply about to be sent, and drives the next draft. */}
-      {/* Narrow: title and Activity share the first line, the classification
-          takes the second whole. Wide: one line. */}
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-3 pt-3">
-        <h2 className="text-label-sm text-text-strong-950">Reply</h2>
-        <div className="order-3 flex min-w-0 basis-full items-center sm:order-none sm:basis-auto">{stage}</div>
-        <div className="order-2 ml-auto sm:order-none">{activity}</div>
-      </div>
-      {stageNotice && <div className="shrink-0 px-1 pb-2">{stageNotice}</div>}
+    // No "Reply" title of its own: the body's label already says "Draft
+    // reply" / "Your reply". The stage sits in RecordFacts, the activity
+    // history with the header's actions.
+    <Frame className="h-full min-h-0 xl:flex-1">
       <FramePanel className="flex min-h-0 flex-col overflow-hidden p-0 sm:p-0">
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-5">
         {Boolean(record.dnc) && <InlineWarning tone="danger" title="Sending is blocked" detail="This person is marked as Do Not Contact. Clear that status before replying." />}

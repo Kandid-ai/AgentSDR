@@ -51,11 +51,15 @@ export function CrmRecordModal({ children }: { children: React.ReactNode }) {
       <Modal.Content
         ref={contentRef}
         hideClose
-        size="max-w-6xl"
+        // Nearly the whole window: the conversation fills the right side, so
+        // every row of height is another line of the thread. The side margin
+        // leaves room for the queue stack, which peeks out up to 36px to the
+        // right (and as much above, where the top card's edge may clip).
+        size="max-w-[1680px]"
         aria-describedby={undefined}
         // The visible card is the inner div, so the stack can sit behind it
         // inside the same dialog rather than over the page.
-        className="h-[calc(100dvh-1rem)] max-h-none bg-transparent shadow-none ring-0 sm:h-[min(88dvh,1000px)]"
+        className="h-[calc(100dvh-1rem)] max-h-none bg-transparent shadow-none ring-0 sm:h-[calc(100dvh-3rem)] sm:w-[calc(100%-5rem)]"
       >
         <QueueStack depth={nav?.upcoming.length ?? 0} />
         <div className="relative flex h-full flex-col overflow-hidden rounded-2xl bg-bg-white-0 shadow-regular-md ring-1 ring-inset ring-stroke-soft-200">
@@ -73,7 +77,7 @@ export function CrmRecordModal({ children }: { children: React.ReactNode }) {
               <Button.Root variant="neutral" mode="ghost" size="xsmall" aria-label="Close" title="Close (Esc)"><Button.Icon as={RiCloseLine} /></Button.Root>
             </Modal.Close>
           </div>
-          <div data-record-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
+          <div data-record-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 xl:p-5">
             {children}
           </div>
         </div>

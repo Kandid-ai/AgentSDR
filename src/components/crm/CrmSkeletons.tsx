@@ -97,38 +97,32 @@ export function PipelinePageSkeleton() {
   );
 }
 
-/** Record workspace: header, stat row, reply and conversation frames. */
+/** Record workspace: left column (header, facts, reply) beside the conversation. */
 export function RecordBody() {
   return (
-    <div aria-busy="true" aria-label="Loading" className="space-y-6">
-      <div className="space-y-2">
-        <Skeleton className="h-3 w-28" />
-        <div className="flex items-start justify-between gap-4">
+    <div aria-busy="true" aria-label="Loading" className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(22rem,26rem)_minmax(0,1fr)] xl:gap-6">
+      <div className="space-y-4">
+        <div className="space-y-3">
           <div className="flex items-center gap-3">
             <Skeleton className="size-10 rounded-full" />
             <div className="space-y-2">
               <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-3.5 w-72 max-w-full" />
+              <Skeleton className="h-3.5 w-56 max-w-full" />
             </div>
           </div>
-          <Skeleton className="hidden h-9 w-48 rounded-lg sm:block" />
+          <Skeleton className="h-8 w-48 rounded-lg" />
         </div>
-      </div>
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-stroke-soft-200 ring-1 ring-inset ring-stroke-soft-200 lg:grid-cols-4">
-        {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="flex items-center gap-3 bg-bg-white-0 px-4 py-3">
-            <Skeleton className="size-8 rounded-lg" />
-            <div className="space-y-1.5">
-              <Skeleton className="h-3 w-20" />
-              <Skeleton className="h-4 w-16" />
+        <div className="space-y-3 rounded-xl p-4 ring-1 ring-inset ring-stroke-soft-200">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className="flex items-center justify-between gap-3">
+              <Skeleton className="h-3.5 w-24" />
+              <Skeleton className="h-3.5 w-28" />
             </div>
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <Skeleton className="h-96 rounded-2xl" />
+          ))}
+        </div>
         <Skeleton className="h-96 rounded-2xl" />
       </div>
+      <Skeleton className="h-96 rounded-2xl xl:h-[min(70dvh,48rem)]" />
     </div>
   );
 }
