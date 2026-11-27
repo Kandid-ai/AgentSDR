@@ -310,7 +310,7 @@ export function PipelineStageBoard({ query, actions, setActions, columns: arrang
             ? <ColumnSkeleton />
             : !cards.length && !hasMore
             ? <FramePanel className="p-0 sm:p-0"><EmptyState compact icon={RiCheckDoubleLine} title="No leads here" description={narrowed ? "None at this stage fits the filters." : "No open lead is at this stage."} /></FramePanel>
-            : <div className="space-y-2 lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-contain">
+            : <div className="space-y-2 lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-y-contain">
               {cards.map((action) => {
                 const id = actionId(action);
                 return <ActionCard

@@ -345,7 +345,7 @@ function BoardColumn({ stage, page, columns, count, categories, filtered, onRese
       </FramePanel>
       // From lg each column scrolls on its own, like a board: the three stages
       // stay side by side instead of the page growing to the longest column.
-      : <div className={cn("space-y-2 transition-opacity lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-contain", page.loading && "pointer-events-none opacity-60")}>
+      : <div className={cn("space-y-2 transition-opacity lg:max-h-[calc(100dvh-12rem)] lg:overflow-y-auto lg:overscroll-y-contain", page.loading && "pointer-events-none opacity-60")}>
         {page.actions.map((action) => {
           const id = actionId(action);
           return <ActionCard
