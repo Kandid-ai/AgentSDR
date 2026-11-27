@@ -18,6 +18,7 @@ import {
   crmPersonContactPolicies,
   crmPipelines,
   crmRecords,
+  crmReferrals,
   crmSendAttempts,
   crmSequenceRuns,
   crmSequenceStepRuns,
@@ -33,6 +34,8 @@ import { CrmNotFoundError } from "./repository";
 import { crmDueState } from "./stateMachine";
 import { FOLLOW_UP_EVENT, followUpFromEventData, isFollowUpNoteCurrent, type FollowUpNote } from "./followUpNote";
 import type { CrmActionGroup } from "./actionGroups";
+import { referralFromRow } from "./referralRules";
+import type { ReferralSummary } from "./referralTypes";
 import { crmActionableSql, crmActionGroupSql } from "./actionGroups.server";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import { callSessions } from "@/lib/calls/schema";
@@ -213,7 +216,7 @@ export async function countCrmActionGroups(): Promise<Record<CrmActionGroup, num
       select ${crmActionGroupSql(r)} as grp from crm_records r
        where r.organization_id = ${currentOrganizationId()} and ${crmActionableSql(r)}
     ) grouped group by grp`)) as unknown as { grp: CrmActionGroup | null; total: number }[];
-  const counts = { reply: 0, follow_up: 0, classification: 0, next_step: 0, meeting_outcome: 0, problem: 0 } satisfies Record<CrmActionGroup, number>;
+  const counts = { reply: 0, follow_up: 0, classification: 0, next_step: 0, meeting_outcome: 0, referral: 0, problem: 0 } satisfies Record<CrmActionGroup, number>;
   for (const row of rows) if (row.grp) counts[row.grp] = Number(row.total);
   return counts;
 }
@@ -357,7 +360,14 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       sql`${crmMeetings.endAt} <= now()`,
     ))
     .orderBy(crmMeetings.crmRecordId, asc(crmMeetings.startAt));
-  const [rows, totals, messages, classifications, runs, drafts, policies, stageCounts, lastRuns, dueMeetings, groupCounts] = await Promise.all([
+  // The newest referral nobody has decided on, per row (src/lib/crm/referrals.ts).
+  const pendingReferralsRead = db.selectDistinctOn([crmReferrals.crmRecordId], {
+    recordId: crmReferrals.crmRecordId, id: crmReferrals.id, name: crmReferrals.name, email: crmReferrals.email,
+    phone: crmReferrals.phone, linkedinUrl: crmReferrals.linkedinUrl, role: crmReferrals.role, status: crmReferrals.status,
+  }).from(crmReferrals)
+    .where(and(inOrg(crmReferrals), inArray(crmReferrals.crmRecordId, pageRecordIds), eq(crmReferrals.status, "pending")))
+    .orderBy(crmReferrals.crmRecordId, desc(crmReferrals.createdAt));
+  const [rows, totals, messages, classifications, runs, drafts, policies, stageCounts, lastRuns, dueMeetings, groupCounts, pendingReferrals] = await Promise.all([
     db.select({ record: crmRecords, person: personListColumns, company: companies, subcategory: crmSubcategories, stage: pipelineStage })
       .from(crmRecords)
       .innerJoin(people, eq(people.id, crmRecords.personId))
@@ -413,6 +423,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
         .innerJoin(people, eq(people.id, crmRecords.personId))
         .where(and(...baseConditions, stageCondition, statusesCondition)).groupBy(crmRecords.categoryKey, crmRecords.subcategoryId)
       : Promise.resolve([]),
+    pendingReferralsRead,
   ]);
   // Which step each open draft was written for: a follow-up on someone's desk
   // is not an immediate reply, and the row has to say so.
@@ -430,6 +441,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
   const currentDraft = new Map(drafts.map((draft) => [draft.crmRecordId, draft]));
   const policyByPerson = new Map(policies.map((policy) => [policy.personId, policy]));
   const lastRunByRecord = new Map(lastRuns.map((row) => [row.recordId, row]));
+  const referralByRecord = new Map<string, ReferralSummary>(pendingReferrals.map(({ recordId, ...summary }) => [recordId, summary as ReferralSummary]));
   const dueMeetingByRecord = new Map(dueMeetings.map((row) => [row.recordId, { id: row.id, startAt: row.startAt, endAt: row.endAt }]));
   // Call-only records (calls/crmFollowUp.ts) have no reply to quote; the row shows the call instead.
   const [followUpNotes, lastCalls] = await Promise.all([
@@ -466,6 +478,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
     // first, then a meeting nobody has said they showed up to.
     const dueMeeting = row.record.workflowState !== "closed" ? dueMeetingByRecord.get(row.record.id) ?? null : null;
     const meetingOutcomeDue = Boolean(dueMeeting) && draft?.status !== "delivery_uncertain";
+    const referral = referralByRecord.get(row.record.id) ?? null;
+    const referralPending = Boolean(referral) && row.record.workflowState !== "closed" && draft?.status !== "delivery_uncertain";
     // Off the queue there is no action to name, so say what the record is
     // waiting on instead of falling through to "Human review".
     const actionType = row.stage === "exhausted"
@@ -482,6 +496,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       ? "Processing error"
       : meetingOutcomeDue
       ? "Did they show up?"
+      : referralPending && referral
+      ? `Referral: ${referral.name || referral.email || referral.phone || referral.linkedinUrl || "new contact"}`
       : classification?.status === "proposed"
         ? "Classification review"
         : draft?.status === "delivery_uncertain"
@@ -523,6 +539,8 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       dueMeeting: meetingOutcomeDue ? dueMeeting : null,
       /** e.g. "Follow-up 2 · Share Information" for the draft on the row; null for a hand-written or reply draft. */
       draftStepLabel: draftStep && draftStep.stepType === "follow_up" ? followUpStepLabel(draftStep.position, draftStep.name) : null,
+      /** The newest referral a person has yet to decide on, else null. */
+      referral,
       /** The rep's "Follow up later" note while it still applies, else null. */
       followUp,
       /** The rep already answered the latest reply from AgentSDR. */
@@ -574,7 +592,11 @@ export async function getCrmRecordWorkspace(recordId: string) {
   }).from(crmMeetings)
     .where(and(inOrg(crmMeetings), eq(crmMeetings.crmRecordId, recordId)))
     .orderBy(desc(crmMeetings.startAt));
-  const [headers, conversations, messages, classifications, events, runs, drafts, stepRuns, citations, attempts, linkedinHistory, linkedinAccounts, emailOutreach, inboxHistory, meetings] = await Promise.all([
+  // The record's referrals, every status, newest first (src/lib/crm/referrals.ts).
+  const referralsRead = db.select().from(crmReferrals)
+    .where(and(inOrg(crmReferrals), eq(crmReferrals.crmRecordId, recordId)))
+    .orderBy(desc(crmReferrals.createdAt), asc(crmReferrals.id));
+  const [headers, conversations, messages, classifications, events, runs, drafts, stepRuns, citations, attempts, linkedinHistory, linkedinAccounts, emailOutreach, inboxHistory, meetings, referralRows] = await Promise.all([
     db.select({ record: crmRecords, person: people, company: companies, subcategory: crmSubcategories, policy: crmPersonContactPolicies })
       .from(crmRecords)
       .innerJoin(people, eq(people.id, crmRecords.personId))
@@ -652,6 +674,7 @@ export async function getCrmRecordWorkspace(recordId: string) {
       .where(and(inOrg(inboxContacts), sql`lower(${inboxContacts.email}) in (${personEmailOfRecord})`))
       .orderBy(asc(inboxMessages.sentAt)),
     meetingsRead,
+    referralsRead,
   ]);
   const header = headers[0];
   if (!header) throw new CrmNotFoundError("CRM record", recordId);
@@ -842,6 +865,8 @@ export async function getCrmRecordWorkspace(recordId: string) {
     citations,
     sendAttempts: attempts,
     meetings,
+    /** Whom the lead pointed us to, newest first, whatever was decided. */
+    referrals: referralRows.map(referralFromRow),
     /** For a call-only record (no reply on any channel): the call it follows up, else null. */
     lastCall,
   };

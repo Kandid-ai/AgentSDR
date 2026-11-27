@@ -16,6 +16,9 @@ describe("CRM prompts", () => {
       "crm/classify-user": ["channel_notes", "context"],
       "crm/classify-tool": [],
       "crm/classify-call-transcript": ["summary", "transcript"],
+      "crm/referral-extract-system": [],
+      "crm/referral-extract-user": ["context_json"],
+      "crm/referral-extract-tool": [],
     };
     for (const [name, definition] of Object.entries(CRM_PROMPTS)) {
       expect(promptVariableNames(definition.template)).toEqual(passed[name as keyof typeof CRM_PROMPTS].sort());

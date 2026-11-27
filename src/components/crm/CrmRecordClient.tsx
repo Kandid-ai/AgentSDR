@@ -53,6 +53,8 @@ import {
 import { RecordBody } from "./CrmSkeletons";
 import { asList, asObject, crmFetch, displayName, errorMessage, formatDate, relativeDate } from "./crm-utils";
 import { ClassificationPicker, DISCARD_LEAD_REASON, DISCARD_LEAD_SUCCESS, DiscardLeadDialog, formatMeetingRange, MeetingOutcomeButtons, FollowUpDialog, followUpSuccessMessage, RegenerateDraftDialog, humanize } from "./ActionRowTools";
+import { ReferralCard } from "./ReferralCard";
+import type { Referral } from "@/lib/crm/referralTypes";
 import { ContactAvatar } from "./ContactAvatar";
 import { takeRecordWorkspace } from "./recordPrefetch";
 import { announceRecordChanged } from "./recordEvents";
@@ -68,6 +70,11 @@ type Channel = "email" | "linkedin" | "whatsapp";
 type TimelineFilter = "all" | Channel;
 
 const eventLabels: Record<string, string> = {
+  "referral.detected": "Referral found",
+  "referral.added": "Referral added",
+  "referral.updated": "Referral edited",
+  "referral.started": "Outreach started to referral",
+  "referral.dismissed": "Referral dismissed",
   "record.created": "CRM record created",
   "reply.received": "Reply received",
   "message.recorded": "Message sent outside AgentSDR",
@@ -223,6 +230,10 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
   const lastMessage = ([...messages] as Data[]).filter((message) => message.direction === "inbound")
     .sort((a, b) => String(b.sentAt ?? b.createdAt).localeCompare(String(a.sentAt ?? a.createdAt)))[0];
 
+  const referrals = asList<Referral>(data.referrals);
+  const pendingReferral = referrals.some((referral) => referral.status === "pending");
+  const referralCard = <ReferralCard recordId={recordId} referrals={referrals} onChanged={(message) => { setNotice(message); announceRecordChanged(recordId); void load(); }} />;
+
   // Wide (xl): two columns. The conversation takes the whole left side, top
   // to bottom, so the thread is never a scroll away; the right one holds who
   // this is, where they stand and the reply, and scrolls on its own. The
@@ -265,6 +276,7 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
       {error && <ErrorState message={error} onRetry={() => void load()} />}
       {text(followUp.note) && <div className="flex items-start gap-2 rounded-xl bg-bg-weak-50 px-4 py-2.5 text-paragraph-sm text-text-sub-600 ring-1 ring-inset ring-stroke-soft-200"><RiCalendarScheduleLine className="mt-0.5 size-4 shrink-0 text-text-soft-400" aria-hidden="true" /><p className="min-w-0 flex-1"><span className="text-label-sm text-text-strong-950">Follow up {followUp.dueAt ? `on ${formatDate(followUp.dueAt)}` : "later"}:</span> {text(followUp.note)}{text(followUp.actorRef) ? <span className="text-text-soft-400"> — {text(followUp.actorRef)}</span> : null}</p></div>}
 
+      {pendingReferral && referralCard}
       <RecordStatusLine
         stage={<ClassificationSelect record={data} categories={categories} onAction={mutate} />}
         stageNotice={<ProposedClassificationNotice record={data} categories={categories} onAction={mutate} />}
@@ -295,6 +307,7 @@ export default function CrmRecordClient({ recordId, variant = "page" }: { record
         </div>
         </div>
         <div className="order-4 space-y-5 empty:hidden">
+          {!pendingReferral && referralCard}
           <MeetingsCard
             meetings={asList<Data>(data.meetings)}
             linkSentCount={Number(data.bookingLinkSentCount ?? 0)}

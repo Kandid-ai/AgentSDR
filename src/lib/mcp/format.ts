@@ -64,6 +64,7 @@ export const ACTION_GROUP_LABELS = {
   classification: "Confirm classification",
   next_step: "Needs a next step",
   meeting_outcome: "Did they show up?",
+  referral: "Referral to review",
   problem: "Error or failed",
 } as const;
 

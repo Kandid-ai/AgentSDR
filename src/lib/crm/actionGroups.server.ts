@@ -12,7 +12,7 @@ export type CrmRecordColumns = { id: SQLWrapper; workflowState: SQLWrapper; next
 export function crmActionableSql(r: CrmRecordColumns): SQL {
   return sql`(${r.workflowState} in ('action_required', 'error')
     or (${r.workflowState} = 'waiting' and ${r.nextActionAt} <= now())
-    or (${r.workflowState} <> 'closed' and ${crmMeetingOutcomeDueSql(r)}))`;
+    or (${r.workflowState} <> 'closed' and (${crmMeetingOutcomeDueSql(r)} or ${crmReferralPendingSql(r)})))`;
 }
 
 /**
@@ -30,6 +30,20 @@ export function crmMeetingOutcomeDueSql(r: Pick<CrmRecordColumns, "id">): SQL {
     where due_meeting.status = 'booked' and due_meeting.outcome is null and due_meeting.end_at <= now())`;
 }
 
+/**
+ * The record has a referral nobody has decided on yet (crm_referrals,
+ * src/lib/crm/referrals.ts): a person it named to talk to. On a person's desk
+ * whatever the record is otherwise waiting on, like a meeting outcome.
+ * crm_referrals is reached through the record, which the caller scopes to the
+ * organization (a referral's record is always its own organization's), and
+ * uncorrelated, for the same reason as above. No `currentOrganizationId()`
+ * here: queries.ts builds this at import time, outside any scope.
+ */
+export function crmReferralPendingSql(r: Pick<CrmRecordColumns, "id">): SQL {
+  return sql`${r.id} in (select pending_referral.crm_record_id from crm_referrals pending_referral
+    where pending_referral.status = 'pending')`;
+}
+
 /** A send of the record is waiting to be reconciled: that stays first, as 'problem'. Uncorrelated for the same reason. */
 function deliveryUncertainSql(r: Pick<CrmRecordColumns, "id">): SQL {
   return sql`${r.id} in (select uncertain.crm_record_id from crm_drafts uncertain where uncertain.status = 'delivery_uncertain')`;
@@ -39,7 +53,7 @@ function deliveryUncertainSql(r: Pick<CrmRecordColumns, "id">): SQL {
  * The record's CrmActionGroup, or NULL when it is not in the queue. Mirrors the
  * precedence listCrmActions uses to name each row's action — error (or a
  * delivery to reconcile), then a meeting to answer "Did they show up?" for,
- * then a proposed classification, then the newest open draft, then the schedule — so
+ * then a pending referral, then a proposed classification, then the newest open draft, then the schedule — so
  * a count or filter on a group agrees with the labels the rows show. Only the
  * newest open draft counts, and a failed one falls through to the schedule.
  *
@@ -52,6 +66,7 @@ export function crmActionGroupSql(r: CrmRecordColumns): SQL<CrmActionGroup | nul
   return sql<CrmActionGroup | null>`case when ${crmActionableSql(r)} then
     case when ${r.workflowState} = 'error' then 'problem'
       when ${crmMeetingOutcomeDueSql(r)} and not (${deliveryUncertainSql(r)}) then 'meeting_outcome'
+      when ${crmReferralPendingSql(r)} and not (${deliveryUncertainSql(r)}) then 'referral'
       when (select c.status from crm_classifications c where c.crm_record_id = ${r.id}
              order by c.created_at desc limit 1) = 'proposed' then 'classification'
       else coalesce(

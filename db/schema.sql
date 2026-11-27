@@ -1591,6 +1591,37 @@ CREATE TABLE public.crm_meetings (
 );
 
 --
+-- Name: crm_referrals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.crm_referrals (
+    organization_id uuid NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    crm_record_id uuid NOT NULL,
+    referrer_person_id uuid NOT NULL,
+    source_message_id uuid,
+    name text,
+    email text,
+    phone text,
+    linkedin_url text,
+    role text,
+    company_name text,
+    context text,
+    anonymous boolean DEFAULT false NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    source text NOT NULL,
+    referred_person_id uuid,
+    channels jsonb,
+    decided_by text,
+    decided_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT crm_referrals_contact_chk CHECK (((name IS NOT NULL) OR (email IS NOT NULL) OR (phone IS NOT NULL) OR (linkedin_url IS NOT NULL))),
+    CONSTRAINT crm_referrals_source_chk CHECK ((source = ANY (ARRAY['ai'::text, 'human'::text]))),
+    CONSTRAINT crm_referrals_status_chk CHECK ((status = ANY (ARRAY['pending'::text, 'started'::text, 'dismissed'::text])))
+);
+
+--
 -- Name: crm_messages; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3348,6 +3379,13 @@ ALTER TABLE ONLY public.crm_meetings
     ADD CONSTRAINT crm_meetings_pkey PRIMARY KEY (id);
 
 --
+-- Name: crm_referrals crm_referrals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crm_referrals
+    ADD CONSTRAINT crm_referrals_pkey PRIMARY KEY (id);
+
+--
 -- Name: crm_messages crm_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4455,6 +4493,24 @@ CREATE UNIQUE INDEX crm_meetings_provider_uid_uq ON public.crm_meetings USING bt
 --
 
 CREATE INDEX crm_meetings_record_idx ON public.crm_meetings USING btree (crm_record_id);
+
+--
+-- Name: crm_referrals_organization_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crm_referrals_organization_idx ON public.crm_referrals USING btree (organization_id);
+
+--
+-- Name: crm_referrals_record_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crm_referrals_record_status_idx ON public.crm_referrals USING btree (crm_record_id, status);
+
+--
+-- Name: crm_referrals_source_contact_uq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX crm_referrals_source_contact_uq ON public.crm_referrals USING btree (source_message_id, COALESCE(lower(email), ''::text), COALESCE(phone, ''::text), COALESCE(lower(name), ''::text)) WHERE (source_message_id IS NOT NULL);
 
 --
 -- Name: crm_messages_provider_id_uq; Type: INDEX; Schema: public; Owner: -
@@ -5979,6 +6035,41 @@ ALTER TABLE ONLY public.crm_meetings
 
 ALTER TABLE ONLY public.crm_meetings
     ADD CONSTRAINT crm_meetings_person_id_fkey FOREIGN KEY (person_id) REFERENCES public.people(id) ON DELETE RESTRICT;
+
+--
+-- Name: crm_referrals crm_referrals_crm_record_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crm_referrals
+    ADD CONSTRAINT crm_referrals_crm_record_id_fkey FOREIGN KEY (crm_record_id) REFERENCES public.crm_records(id) ON DELETE RESTRICT;
+
+--
+-- Name: crm_referrals crm_referrals_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crm_referrals
+    ADD CONSTRAINT crm_referrals_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id);
+
+--
+-- Name: crm_referrals crm_referrals_referred_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crm_referrals
+    ADD CONSTRAINT crm_referrals_referred_person_id_fkey FOREIGN KEY (referred_person_id) REFERENCES public.people(id) ON DELETE SET NULL;
+
+--
+-- Name: crm_referrals crm_referrals_referrer_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crm_referrals
+    ADD CONSTRAINT crm_referrals_referrer_person_id_fkey FOREIGN KEY (referrer_person_id) REFERENCES public.people(id) ON DELETE RESTRICT;
+
+--
+-- Name: crm_referrals crm_referrals_source_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.crm_referrals
+    ADD CONSTRAINT crm_referrals_source_message_id_fkey FOREIGN KEY (source_message_id) REFERENCES public.crm_conversation_messages(id) ON DELETE SET NULL;
 
 --
 -- Name: crm_messages crm_messages_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -

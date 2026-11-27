@@ -48,6 +48,7 @@ export const SCOPED_TABLES: readonly ScopedTable[] = [
   snake("crm_knowledge_documents"),
   snake("crm_jobs"),
   snake("crm_meetings"),
+  snake("crm_referrals"),
   snake("crm_board_views"),
   // Legacy email CRM (Master Inbox)
   snake("crm_leads"),

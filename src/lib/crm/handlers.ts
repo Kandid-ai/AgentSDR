@@ -37,6 +37,7 @@ import {
 } from "./schema";
 import { startFollowUpsInTransaction, startSequenceRunInTransaction } from "./sequences";
 import { PermanentCrmJobError, registerCrmJobHandlers } from "./worker";
+import { extractReferralsForMessage } from "./referralExtract";
 import { inOrg } from "@/lib/tenancy/scope";
 
 /** Deliberately conservative: only direct first-person suppression commands match. */
@@ -262,6 +263,20 @@ async function recordClassificationFailure(messageId: string, error: unknown) {
   });
 }
 
+/**
+ * After a reply is classified: read it for people it points us to
+ * (referralExtract.ts). Runs once the classification has committed and
+ * swallows every error — a referral that is missed can be added by hand, a
+ * classification that fails because of one cannot be undone.
+ */
+async function extractReferralsQuietly(messageId: string, subcategoryKey: string | null): Promise<void> {
+  try {
+    await extractReferralsForMessage(messageId, { subcategoryKey });
+  } catch (error) {
+    console.error(`[crm] referral extraction failed for message ${messageId}:`, error);
+  }
+}
+
 export async function handleClassificationJob(
   job: CrmJob,
   dependencies: { complete?: ClassificationCompletion } = {},
@@ -378,6 +393,14 @@ export async function handleClassificationJob(
         payload: firstStep ? { stepRunId: firstStep.id } : { recordId: current.id },
       });
     });
+    // Whether the classification applied or is held for review, the contact
+    // the reply names is worth a person's look.
+    if (!context.dncIntent) {
+      await extractReferralsQuietly(
+        job.entityId,
+        context.input.subcategories.find((subcategory) => subcategory.id === result.subcategoryId)?.key ?? null,
+      );
+    }
   } catch (error) {
     if (!(error instanceof PermanentCrmJobError)) await recordClassificationFailure(job.entityId, error);
     throw error;

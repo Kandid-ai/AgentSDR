@@ -56,6 +56,8 @@ import { cn } from "@/utils/cn";
 import { ContactAvatar } from "./ContactAvatar";
 import { ErrorState, primaryButtonClass, secondaryButtonClass } from "./CrmLayout";
 import { RowsSkeleton } from "./CrmSkeletons";
+import { ReferralRowTools } from "./ReferralCard";
+import type { ReferralSummary } from "@/lib/crm/referralTypes";
 import { CategoryDot, ClassificationPicker, DISCARD_LEAD_REASON, DISCARD_LEAD_SUCCESS, DiscardLeadDialog, HoverPreview, HoverPreviewProvider, FollowUpDialog, followUpSuccessMessage, InlineDraftEditor, MeetingOutcomeTools, RegenerateDraftDialog, humanize, type RowMutation, type StageChangeExtra } from "./ActionRowTools";
 import { asList, asObject, CATEGORY_LABELS, crmFetch, displayName, errorMessage, formatDate, relativeDate, timeAgo } from "./crm-utils";
 import { prefetchRecordWorkspace } from "./recordPrefetch";
@@ -737,6 +739,7 @@ export function describeAction(action: Action, categories: Data[], pipeline: boo
     proposedCategoryKey, proposedSubcategoryId, proposedLabel, keepCategoryKey, keepSubcategoryId,
     dueLabel, dueDetail, dueColor, dueIcon, actionText, name, companyDomain, companyLabel,
     dueMeeting: asDueMeeting(action.dueMeeting),
+    referral: (action.referral ?? null) as ReferralSummary | null,
     inboundAnswered: Boolean(action.inboundAnswered),
     followUpNote, latestReplyFull, latestReply, lastCall, draft, draftFull, draftReply, editable, repliedAt, sequenceLabel, stepLabel, sendableDraft, draftState,
     avatarUrl: person.profilePictureUrl ? String(person.profilePictureUrl) : null,
@@ -958,7 +961,7 @@ function ActionRow({ action, categories, busy, editing, pipeline, now, onOpen, o
         {/* Hover the text for the whole draft (with Edit and Send there too);
             the same two actions float in at the cell's end while the row is
             hovered or focused, so a ready draft is one click from sent. */}
-        {row.dueMeeting ? <MeetingOutcomeTools recordId={id} meeting={row.dueMeeting} busy={busy} onMutate={onMutate} /> : <HoverPreview
+        {row.referral?.status === "pending" ? <ReferralRowTools referral={row.referral} href={href} busy={busy} onMutate={onMutate} /> : row.dueMeeting ? <MeetingOutcomeTools recordId={id} meeting={row.dueMeeting} busy={busy} onMutate={onMutate} /> : <HoverPreview
           className="min-w-0"
           title={String(row.draft.subject ?? "").trim() || (row.draftFull ? "Draft reply" : "")}
           meta={row.draftState.label}
@@ -1140,7 +1143,8 @@ export function ActionCard({ action, categories, now, busy, onOpen, onMutate, on
       <ReplyQuote row={row} lines={2} />
     </HoverPreview>}
 
-    {row.dueMeeting ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200"><MeetingOutcomeTools recordId={id} meeting={row.dueMeeting} busy={busy} onMutate={onMutate} /></div>
+    {row.referral?.status === "pending" ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200"><ReferralRowTools referral={row.referral} href={href} busy={busy} onMutate={onMutate} /></div>
+    : row.dueMeeting ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200"><MeetingOutcomeTools recordId={id} meeting={row.dueMeeting} busy={busy} onMutate={onMutate} /></div>
       : !show("draft") ? null
       : row.draftReply ? <div className="mt-3 rounded-lg bg-bg-weak-50 p-2.5 ring-1 ring-inset ring-stroke-soft-200">
       <HoverPreview

@@ -187,6 +187,7 @@ function shapeAction(row: ActionRow, detailed: boolean, baseUrl: string, view: L
       ? { name: run.sequence.name, status: run.run.status, step: run.step?.name ?? null, position: run.run.currentStepPosition }
       : null,
     doNotContact: Boolean(row.contactPolicy?.doNotContact),
+    referral: row.referral ?? null,
   };
 }
 
@@ -288,7 +289,7 @@ function registerAllCrmTools(server: McpServer) {
         "`view`: `action_required` (default) is the queue of leads waiting on the team; `open` is every open lead, including those waiting on the lead's reply or a scheduled follow-up and those whose follow-ups have all gone out (`pipelineStage`); `closed` is closed records. For \"show me the interested leads\" or to find a person, use `open`; if `search` finds nothing there, try `closed`.",
         "Narrow with `stage` (customer, interested, not_interested, other), `subcategoryId` (a sub-stage such as \"Demo booked\", ids from crm_list_stages), `channel` and, in the queue, `group`.",
         "Each item says what is needed or what it is waiting on (`action`), who the lead is, their latest reply, the AI's draft if there is one (id + revision, needed to edit or send it) and the record's contextVersion. Use crm_get_record for the whole conversation.",
-        "Queue groups: reply = an AI reply draft to approve; follow_up = a follow-up draft to approve or a follow-up that is due; classification = confirm the AI's reading of a reply; next_step = no sequence, decide what's next; problem = a send failed or delivery is uncertain.",
+        "Queue groups: reply = an AI reply draft to approve; follow_up = a follow-up draft to approve or a follow-up that is due; classification = confirm the AI's reading of a reply; next_step = no sequence, decide what's next; meeting_outcome = did they show up to a meeting; referral = the lead named someone else to talk to (see `referral` on the item: a person decides in the app whether to start outreach to them); problem = a send failed or delivery is uncertain.",
       ].join("\n"),
       inputSchema: z.object({
         view: z.enum(LIST_VIEWS).default("action_required").describe("`action_required` (the queue), `open` (every open lead) or `closed`."),

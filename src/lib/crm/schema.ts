@@ -1203,6 +1203,64 @@ export const crmJobs = pgTable(
   ],
 );
 
+export type CrmReferralStatus = "pending" | "started" | "dismissed";
+
+/**
+ * Someone a lead's reply pointed us to ("speak to Arjun, arjun@brand.in"):
+ * read out of the reply by the AI (or added by a person), checked by a person
+ * in Action required (group "referral") and then either started — the person
+ * becomes a lead of their own, enrolled in a campaign per channel — or
+ * dismissed. Server half: src/lib/crm/referrals.ts; contract: referralTypes.ts.
+ * scripts/create-crm-referrals.ts.
+ */
+export const crmReferrals = pgTable(
+  "crm_referrals",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The referrer's record. */
+    crmRecordId: uuid("crm_record_id").notNull().references(() => crmRecords.id, { onDelete: "restrict" }),
+    referrerPersonId: uuid("referrer_person_id").notNull().references(() => people.id, { onDelete: "restrict" }),
+    sourceMessageId: uuid("source_message_id").references(() => crmConversationMessages.id, { onDelete: "set null" }),
+    name: text("name"),
+    email: text("email"),
+    phone: text("phone"),
+    linkedinUrl: text("linkedin_url"),
+    role: text("role"),
+    companyName: text("company_name"),
+    context: text("context"),
+    anonymous: boolean("anonymous").notNull().default(false),
+    status: text("status").notNull().default("pending").$type<CrmReferralStatus>(),
+    source: text("source").notNull().$type<"ai" | "human">(),
+    referredPersonId: uuid("referred_person_id").references(() => people.id, { onDelete: "set null" }),
+    channels: jsonb("channels").$type<Record<string, unknown>>(),
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("crm_referrals_organization_idx").on(table.organizationId),
+    index("crm_referrals_record_status_idx").on(table.crmRecordId, table.status),
+    uniqueIndex("crm_referrals_source_contact_uq")
+      .on(
+        table.sourceMessageId,
+        sql`coalesce(lower(${table.email}), '')`,
+        sql`coalesce(${table.phone}, '')`,
+        sql`coalesce(lower(${table.name}), '')`,
+      )
+      .where(sql`${table.sourceMessageId} IS NOT NULL`),
+    check("crm_referrals_status_chk", sql`${table.status} IN ('pending', 'started', 'dismissed')`),
+    check("crm_referrals_source_chk", sql`${table.source} IN ('ai', 'human')`),
+    check(
+      "crm_referrals_contact_chk",
+      sql`${table.name} IS NOT NULL OR ${table.email} IS NOT NULL OR ${table.phone} IS NOT NULL OR ${table.linkedinUrl} IS NOT NULL`,
+    ),
+  ],
+);
+
 /**
  * A saved view of the Funnel page: a name plus its config (layout, grouping,
  * filters, column order, card fields; shape in boardViews.ts). Shared by the
