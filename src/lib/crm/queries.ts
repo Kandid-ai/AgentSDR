@@ -125,8 +125,12 @@ export type CrmActionFilters = {
   stage?: CrmPipelineStage;
   /** Leave out Not interested records; unclassified and Other stay in. */
   potentialOnly?: boolean;
-  categoryKey?: CrmCategoryKey;
+  /** "unclassified" matches records the classifier has not categorised yet. */
+  categoryKey?: CrmCategoryKey | "unclassified";
+  /** "none" matches records with no sub-stage. */
   subcategoryId?: string;
+  /** Pipeline only: also count the filtered records per (category, sub-stage), for the board's stage columns. */
+  groupCounts?: boolean;
   channel?: CrmRecordChannel;
   workflowState?: CrmWorkflowState;
   classificationReview?: boolean;
@@ -238,8 +242,10 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       : actionableCondition,
     input.recordId ? eq(crmRecords.id, input.recordId) : undefined,
     input.potentialOnly ? sql`${crmRecords.categoryKey} is distinct from 'not_interested'` : undefined,
-    input.categoryKey ? eq(crmRecords.categoryKey, input.categoryKey) : undefined,
-    input.subcategoryId ? eq(crmRecords.subcategoryId, input.subcategoryId) : undefined,
+    input.categoryKey === "unclassified" ? isNull(crmRecords.categoryKey)
+      : input.categoryKey ? eq(crmRecords.categoryKey, input.categoryKey) : undefined,
+    input.subcategoryId === "none" ? isNull(crmRecords.subcategoryId)
+      : input.subcategoryId ? eq(crmRecords.subcategoryId, input.subcategoryId) : undefined,
     input.channel ? eq(crmRecords.activeChannel, input.channel) : undefined,
     input.actionGroup ? sql`${actionGroup} = ${input.actionGroup}` : undefined,
     input.search?.trim() ? personSearchCondition(input.search) : undefined,
@@ -292,7 +298,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
       sql`${crmMeetings.endAt} <= now()`,
     ))
     .orderBy(crmMeetings.crmRecordId, asc(crmMeetings.startAt));
-  const [rows, totals, messages, classifications, runs, drafts, policies, stageCounts, lastRuns, dueMeetings] = await Promise.all([
+  const [rows, totals, messages, classifications, runs, drafts, policies, stageCounts, lastRuns, dueMeetings, groupCounts] = await Promise.all([
     db.select({ record: crmRecords, person: personListColumns, company: companies, subcategory: crmSubcategories, stage: pipelineStage })
       .from(crmRecords)
       .innerJoin(people, eq(people.id, crmRecords.personId))
@@ -341,6 +347,13 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
         .orderBy(crmSequenceRuns.crmRecordId, desc(crmSequenceRuns.createdAt))
       : Promise.resolve([]),
     dueMeetingsRead,
+    // Under the full filter, stage included: the board's sub-stage columns
+    // count what they would show.
+    pipeline && input.groupCounts && !input.recordId
+      ? db.select({ categoryKey: crmRecords.categoryKey, subcategoryId: crmRecords.subcategoryId, total: count() }).from(crmRecords)
+        .innerJoin(people, eq(people.id, crmRecords.personId))
+        .where(where).groupBy(crmRecords.categoryKey, crmRecords.subcategoryId)
+      : Promise.resolve([]),
   ]);
   // Which step each open draft was written for: a follow-up on someone's desk
   // is not an immediate reply, and the row has to say so.
@@ -482,6 +495,7 @@ export async function listCrmActions(input: CrmActionFilters = {}) {
     nextOffset: offset + rows.length,
     hasMore: rows.length === limit,
     ...(pipeline && !input.recordId ? { stageCounts: Object.fromEntries(CRM_PIPELINE_STAGES.map((stage) => [stage, Number(stageCounts.find((row) => row.stage === stage)?.total ?? 0)])) } : {}),
+    ...(pipeline && input.groupCounts && !input.recordId ? { groupCounts: groupCounts.map((row) => ({ categoryKey: row.categoryKey, subcategoryId: row.subcategoryId, total: Number(row.total) })) } : {}),
   };
 }
 

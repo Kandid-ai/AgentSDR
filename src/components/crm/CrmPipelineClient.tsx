@@ -7,7 +7,9 @@ import {
   RiCheckDoubleLine,
   RiFilterOffLine,
   RiKanbanView2,
+  RiLayoutColumnLine,
   RiListUnordered,
+  RiStackLine,
   RiTeamLine,
 } from "@remixicon/react";
 import * as Button from "@/components/alignui/button";
@@ -39,11 +41,14 @@ import {
 } from "./CrmActionsClient";
 import { ErrorState } from "./CrmLayout";
 import { RowsSkeleton } from "./CrmSkeletons";
+import { PipelineStageBoard, type GroupCount } from "./PipelineStageBoard";
 import { asList, asObject, crmFetch, errorMessage } from "./crm-utils";
 
 const STAGES = Object.keys(STAGE_META) as PipelineStage[];
 /** Cards per column per request; a board shows three columns at once. */
 const BOARD_PAGE = 20;
+/** The sub-stage board's first read, shared by every column (see PipelineStageBoard). */
+const STAGE_BOARD_PAGE = 100;
 
 const EMPTY_COPY: Record<PipelineStage | "all", { title: string; detail: string }> = {
   all: { title: "No open leads", detail: "Anyone who replies will show up here until their record is closed." },
@@ -74,6 +79,7 @@ function filterParams(filters: Filters) {
 function usePipelinePage(query: string, pageSize: number, enabled: boolean) {
   const [actions, setActions] = useState<Action[]>([]);
   const [stageCounts, setStageCounts] = useState<Partial<Record<PipelineStage, number>> | null>(null);
+  const [groupCounts, setGroupCounts] = useState<GroupCount[] | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -96,7 +102,10 @@ function usePipelinePage(query: string, pageSize: number, enabled: boolean) {
         const seen = new Set(old.map(actionId));
         return [...old, ...page.filter((item) => !seen.has(actionId(item)))];
       });
-      if (firstPage) setStageCounts(asObject(body.stageCounts) as Partial<Record<PipelineStage, number>>);
+      if (firstPage) {
+        setStageCounts(asObject(body.stageCounts) as Partial<Record<PipelineStage, number>>);
+        setGroupCounts(Array.isArray(body.groupCounts) ? body.groupCounts as GroupCount[] : null);
+      }
       setNextOffset(Number(body.nextOffset ?? offset + page.length));
       setHasMore(Boolean(body.hasMore));
       setLoaded(true);
@@ -104,10 +113,13 @@ function usePipelinePage(query: string, pageSize: number, enabled: boolean) {
   }, [query, pageSize]);
   useEffect(() => { if (enabled) void load(0); }, [load, enabled]);
   const loadMore = useCallback(() => { void load(nextOffset); }, [load, nextOffset]);
-  return { actions, setActions, stageCounts, loaded, loading, loadingMore, error, hasMore, load, loadMore };
+  return { actions, setActions, stageCounts, groupCounts, loaded, loading, loadingMore, error, hasMore, load, loadMore };
 }
 
 type View = "board" | "list";
+/** What the board's columns are: the three statuses, or the CRM's sub-stages (Case Study, Meeting Requested, …). */
+type GroupBy = "status" | "stage";
+const GROUP_BY_KEY = "agentsdr.pipeline.groupBy";
 
 /**
  * Every open lead, not only the ones due now. Action required drops a record
@@ -118,6 +130,16 @@ type View = "board" | "list";
  */
 export function CrmPipelineClient() {
   const [view, setView] = useState<View>("board");
+  const [groupBy, setGroupByState] = useState<GroupBy>("status");
+  useEffect(() => {
+    try { if (window.localStorage.getItem(GROUP_BY_KEY) === "stage") setGroupByState("stage"); } catch { /* storage unavailable */ }
+  }, []);
+  const setGroupBy = (value: GroupBy) => {
+    setGroupByState(value);
+    try { window.localStorage.setItem(GROUP_BY_KEY, value); } catch { /* storage unavailable */ }
+  };
+  // With sub-stage columns, the status is a filter instead.
+  const [status, setStatus] = useState<PipelineStage | "">("");
   const [categories, setCategories] = useState<Data[]>([]);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [listStage, setListStage] = useState<PipelineStage | "all">("all");
@@ -134,29 +156,46 @@ export function CrmPipelineClient() {
     if (stage !== "all") params.set("stage", stage);
     return params.toString();
   };
-  const needs = usePipelinePage(stageQuery("needs_action"), BOARD_PAGE, view === "board");
-  const waiting = usePipelinePage(stageQuery("waiting"), BOARD_PAGE, view === "board");
-  const exhausted = usePipelinePage(stageQuery("exhausted"), BOARD_PAGE, view === "board");
+  const statusBoard = view === "board" && groupBy === "status";
+  const stageBoard = view === "board" && groupBy === "stage";
+  const needs = usePipelinePage(stageQuery("needs_action"), BOARD_PAGE, statusBoard);
+  const waiting = usePipelinePage(stageQuery("waiting"), BOARD_PAGE, statusBoard);
+  const exhausted = usePipelinePage(stageQuery("exhausted"), BOARD_PAGE, statusBoard);
   const list = usePipelinePage(stageQuery(listStage), PAGE_SIZE, view === "list");
+  const stageBoardQuery = useMemo(() => {
+    const params = new URLSearchParams(base);
+    params.set("groupCounts", "true");
+    if (status) params.set("stage", status);
+    return params.toString();
+  }, [base, status]);
+  const bySubStage = usePipelinePage(stageBoardQuery, STAGE_BOARD_PAGE, stageBoard);
   const columns = { needs_action: needs, waiting, exhausted } as const;
 
   // Counts come back with every first page; after an edit moves a lead, one
   // cheap read refreshes them so the column headers agree with the cards.
   const [freshCounts, setFreshCounts] = useState<Partial<Record<PipelineStage, number>> | null>(null);
+  const [freshGroupCounts, setFreshGroupCounts] = useState<GroupCount[] | null>(null);
   const countsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (countsTimer.current) clearTimeout(countsTimer.current); }, []);
-  useEffect(() => { setFreshCounts(null); }, [base]);
+  useEffect(() => { setFreshCounts(null); setFreshGroupCounts(null); }, [base, stageBoardQuery]);
   const onMutated = useCallback(() => {
     if (countsTimer.current) clearTimeout(countsTimer.current);
     countsTimer.current = setTimeout(() => {
-      void crmFetch(`/actions?${base}&limit=1`).then((result) => setFreshCounts(asObject(asObject(result).stageCounts) as Partial<Record<PipelineStage, number>>)).catch(() => undefined);
+      void crmFetch(`/actions?${stageBoard ? stageBoardQuery : base}&limit=1`).then((result) => {
+        const body = asObject(result);
+        setFreshCounts(asObject(body.stageCounts) as Partial<Record<PipelineStage, number>>);
+        if (Array.isArray(body.groupCounts)) setFreshGroupCounts(body.groupCounts as GroupCount[]);
+      }).catch(() => undefined);
     }, 1200);
-  }, [base]);
-  const counts = freshCounts ?? (view === "list" ? list.stageCounts : needs.stageCounts ?? waiting.stageCounts ?? exhausted.stageCounts);
+  }, [base, stageBoard, stageBoardQuery]);
+  const counts = freshCounts ?? (view === "list" ? list.stageCounts : stageBoard ? bySubStage.stageCounts : needs.stageCounts ?? waiting.stageCounts ?? exhausted.stageCounts);
   const countFor = (stage: PipelineStage | "all") => counts
     ? stage === "all" ? STAGES.reduce((sum, key) => sum + Number(counts[key] ?? 0), 0) : Number(counts[stage] ?? 0)
     : null;
-  const filtered = filters.category !== DEFAULT_FILTERS.category || Boolean(filters.channel);
+  const filtered = filters.category !== DEFAULT_FILTERS.category || Boolean(filters.channel) || (stageBoard && Boolean(status));
+  const resetFilters = () => { setFilters(DEFAULT_FILTERS); setStatus(""); };
+  // On the sub-stage board the status cards filter it; select again to clear.
+  const statusSelect = (stage: PipelineStage) => stageBoard ? { selected: status === stage, onSelect: () => setStatus(status === stage ? "" : stage) } : {};
   const setFilter = (key: keyof Filters, value: string) => setFilters((old) => ({ ...old, [key]: value }));
   const format = (value: number | null) => value === null ? "—" : value.toLocaleString();
   const total = countFor("all");
@@ -169,31 +208,57 @@ export function CrmPipelineClient() {
 
     <KpiStrip className="mt-6" columns={4}>
       <KpiCell icon={RiTeamLine} label="Open leads" value={format(total)} context={filters.category === "potential" ? "Not counting “Not interested”" : "Under the current filters"} hint="Every CRM record that is not closed, under the category and channel filters below." />
-      <KpiCell icon={STAGE_META.needs_action.icon} label={STAGE_META.needs_action.label} value={format(countFor("needs_action"))} context={STAGE_META.needs_action.detail} hint="The same records as Action required." />
-      <KpiCell icon={STAGE_META.waiting.icon} label={STAGE_META.waiting.label} value={format(countFor("waiting"))} context={STAGE_META.waiting.detail} />
-      <KpiCell icon={STAGE_META.exhausted.icon} label={STAGE_META.exhausted.label} value={format(countFor("exhausted"))} context={STAGE_META.exhausted.detail} hint="The last sequence run finished its final step without an answer. Move their stage or close them." />
+      <KpiCell icon={STAGE_META.needs_action.icon} label={STAGE_META.needs_action.label} value={format(countFor("needs_action"))} context={STAGE_META.needs_action.detail} hint="The same records as Action required." {...statusSelect("needs_action")} />
+      <KpiCell icon={STAGE_META.waiting.icon} label={STAGE_META.waiting.label} value={format(countFor("waiting"))} context={STAGE_META.waiting.detail} {...statusSelect("waiting")} />
+      <KpiCell icon={STAGE_META.exhausted.icon} label={STAGE_META.exhausted.label} value={format(countFor("exhausted"))} context={STAGE_META.exhausted.detail} hint="The last sequence run finished its final step without an answer. Move their stage or close them." {...statusSelect("exhausted")} />
     </KpiStrip>
 
     <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
-      <SegmentedControl.Root value={view} onValueChange={(value) => setView(value as View)}>
-        <SegmentedControl.List className="w-auto" aria-label="View">
-          <SegmentedControl.Trigger value="board" className="gap-1.5 px-3"><RiKanbanView2 className="size-4" aria-hidden="true" />Board</SegmentedControl.Trigger>
-          <SegmentedControl.Trigger value="list" className="gap-1.5 px-3"><RiListUnordered className="size-4" aria-hidden="true" />List</SegmentedControl.Trigger>
-        </SegmentedControl.List>
-      </SegmentedControl.Root>
       <div className="flex flex-wrap items-center gap-2">
+        <SegmentedControl.Root value={view} onValueChange={(value) => setView(value as View)}>
+          <SegmentedControl.List className="w-auto" aria-label="View">
+            <SegmentedControl.Trigger value="board" className="gap-1.5 px-3"><RiKanbanView2 className="size-4" aria-hidden="true" />Board</SegmentedControl.Trigger>
+            <SegmentedControl.Trigger value="list" className="gap-1.5 px-3"><RiListUnordered className="size-4" aria-hidden="true" />List</SegmentedControl.Trigger>
+          </SegmentedControl.List>
+        </SegmentedControl.Root>
+        {view === "board" && <SegmentedControl.Root value={groupBy} onValueChange={(value) => setGroupBy(value as GroupBy)}>
+          <SegmentedControl.List className="w-auto" aria-label="Columns">
+            <SegmentedControl.Trigger value="status" className="gap-1.5 px-3" title="Columns: Needs action, Waiting on them, Follow-ups exhausted"><RiLayoutColumnLine className="size-4" aria-hidden="true" />By status</SegmentedControl.Trigger>
+            <SegmentedControl.Trigger value="stage" className="gap-1.5 px-3" title="Columns: each sub-stage, such as Case Study or Meeting Requested"><RiStackLine className="size-4" aria-hidden="true" />By stage</SegmentedControl.Trigger>
+          </SegmentedControl.List>
+        </SegmentedControl.Root>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {stageBoard && <CompactSelect label="Status" placeholder="All statuses" value={status} onChange={(value) => setStatus(value as PipelineStage | "")}>
+          <Select.Item value="">All statuses</Select.Item>
+          {STAGES.map((stage) => <Select.Item key={stage} value={stage}>{STAGE_META[stage].label}</Select.Item>)}
+        </CompactSelect>}
         <CompactSelect label="Category" placeholder="All categories" value={filters.category} onChange={(value) => setFilter("category", value)}>
           <Select.Item value="potential">Potential (not “Not interested”)</Select.Item>
           <Select.Item value="">All categories</Select.Item>
           {categoryItems()}
         </CompactSelect>
         <CompactSelect label="Channel" placeholder="All channels" value={filters.channel} onChange={(value) => setFilter("channel", value)}><Select.Item value="">All channels</Select.Item>{channelItems()}</CompactSelect>
-        {filtered && <Button.Root variant="neutral" mode="ghost" size="xsmall" onClick={() => setFilters(DEFAULT_FILTERS)}>Reset</Button.Root>}
+        {filtered && <Button.Root variant="neutral" mode="ghost" size="xsmall" onClick={resetFilters}>Reset</Button.Root>}
       </div>
     </div>
     {categoryError && <div className="mt-3"><ErrorState message={categoryError} /></div>}
 
-    {view === "board" ? <>
+    {stageBoard ? <PipelineStageBoard
+      query={stageBoardQuery}
+      actions={bySubStage.actions}
+      setActions={bySubStage.setActions}
+      counts={freshGroupCounts ?? bySubStage.groupCounts}
+      loaded={bySubStage.loaded}
+      loading={bySubStage.loading}
+      error={bySubStage.error}
+      onRetry={() => void bySubStage.load(0)}
+      categories={categories}
+      filters={{ ...filters, status }}
+      filtered={filtered}
+      onReset={resetFilters}
+      onMutated={onMutated}
+    /> : view === "board" ? <>
       <SegmentedControl.Root value={mobileStage} onValueChange={(value) => setMobileStage(value as PipelineStage)} className="mt-4 lg:hidden">
         <SegmentedControl.List aria-label="Stage">
           {STAGES.map((stage) => <SegmentedControl.Trigger key={stage} value={stage} className="gap-1 px-1.5 text-label-xs sm:gap-1.5 sm:px-2">
