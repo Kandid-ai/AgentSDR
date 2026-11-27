@@ -196,7 +196,7 @@ function PendingReferral({ referral, targets, targetsError, onChanged }: {
                     disabled={!targets}
                     onChange={(event) => { setChosen((current) => ({ ...current, [channel]: event.target.value })); setOff((current) => ({ ...current, [channel]: false })); }}
                   >
-                    <option value="">{options.length ? "No campaign" : "No campaigns available"}</option>
+                    <option value="">{!targets ? "Loading campaigns…" : options.length ? "No campaign" : "No campaigns available"}</option>
                     {options.map((target) => <option key={target.id} value={target.id}>{target.name}{target.status ? ` (${target.status})` : ""}</option>)}
                   </select>
                 ) : <span className="text-paragraph-xs text-text-sub-600">Needs {channel === "email" ? "an email" : channel === "linkedin" ? "a LinkedIn URL" : "a phone number"}</span>}
