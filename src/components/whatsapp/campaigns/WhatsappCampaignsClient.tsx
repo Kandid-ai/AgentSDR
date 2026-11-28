@@ -18,6 +18,7 @@ import {
   RiTeamLine,
 } from "@remixicon/react";
 import * as Badge from "@/components/alignui/badge";
+import { CampaignPriorityBadge } from "@/components/page/CampaignPriority";
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Input from "@/components/alignui/input";
@@ -286,6 +287,7 @@ export function WhatsappCampaignsClient() {
                                 <Badge.Dot />
                                 {status.label}
                               </Badge.Root>
+                              <CampaignPriorityBadge priority={c.priority} className="shrink-0" />
                             </div>
                             <p className="mt-0.5 max-w-md truncate text-paragraph-xs text-text-sub-600" title={c.description ?? undefined} suppressHydrationWarning>
                               Created {shortDate(c.createdAt)} · {c.stepCount} {c.stepCount === 1 ? "message" : "messages"}

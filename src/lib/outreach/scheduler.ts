@@ -169,6 +169,10 @@ async function tickOrganization(result: TickResult, now: Date, send: SendFunctio
     if (!row?.person.email) continue;
     const lead = { ...row.lead, email: row.person.email, variables: personVariables(row.person, row.company) };
     if (!["pending", "initial_sent", "in_follow_up"].includes(lead.sequenceStatus)) continue;
+    // Queued while due, but its next step is not due any more: a send that
+    // finished while a rebuild read the lead, or a sequence put back for
+    // later. It waits for its own time instead of going out a step early.
+    if (lead.sequenceStatus !== "pending" && lead.nextSendAt && lead.nextSendAt > now) continue;
     const campaign = campaignById.get(lead.campaignId);
     if (!campaign || campaign.status !== "active") continue;
 

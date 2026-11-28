@@ -21,6 +21,7 @@ import { isPersonDoNotContact } from "@/lib/crm/policies";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import { channelRules } from "@/lib/channels/rules.server";
 import { pickInRange } from "@/lib/channels/rules";
+import { campaignPriorityRankSql } from "@/lib/campaigns/priority";
 
 // Daily limits, run sizes and delays come from Settings → LinkedIn → Sending
 // rules (src/lib/channels/rules.ts); an account's own dailyInviteLimit wins.
@@ -43,6 +44,32 @@ const isAccountLimitError = (err: unknown): boolean => {
     message.toLowerCase().includes("weekly")
   );
 };
+
+/**
+ * The leads this account sends its next connection requests to, in order:
+ * campaign priority first (urgent … low; a lead with no campaign last), then
+ * campaign age (oldest first), then lead age (oldest first). So an account
+ * reaches a lower-priority campaign only when every higher one has nothing
+ * pending, and within one priority older campaigns go first and each campaign
+ * is FIFO, as before priorities existed.
+ *
+ * The ordering needs the joined Campaign row, so this is a leftJoin
+ * (campaignId is nullable) selecting only the lead columns. Runs in the
+ * caller's organization scope (the eligibility filter is org-scoped).
+ */
+export async function selectInvitationCandidates(accountId: string, limit: number) {
+  return (
+    await db
+      .select({ lead: leads, person: people, company: companies, campaignInvitationMessage: campaigns.invitationMessage })
+      .from(leads)
+      .innerJoin(people, eq(leads.personId, people.id))
+      .leftJoin(companies, eq(people.companyId, companies.id))
+      .leftJoin(campaigns, eq(leads.campaignId, campaigns.id))
+      .where(await pendingLeadsSendableByAccount(accountId))
+      .orderBy(campaignPriorityRankSql(campaigns.priority), asc(campaigns.createdAt), asc(leads.createdAt))
+      .limit(limit)
+  ).map((r) => ({ ...r.lead, invitationMessage: r.campaignInvitationMessage ?? r.lead.invitationMessage, linkedinUrl: r.person.linkedinUrl!, variables: personVariables(r.person, r.company) }));
+}
 
 export const sendInvitations = async (account: LinkedInAccount): Promise<void> => {
   if (!(await isPlatformConnected("unipile"))) {
@@ -77,22 +104,7 @@ export const sendInvitations = async (account: LinkedInAccount): Promise<void> =
     remainingToday
   );
 
-  // Fetch candidates ordered by campaign age (oldest first), then lead age (oldest first).
-  // This guarantees FIFO within each campaign and that older campaigns always get priority.
-  // Leads with no campaign sort last (PostgreSQL: NULL sorts after all non-null ASC values).
-  // The campaign-age ordering needs the joined Campaign row, so this is a
-  // leftJoin (campaignId is nullable) selecting only the lead columns.
-  const pendingLeads = (
-    await db
-      .select({ lead: leads, person: people, company: companies, campaignInvitationMessage: campaigns.invitationMessage })
-      .from(leads)
-      .innerJoin(people, eq(leads.personId, people.id))
-      .leftJoin(companies, eq(people.companyId, companies.id))
-      .leftJoin(campaigns, eq(leads.campaignId, campaigns.id))
-      .where(await pendingLeadsSendableByAccount(account.id))
-      .orderBy(asc(campaigns.createdAt), asc(leads.createdAt))
-      .limit(sessionSize)
-  ).map((r) => ({ ...r.lead, invitationMessage: r.campaignInvitationMessage ?? r.lead.invitationMessage, linkedinUrl: r.person.linkedinUrl!, variables: personVariables(r.person, r.company) }));
+  const pendingLeads = await selectInvitationCandidates(account.id, sessionSize);
 
   if (pendingLeads.length === 0) {
     console.log(`[sendInvitations] No pending leads with resolved profiles for @${account.username}`);

@@ -200,6 +200,12 @@ function PendingReferral({ referral, targets, targetsError, onChanged }: {
                     {options.map((target) => <option key={target.id} value={target.id}>{target.name}{target.status ? ` (${target.status})` : ""}</option>)}
                   </select>
                 ) : <span className="text-paragraph-xs text-text-sub-600">Needs {channel === "email" ? "an email" : channel === "linkedin" ? "a LinkedIn URL" : "a phone number"}</span>}
+                {checked && (() => {
+                  const status = options.find((target) => target.id === chosen[channel])?.status;
+                  return status && status !== "active" ? (
+                    <p className="col-start-2 text-paragraph-xs text-warning-base">This campaign is {status}: nothing sends until it is launched.</p>
+                  ) : null;
+                })()}
               </div>
             );
           })}

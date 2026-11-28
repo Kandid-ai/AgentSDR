@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_CAMPAIGN_PRIORITY, type CampaignPriority } from "@/lib/campaigns/priority";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -29,6 +30,7 @@ type StepId = (typeof STEPS)[number]["id"];
 export type WizardState = {
   campaignId: string | null;
   name: string;
+  priority: CampaignPriority;
   leadCount: number;
   sequence: SequenceStep[];
 };
@@ -56,6 +58,7 @@ export default function CampaignWizard() {
   const [state, setState] = useState<WizardState>({
     campaignId: null,
     name: "",
+    priority: DEFAULT_CAMPAIGN_PRIORITY,
     leadCount: 0,
     sequence: [],
   });
@@ -139,6 +142,8 @@ export default function CampaignWizard() {
               campaignId={state.campaignId}
               name={state.name}
               onNameChange={(name) => patch({ name })}
+              priority={state.priority}
+              onPriorityChange={(priority) => patch({ priority })}
               onContinue={(campaignId) => {
                 patch({ campaignId });
                 goTo("leads");

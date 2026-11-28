@@ -9,7 +9,9 @@ import * as Textarea from "@/components/alignui/textarea";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
 import AddPeopleToCampaignModal from "@/components/leads/AddPeopleToCampaignModal";
 import CampaignCsvMappingDialog from "@/components/leads/CampaignCsvMappingDialog";
+import { CampaignPrioritySelect } from "@/components/page/CampaignPriority";
 import { PageHeader } from "@/components/page/PageHeader";
+import { DEFAULT_CAMPAIGN_PRIORITY, type CampaignPriority } from "@/lib/campaigns/priority";
 import type {
   CreateWhatsappCampaignRequest,
   UpdateWhatsappCampaignRequest,
@@ -53,6 +55,7 @@ export function WhatsappCampaignWizard() {
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState<CampaignPriority>(DEFAULT_CAMPAIGN_PRIORITY);
   const [accountIds, setAccountIds] = useState<string[]>([]);
   const [accounts, setAccounts] = useState<WhatsappAccountSummary[] | null>(null);
   const [accountsError, setAccountsError] = useState<string | null>(null);
@@ -99,10 +102,10 @@ export function WhatsappCampaignWizard() {
     setError(null);
     try {
       if (campaignId) {
-        const body: UpdateWhatsappCampaignRequest = { name: name.trim(), description: description.trim() || null, accountIds };
+        const body: UpdateWhatsappCampaignRequest = { name: name.trim(), description: description.trim() || null, accountIds, priority };
         await apiJson(`/api/whatsapp/campaigns/${campaignId}`, { method: "PATCH", body: JSON.stringify(body) });
       } else {
-        const body: CreateWhatsappCampaignRequest = { name: name.trim(), description: description.trim() || null, accountIds };
+        const body: CreateWhatsappCampaignRequest = { name: name.trim(), description: description.trim() || null, accountIds, priority };
         const created = await apiJson<WhatsappCampaignSummary>("/api/whatsapp/campaigns", { method: "POST", body: JSON.stringify(body) });
         setCampaignId(created.id);
       }
@@ -199,6 +202,9 @@ export function WhatsappCampaignWizard() {
                     <span className="mb-1.5 block text-label-sm text-text-strong-950">Description <span className="text-text-soft-400">(optional)</span></span>
                     <Textarea.Root simple rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What is this campaign for?" />
                   </label>
+                  <div className="max-w-xs">
+                    <CampaignPrioritySelect id="whatsapp-campaign-priority" value={priority} onChange={setPriority} />
+                  </div>
                   <fieldset>
                     <legend className="mb-2 block text-label-sm text-text-strong-950">WhatsApp numbers</legend>
                     <SenderPicker accounts={accounts} selectedIds={accountIds} onChange={setAccountIds} error={accountsError} />

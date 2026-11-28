@@ -18,6 +18,7 @@ import {
   RiTimeLine,
 } from "@remixicon/react";
 import * as Badge from "@/components/alignui/badge";
+import { CampaignPriorityBadge } from "@/components/page/CampaignPriority";
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import { useDialogs } from "@/components/DialogProvider";
@@ -149,10 +150,13 @@ export function WhatsappCampaignDetailClient({ campaignId, initialTab }: { campa
         back={{ href: "/whatsapp/campaigns", label: "Message campaigns" }}
         title={campaign.name}
         badge={
-          <Badge.Root size="medium" variant="lighter" color={status.color}>
-            <Badge.Dot />
-            {status.label}
-          </Badge.Root>
+          <>
+            <Badge.Root size="medium" variant="lighter" color={status.color}>
+              <Badge.Dot />
+              {status.label}
+            </Badge.Root>
+            <CampaignPriorityBadge priority={campaign.priority} />
+          </>
         }
         description={<span suppressHydrationWarning>{`Created ${createdLabel(campaign.createdAt)} · ${campaign.stepCount} ${campaign.stepCount === 1 ? "message" : "messages"} in the sequence${campaign.description ? ` · ${campaign.description}` : ""}`}</span>}
         actions={

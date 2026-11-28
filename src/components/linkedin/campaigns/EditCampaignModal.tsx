@@ -8,6 +8,8 @@ import * as Input from "@/components/alignui/input";
 import * as Modal from "@/components/alignui/modal";
 import * as Textarea from "@/components/alignui/textarea";
 import { LinkedInAccountTag } from "@/components/linkedin/LinkedInAccountTag";
+import { CampaignPrioritySelect } from "@/components/page/CampaignPriority";
+import { campaignPriorityOf, type CampaignPriority } from "@/lib/campaigns/priority";
 import { cn } from "@/utils/cn";
 
 export type SenderAccount = { id: string; username: string; name: string | null; profilePictureUrl: string | null };
@@ -17,11 +19,14 @@ export type EditableCampaign = {
   name: string;
   description: string | null;
   type?: "REGULAR" | "PERSONAL";
+  priority: CampaignPriority;
   accounts: SenderAccount[];
 };
 
+export type CampaignEdit = { name: string; description: string | null; priority: CampaignPriority; accounts: SenderAccount[] };
+
 /**
- * Rename a campaign, change its description, and choose its senders. The
+ * Rename a campaign, change its description and priority, and choose its senders. The
  * list page and the detail page share it; each applies `onSaved` to its own
  * copy. Campaign type is fixed after creation, so it is shown, not edited.
  */
@@ -36,7 +41,7 @@ export function EditCampaignModal({
   accounts: SenderAccount[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSaved: (updated: { name: string; description: string | null; accounts: SenderAccount[] }) => void;
+  onSaved: (updated: CampaignEdit) => void;
 }) {
   return (
     <Modal.Root open={open} onOpenChange={onOpenChange}>
@@ -59,10 +64,11 @@ function EditForm({
   campaign: EditableCampaign;
   accounts: SenderAccount[];
   onCancel: () => void;
-  onSaved: (updated: { name: string; description: string | null; accounts: SenderAccount[] }) => void;
+  onSaved: (updated: CampaignEdit) => void;
 }) {
   const [name, setName] = useState(campaign.name);
   const [description, setDescription] = useState(campaign.description ?? "");
+  const [priority, setPriority] = useState<CampaignPriority>(campaignPriorityOf(campaign.priority));
   const [selectedIds, setSelectedIds] = useState<string[]>(campaign.accounts.map((a) => a.id));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,13 +82,14 @@ function EditForm({
       const res = await fetch(`/api/linkedin/campaigns/${campaign.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed, description: description.trim() || null, linkedinAccountIds: selectedIds }),
+        body: JSON.stringify({ name: trimmed, description: description.trim() || null, priority, linkedinAccountIds: selectedIds }),
       });
       const data = await res.json();
       if (!data.ok) { setError(data.error ?? "Failed"); return; }
       onSaved({
         name: trimmed,
         description: description.trim() || null,
+        priority,
         accounts: accounts.filter((a) => selectedIds.includes(a.id)),
       });
     } catch {
@@ -123,6 +130,7 @@ function EditForm({
           </span>
           <Textarea.Root simple rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes about this campaign…" />
         </label>
+        <CampaignPrioritySelect id="edit-campaign-priority" value={priority} onChange={setPriority} disabled={saving} />
         <div>
           <span className="mb-1.5 block text-label-sm text-text-strong-950">LinkedIn senders</span>
           {accounts.length === 0 ? (

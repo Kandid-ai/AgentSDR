@@ -19,6 +19,8 @@ import {
   linkedinSequenceError,
   normalizeLinkedinSequence,
 } from "@/lib/linkedin/campaignSequence";
+import { readOptionalCampaignPriority } from "@/lib/linkedin/campaignPriorityInput";
+import type { CampaignPriority } from "@/lib/campaigns/priority";
 
 const ACCOUNT_SELECT = {
   id: linkedInAccounts.id,
@@ -129,6 +131,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         description: campaign.description,
         status: campaign.status,
         type: campaign.type,
+        priority: campaign.priority,
         invitationMessage: campaign.invitationMessage,
         acceptanceMessage: campaign.acceptanceMessage,
         followUp1Message: campaign.followUp1Message,
@@ -156,7 +159,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return withLinkedinOrg(req, async () => {
     const { id } = await params;
     try {
-      const { name, description, linkedinAccountIds, status, invitationMessage, acceptanceMessage, followUp1Message, followUp2Message, followUp3Message } = await req.json();
+      const { name, description, linkedinAccountIds, status, priority, invitationMessage, acceptanceMessage, followUp1Message, followUp2Message, followUp3Message } = await req.json();
 
       const [existingCampaign] = await db.select().from(campaigns).where(and(inOrg(campaigns), eq(campaigns.id, id))).limit(1);
       if (!existingCampaign) {
@@ -167,6 +170,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
       if (status !== undefined && status !== "ACTIVE" && status !== "PAUSED") {
         return NextResponse.json({ ok: false, error: "Invalid campaign status" }, { status: 400 });
+      }
+      // Priority is a plain setting: changing it alone never runs the launch checks below.
+      const campaignPriority = readOptionalCampaignPriority(priority);
+      if (!campaignPriority.ok) {
+        return NextResponse.json({ ok: false, error: campaignPriority.error }, { status: 400 });
       }
 
       const sequenceInput = { invitationMessage, acceptanceMessage, followUp1Message, followUp2Message, followUp3Message };
@@ -186,10 +194,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
 
       // Update scalar fields
-      const scalarUpdate: { name?: string; description?: string | null; status?: CampaignStatus; invitationMessage?: string | null; acceptanceMessage?: string | null; followUp1Message?: string | null; followUp2Message?: string | null; followUp3Message?: string | null } = {
+      const scalarUpdate: { name?: string; description?: string | null; status?: CampaignStatus; priority?: CampaignPriority; invitationMessage?: string | null; acceptanceMessage?: string | null; followUp1Message?: string | null; followUp2Message?: string | null; followUp3Message?: string | null } = {
         ...(name !== undefined && { name: name.trim() }),
         ...(description !== undefined && { description: description?.trim() || null }),
         ...(status !== undefined && { status: status as CampaignStatus }),
+        ...(campaignPriority.priority !== undefined && { priority: campaignPriority.priority }),
         ...(invitationMessage !== undefined && { invitationMessage: invitationMessage?.trim() || null }),
         ...(acceptanceMessage !== undefined && { acceptanceMessage: acceptanceMessage?.trim() || null }),
         ...(followUp1Message !== undefined && { followUp1Message: followUp1Message?.trim() || null }),

@@ -44,6 +44,7 @@
  * `text` column.
  */
 
+import type { CampaignPriority } from "@/lib/campaigns/priority";
 import { createId } from "@paralleldrive/cuid2";
 import { people } from "@/lib/leads/schema";
 import { sql } from "drizzle-orm";
@@ -159,6 +160,8 @@ export const campaigns = pgTable("Campaign", {
   followUp1Message: text("followUp1Message"),
   followUp2Message: text("followUp2Message"),
   followUp3Message: text("followUp3Message"),
+  /** Which campaign an account works first (src/lib/campaigns/priority.ts; scripts/add-campaign-priority.ts). */
+  priority: text("priority").notNull().default("medium").$type<CampaignPriority>(),
   createdAt: timestamp("createdAt", { precision: 3, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updatedAt", { precision: 3, mode: "date" })
     .notNull()

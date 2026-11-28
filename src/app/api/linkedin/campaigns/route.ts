@@ -12,6 +12,7 @@ import {
 } from "@/lib/linkedin/schema";
 import { linkedinSequenceError, normalizeLinkedinSequence } from "@/lib/linkedin/campaignSequence";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
+import { readOptionalCampaignPriority } from "@/lib/linkedin/campaignPriorityInput";
 
 const ACCOUNT_SELECT = {
   id: linkedInAccounts.id,
@@ -81,6 +82,7 @@ export async function GET(req: Request) {
       description: c.description,
       status: c.status,
       type: c.type,
+      priority: c.priority,
       accounts: accountsByCampaign.get(c.id) ?? [],
       totalLeads: totalLeadsByCampaign.get(c.id) ?? 0,
       statusCounts: statusCountsByCampaign.get(c.id) ?? {},
@@ -95,9 +97,13 @@ export async function GET(req: Request) {
 export async function POST(req: NextRequest) {
   return withLinkedinOrg(req, async () => {
     try {
-      const { name, description, linkedinAccountIds, type, status, invitationMessage, acceptanceMessage, followUp1Message, followUp2Message, followUp3Message } = await req.json();
+      const { name, description, linkedinAccountIds, type, status, priority, invitationMessage, acceptanceMessage, followUp1Message, followUp2Message, followUp3Message } = await req.json();
       if (!name?.trim()) {
         return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 });
+      }
+      const campaignPriority = readOptionalCampaignPriority(priority);
+      if (!campaignPriority.ok) {
+        return NextResponse.json({ ok: false, error: campaignPriority.error }, { status: 400 });
       }
       const ids: string[] = Array.isArray(linkedinAccountIds)
         ? [...new Set(linkedinAccountIds.filter((id: unknown): id is string => typeof id === "string" && Boolean(id.trim())))]
@@ -135,6 +141,8 @@ export async function POST(req: NextRequest) {
             description: description?.trim() || null,
             type: campaignType,
             status: campaignStatus,
+            // Absent: the column default ("medium").
+            ...(campaignPriority.priority && { priority: campaignPriority.priority }),
             invitationMessage: sequence.invitationMessage || null,
             acceptanceMessage: sequence.acceptanceMessage || null,
             followUp1Message: sequence.followUp1Message || null,

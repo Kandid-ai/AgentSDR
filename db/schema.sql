@@ -682,7 +682,9 @@ CREATE TABLE public."Campaign" (
     "followUp1Message" text,
     "followUp2Message" text,
     "followUp3Message" text,
-    "organizationId" uuid NOT NULL
+    "organizationId" uuid NOT NULL,
+    priority text DEFAULT 'medium'::text NOT NULL,
+    CONSTRAINT "Campaign_priority_chk" CHECK ((priority = ANY (ARRAY['urgent'::text, 'high'::text, 'medium'::text, 'low'::text])))
 );
 
 --
@@ -2589,7 +2591,9 @@ CREATE TABLE public.outreach_campaigns (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     organization_id uuid NOT NULL,
-    mailbox_ids uuid[]
+    mailbox_ids uuid[],
+    priority text DEFAULT 'medium'::text NOT NULL,
+    CONSTRAINT outreach_campaigns_priority_chk CHECK ((priority = ANY (ARRAY['urgent'::text, 'high'::text, 'medium'::text, 'low'::text])))
 );
 
 --
@@ -2944,6 +2948,8 @@ CREATE TABLE public.whatsapp_campaigns (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    priority text DEFAULT 'medium'::text NOT NULL,
+    CONSTRAINT whatsapp_campaigns_priority_chk CHECK ((priority = ANY (ARRAY['urgent'::text, 'high'::text, 'medium'::text, 'low'::text]))),
     CONSTRAINT whatsapp_campaigns_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text])))
 );
 

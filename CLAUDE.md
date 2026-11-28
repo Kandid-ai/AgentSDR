@@ -248,6 +248,26 @@ names and transcripts — and keeps prompts) and `LANGFUSE_TRACING_ENVIRONMENT`.
 Tests and the public demo never reach Langfuse. Tracing must never break a
 call: failures are logged and swallowed.
 
+## Campaign priority: which campaign an account works first
+
+Email, LinkedIn and WhatsApp campaigns have a `priority` (urgent / high /
+medium / low, default medium; `scripts/add-campaign-priority.ts`), defined
+once in `src/lib/campaigns/priority.ts`. A sending account takes its next
+lead from the highest-priority campaign that has one due and reaches a lower
+one only when every higher one has nothing due; within a priority each
+engine keeps its old order. On email and WhatsApp priority outranks
+follow-ups-first (an Urgent first message beats a Low follow-up); LinkedIn
+orders each of its separate batches (invitations, lookups, each follow-up
+stage) by it. SQL orders through `campaignPriorityRankSql` (never the text:
+alphabetically "high" < "low"); the email queue plans through
+`planMailboxQueues`. Email's queue is built once a morning, so an Urgent or
+High campaign that gets leads, starts or is raised rebuilds the
+organization's queue a minute later (`src/lib/outreach/queueRefresh.ts`;
+production only, never a second daily allowance). The standing "Referral"
+campaigns (`scripts/create-referral-campaigns.ts`) are Urgent.
+`scripts/e2e/campaign-priority.ts` and `campaign-priority-api.ts` prove it on
+a disposable database.
+
 ## Sending rules, not constants
 
 Operational numbers — emails a day, send gaps, sending hours, LinkedIn

@@ -7,7 +7,8 @@
  * /api/outreach/build-queue triggers it by hand or from an external cron),
  * before the frequent send tick starts draining it.
  *
- * Two-pass fill per mailbox, in this order:
+ * Campaign priority first (src/lib/campaigns/priority.ts), then two passes
+ * within each priority, Urgent to Low (planMailboxQueues):
  *   Pass A — leads already mid-sequence and due today get queued first,
  *     ordered by nextSendAt ASC then currentStep DESC: the most-overdue lead
  *     wins, and among equally-due leads the one furthest into its sequence
@@ -16,15 +17,22 @@
  *   Pass B — brand-new (`pending`) leads round-robin fill whatever capacity
  *     is left over, same as AgentSDR-app's PENDING-lead fill pass. A campaign
  *     that names its mailboxes (`mailbox_ids`) only fills those.
+ * A lower priority only gets what a higher one left, so a Low campaign's
+ * follow-up can wait a day behind an Urgent campaign's new leads. With every
+ * campaign on Medium (the default) this is the old two-pass fill.
+ *
+ * Also rebuilt during the day when an Urgent or High campaign gets leads or
+ * starts (queueRefresh.ts); a rebuild re-plans the rest of the day without
+ * granting a second daily allowance.
  */
-import { and, asc, desc, eq, inArray, isNull, lte, notInArray, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { mailboxes, outreachCampaigns, outreachLeads, outreachMailboxQueue } from "./schema";
 import { isSameLocalDay } from "./workingHours";
 import { isMigrationControlPaused } from "@/lib/migration/controls";
 import { inOrg, runInOrganization } from "@/lib/tenancy/scope";
 import { leadsInOrg, orgMailboxIds } from "./orgScope";
-import { assignNewLeads, spareCapacityFor } from "./campaignMailboxes";
+import { planMailboxQueues, spareCapacityFor } from "./campaignMailboxes";
 
 type MailboxCapacity = {
   mailboxId: string;
@@ -76,7 +84,9 @@ async function buildOrganizationQueues(): Promise<BuildQueueResult> {
   const connectedMailboxes = await db
     .select()
     .from(mailboxes)
-    .where(and(inOrg(mailboxes), eq(mailboxes.status, "connected")));
+    .where(and(inOrg(mailboxes), eq(mailboxes.status, "connected")))
+    // A fixed order, so the round robin starts from the same mailbox every build.
+    .orderBy(asc(mailboxes.createdAt), asc(mailboxes.emailAddress));
 
   // Reset each mailbox's daily counter only if it hasn't already been reset
   // today (in that mailbox's own working-hours timezone) — build-queue must
@@ -111,10 +121,10 @@ async function buildOrganizationQueues(): Promise<BuildQueueResult> {
   }
   const mailboxIds = connectedMailboxes.map((m) => m.id);
 
-  // Pass A: leads mid-sequence, due now, pinned to a connected mailbox with
-  // capacity — most-overdue and deepest-into-sequence first.
+  // Leads mid-sequence, due now, pinned to a connected mailbox: most-overdue
+  // and deepest-into-sequence first within each priority.
   const dueFollowUps = await db
-    .select()
+    .select({ id: outreachLeads.id, campaignId: outreachLeads.campaignId, mailboxId: outreachLeads.mailboxId })
     .from(outreachLeads)
     .where(
       and(
@@ -127,27 +137,14 @@ async function buildOrganizationQueues(): Promise<BuildQueueResult> {
     )
     .orderBy(asc(outreachLeads.nextSendAt), desc(outreachLeads.currentStep));
 
-  let followUpsQueued = 0;
-  for (const lead of dueFollowUps) {
-    if (!lead.mailboxId) continue;
-    const cap = queues.get(lead.mailboxId);
-    if (!cap) continue;
-    if (cap.queue.length >= cap.currentAvailableCapacity) continue;
-    cap.queue.push(lead.id);
-    followUpsQueued += 1;
-  }
-
-  // Pass B: brand-new leads round-robin fill whatever capacity remains, each
-  // only into a mailbox its campaign may use (campaignMailboxes.ts). Loaded
-  // per campaign, up to the spare capacity of that campaign's mailboxes, then
-  // merged oldest first, the order a single query used to give.
+  // Brand-new leads, loaded per campaign up to the capacity of the mailboxes
+  // it may use (before any follow-up takes a slot: an upper bound, since
+  // priority decides below who actually gets the room).
   const slots = Array.from(queues.values());
-  const campaignMailboxIds = new Map(activeCampaigns.map((c) => [c.id, c.mailboxIds ?? null]));
-  const alreadyQueuedLeadIds = slots.flatMap((cap) => cap.queue);
-  const candidates: Array<{ id: string; campaignId: string; createdAt: Date | null }> = [];
+  const newLeads: Array<{ id: string; campaignId: string; createdAt: Date | null }> = [];
   for (const campaign of activeCampaigns) {
-    const spare = spareCapacityFor(campaign.mailboxIds ?? null, slots);
-    if (spare === 0) continue;
+    const room = spareCapacityFor(campaign.mailboxIds ?? null, slots);
+    if (room === 0) continue;
     const pending = await db
       .select({ id: outreachLeads.id, campaignId: outreachLeads.campaignId, createdAt: outreachLeads.createdAt })
       .from(outreachLeads)
@@ -157,15 +154,19 @@ async function buildOrganizationQueues(): Promise<BuildQueueResult> {
           eq(outreachLeads.campaignId, campaign.id),
           eq(outreachLeads.sequenceStatus, "pending"),
           isNull(outreachLeads.mailboxId),
-          alreadyQueuedLeadIds.length > 0 ? notInArray(outreachLeads.id, alreadyQueuedLeadIds) : undefined,
         ),
       )
       .orderBy(asc(outreachLeads.createdAt))
-      .limit(spare);
-    candidates.push(...pending);
+      .limit(room);
+    newLeads.push(...pending);
   }
-  candidates.sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0));
-  const newLeadsQueued = assignNewLeads(candidates, slots, campaignMailboxIds);
+
+  const { followUpsQueued, newLeadsQueued } = planMailboxQueues({
+    slots,
+    followUps: dueFollowUps.flatMap((lead) => (lead.mailboxId ? [{ ...lead, mailboxId: lead.mailboxId }] : [])),
+    newLeads,
+    campaigns: activeCampaigns.map((campaign) => ({ id: campaign.id, priority: campaign.priority, mailboxIds: campaign.mailboxIds ?? null })),
+  });
 
   const rows: Array<{ mailboxId: string; leadId: string; position: number }> = [];
   for (const cap of queues.values()) {

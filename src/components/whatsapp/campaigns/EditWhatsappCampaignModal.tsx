@@ -6,15 +6,17 @@ import * as Button from "@/components/alignui/button";
 import * as Input from "@/components/alignui/input";
 import * as Modal from "@/components/alignui/modal";
 import * as Textarea from "@/components/alignui/textarea";
+import { CampaignPrioritySelect } from "@/components/page/CampaignPriority";
+import { campaignPriorityOf, type CampaignPriority } from "@/lib/campaigns/priority";
 import type { UpdateWhatsappCampaignRequest, WhatsappCampaignSummary } from "@/lib/whatsapp/campaigns/contract";
 import type { WhatsappAccountSummary } from "@/lib/whatsapp/contract";
 import { cn } from "@/utils/cn";
 import { apiJson, errorText, fetchWhatsappAccounts } from "./api";
 import { SenderPicker } from "./SenderPicker";
 
-export type EditableWhatsappCampaign = Pick<WhatsappCampaignSummary, "id" | "name" | "description" | "senders">;
+export type EditableWhatsappCampaign = Pick<WhatsappCampaignSummary, "id" | "name" | "description" | "priority" | "senders">;
 
-/** Rename a campaign, change its description, and choose its numbers. */
+/** Rename a campaign, change its description and priority, and choose its numbers. */
 export function EditWhatsappCampaignModal({
   campaign,
   open,
@@ -39,6 +41,7 @@ export function EditWhatsappCampaignModal({
 function EditForm({ campaign, onCancel, onSaved }: { campaign: EditableWhatsappCampaign; onCancel: () => void; onSaved: () => void }) {
   const [name, setName] = useState(campaign.name);
   const [description, setDescription] = useState(campaign.description ?? "");
+  const [priority, setPriority] = useState<CampaignPriority>(campaignPriorityOf(campaign.priority));
   const [accountIds, setAccountIds] = useState<string[]>(campaign.senders.map((s) => s.accountId));
   const [accounts, setAccounts] = useState<WhatsappAccountSummary[] | null>(null);
   const [accountsError, setAccountsError] = useState<string | null>(null);
@@ -59,7 +62,7 @@ function EditForm({ campaign, onCancel, onSaved }: { campaign: EditableWhatsappC
     setSaving(true);
     setError(null);
     try {
-      const body: UpdateWhatsappCampaignRequest = { name: trimmed, description: description.trim() || null, accountIds };
+      const body: UpdateWhatsappCampaignRequest = { name: trimmed, description: description.trim() || null, accountIds, priority };
       await apiJson(`/api/whatsapp/campaigns/${campaign.id}`, { method: "PATCH", body: JSON.stringify(body) });
       onSaved();
     } catch (cause) {
@@ -73,7 +76,7 @@ function EditForm({ campaign, onCancel, onSaved }: { campaign: EditableWhatsappC
     <>
       <Modal.Header icon={RiPencilLine}>
         <Modal.Title>Edit campaign</Modal.Title>
-        <Modal.Description>Rename it, or change which WhatsApp numbers send.</Modal.Description>
+        <Modal.Description>Rename it, set its priority, or change which WhatsApp numbers send.</Modal.Description>
       </Modal.Header>
       <Modal.Body className="space-y-4">
         <label className="block">
@@ -90,6 +93,7 @@ function EditForm({ campaign, onCancel, onSaved }: { campaign: EditableWhatsappC
           </span>
           <Textarea.Root simple rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes about this campaign…" />
         </label>
+        <CampaignPrioritySelect id="edit-whatsapp-campaign-priority" value={priority} onChange={setPriority} />
         <div>
           <span className="mb-1.5 block text-label-sm text-text-strong-950">WhatsApp numbers</span>
           <SenderPicker accounts={accounts} selectedIds={accountIds} onChange={setAccountIds} error={accountsError} />

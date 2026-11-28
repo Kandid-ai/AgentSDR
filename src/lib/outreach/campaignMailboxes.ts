@@ -9,6 +9,8 @@
  * in the same Gmail thread even if the campaign's list changes later.
  */
 
+import { CAMPAIGN_PRIORITIES, campaignPriorityOf } from "@/lib/campaigns/priority";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** True when a campaign with this setting may give a new lead to this mailbox. */
@@ -70,4 +72,51 @@ export function spareCapacityFor(campaignMailboxIds: readonly string[] | null, s
   return slots
     .filter((slot) => campaignMayUseMailbox(campaignMailboxIds, slot.mailboxId))
     .reduce((sum, slot) => sum + Math.max(0, slot.currentAvailableCapacity - slot.queue.length), 0);
+}
+
+export type DueFollowUp = { id: string; campaignId: string; mailboxId: string };
+export type QueueCampaign = { id: string; priority: unknown; mailboxIds: readonly string[] | null };
+export type DatedNewLead = NewLead & { createdAt: Date | null };
+
+/**
+ * Fills each mailbox's queue for the day, campaign priority first
+ * (src/lib/campaigns/priority.ts). For each priority, Urgent to Low: that
+ * priority's due follow-ups go on the mailbox that sent their first email
+ * (in the order given: most overdue, then deepest into the sequence), then
+ * its new leads, oldest first, round robin over the mailboxes each campaign
+ * may use. A lower priority only gets the capacity a higher one left. With
+ * every campaign on the same priority this is exactly the old two passes:
+ * every follow-up, then new leads.
+ *
+ * Mutates `slots[].queue`; a lead whose mailboxes are full waits for another day.
+ */
+export function planMailboxQueues(input: {
+  slots: readonly MailboxSlot[];
+  followUps: readonly DueFollowUp[];
+  newLeads: readonly DatedNewLead[];
+  campaigns: readonly QueueCampaign[];
+}): { followUpsQueued: number; newLeadsQueued: number } {
+  const slotByMailbox = new Map(input.slots.map((slot) => [slot.mailboxId, slot]));
+  const campaignById = new Map(input.campaigns.map((campaign) => [campaign.id, campaign]));
+  const campaignMailboxIds = new Map(input.campaigns.map((campaign) => [campaign.id, campaign.mailboxIds ?? null]));
+  const priorityOf = (campaignId: string) => campaignPriorityOf(campaignById.get(campaignId)?.priority);
+  const queued = new Set(input.slots.flatMap((slot) => slot.queue));
+  let followUpsQueued = 0;
+  let newLeadsQueued = 0;
+  for (const priority of CAMPAIGN_PRIORITIES) {
+    for (const lead of input.followUps) {
+      if (!campaignById.has(lead.campaignId) || priorityOf(lead.campaignId) !== priority || queued.has(lead.id)) continue;
+      const slot = slotByMailbox.get(lead.mailboxId);
+      if (!slot || slot.queue.length >= slot.currentAvailableCapacity) continue;
+      slot.queue.push(lead.id);
+      queued.add(lead.id);
+      followUpsQueued += 1;
+    }
+    const fresh = input.newLeads
+      .filter((lead) => campaignById.has(lead.campaignId) && priorityOf(lead.campaignId) === priority && !queued.has(lead.id))
+      .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0));
+    for (const lead of fresh) queued.add(lead.id);
+    newLeadsQueued += assignNewLeads(fresh, input.slots, campaignMailboxIds);
+  }
+  return { followUpsQueued, newLeadsQueued };
 }

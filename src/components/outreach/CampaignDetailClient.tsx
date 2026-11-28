@@ -19,6 +19,8 @@ import * as Badge from "@/components/alignui/badge";
 import * as Button from "@/components/alignui/button";
 import { PageContainer, PageHeader } from "@/components/page/PageHeader";
 import { PageTabs } from "@/components/page/PageTabs";
+import { CampaignPriorityBadge, CampaignPrioritySelect } from "@/components/page/CampaignPriority";
+import { campaignPriorityOf, type CampaignPriority } from "@/lib/campaigns/priority";
 import { StatRow } from "@/components/page/StatRow";
 import AnalyticsTab from "./AnalyticsTab";
 import LeadsTab from "./LeadsTab";
@@ -144,6 +146,26 @@ export default function CampaignDetailClient({
     }
   }
 
+  const [priority, setPriority] = useState<CampaignPriority>(campaignPriorityOf(campaign.priority));
+  const [priorityError, setPriorityError] = useState<string | null>(null);
+  async function handlePriority(next: CampaignPriority) {
+    const previous = priority;
+    setPriority(next);
+    setPriorityError(null);
+    try {
+      const res = await fetch(`/api/outreach/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priority: next }),
+      });
+      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Could not change the priority");
+      router.refresh();
+    } catch (error) {
+      setPriority(previous);
+      setPriorityError(error instanceof Error ? error.message : "Could not change the priority");
+    }
+  }
+
   async function handlePause() {
     await fetch(`/api/outreach/campaigns/${campaign.id}`, {
       method: "PATCH",
@@ -153,7 +175,7 @@ export default function CampaignDetailClient({
     router.refresh();
   }
 
-  const actions =
+  const statusAction =
     campaign.status === "active" ? (
       <Button.Root variant="neutral" mode="stroke" size="small" onClick={handlePause}>
         <Button.Icon as={RiPauseCircleLine} />
@@ -172,6 +194,14 @@ export default function CampaignDetailClient({
         {launching ? "Launching…" : campaign.status === "paused" ? "Resume" : "Launch campaign"}
       </Button.Root>
     ) : null;
+  const actions = (
+    <div className="flex items-center gap-2">
+      <div className="w-40" title="Which campaign the mailboxes work first">
+        <CampaignPrioritySelect value={priority} onChange={(next) => void handlePriority(next)} size="small" hideLabel hideHint id="email-campaign-priority" />
+      </div>
+      {statusAction}
+    </div>
+  );
 
   return (
     <PageContainer>
@@ -179,15 +209,19 @@ export default function CampaignDetailClient({
         back={{ href: "/outreach/campaigns", label: "Send campaigns" }}
         title={campaign.name}
         badge={
-          <Badge.Root size="medium" variant="lighter" color={STATUS_COLOR[campaign.status] ?? "gray"}>
-            <Badge.Dot />
-            {STATUS_LABEL[campaign.status] ?? campaign.status}
-          </Badge.Root>
+          <span className="flex items-center gap-1.5">
+            <Badge.Root size="medium" variant="lighter" color={STATUS_COLOR[campaign.status] ?? "gray"}>
+              <Badge.Dot />
+              {STATUS_LABEL[campaign.status] ?? campaign.status}
+            </Badge.Root>
+            <CampaignPriorityBadge priority={priority} />
+          </span>
         }
         description={`Created ${createdAt(campaign.createdAt)} · ${campaign.sequence.length} ${campaign.sequence.length === 1 ? "step" : "steps"}`}
         actions={actions}
       />
       {launchError && <p role="alert" className="mt-2 text-paragraph-sm text-error-base">{launchError}</p>}
+      {priorityError && <p role="alert" className="mt-2 text-paragraph-sm text-error-base">{priorityError}</p>}
 
       {/* Today, regardless of tab. */}
       <StatRow

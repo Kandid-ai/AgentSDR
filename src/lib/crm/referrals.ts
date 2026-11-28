@@ -14,6 +14,7 @@ import "server-only";
  * build (src/lib/outreach/buildQueue.ts); starting does not run it, because
  * that rebuilds every mailbox's queue.
  */
+import { personVariables, variableValue } from "@/lib/leads/variables";
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { companies, people } from "@/lib/leads/schema";
@@ -228,6 +229,8 @@ type ReferrerProfile = {
   pipelineId: string;
   name: string | null;
   firstName: string | null;
+  /** The brand our outreach to them was about ({{emailName}}), when their row has one. */
+  brand: string | null;
   company: { name: string | null; domain: string | null; linkedinUrl: string | null } | null;
 };
 
@@ -245,6 +248,7 @@ async function loadReferrer(recordId: string): Promise<ReferrerProfile> {
     pipelineId: row.record.pipelineId,
     name: row.person.fullName ?? ([row.person.firstName, row.person.lastName].filter(Boolean).join(" ") || null),
     firstName: row.person.firstName,
+    brand: variableValue(personVariables(row.person), "emailName"),
     company: row.company ? { name: row.company.name, domain: row.company.domain, linkedinUrl: row.company.linkedinUrl } : null,
   };
 }
@@ -281,6 +285,7 @@ async function createReferredPerson(referral: ReferralRow, referrer: ReferrerPro
     referrerName: referrer.name,
     referrerFirstName: referrer.firstName,
     referrerCompany: referrer.company?.name ?? null,
+    referrerBrand: referrer.brand,
     referrerPersonId: referrer.personId,
     anonymous: referral.anonymous,
   });
@@ -350,6 +355,7 @@ async function enrollChannel(
     referrerName: referrer.name,
     referrerFirstName: referrer.firstName,
     referrerCompany: referrer.company?.name ?? null,
+    referrerBrand: referrer.brand,
     referrerPersonId: referrer.personId,
     anonymous: referral.anonymous,
   });

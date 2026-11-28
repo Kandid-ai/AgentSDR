@@ -13,27 +13,26 @@ import { pendingLeadsResolvableByAccount } from "@/lib/linkedin/leadOutreachElig
 import { normalizeLinkedinApiHint, publicSlugFromSourceIdentifier } from "@/lib/leads/identity";
 import { channelRules } from "@/lib/channels/rules.server";
 import { pickInRange } from "@/lib/channels/rules";
+import { campaignPriorityRankSql } from "@/lib/campaigns/priority";
 
 // Profiles per run come from Settings → LinkedIn → Sending rules.
 
-export const resolveProfiles = async (
-  account: LinkedInAccount,
-  options: { activeCampaignsOnly?: boolean; leadId?: string } = {},
-): Promise<void> => {
-  if (!(await isPlatformConnected("unipile"))) {
-    console.log("[resolveProfiles] Unipile is not connected — skipping");
-    return;
-  }
+export type ResolveCandidateOptions = { activeCampaignsOnly?: boolean; leadId?: string };
 
-  const sessionSize = pickInRange((await channelRules("linkedin")).profileLookupsPerRun);
-  console.log(`[resolveProfiles] Resolving up to ${sessionSize} profiles via @${account.username}`);
-
-  const baseWhere = await pendingLeadsResolvableByAccount(account.id);
-
-  // Ordering by campaign age needs the joined Campaign row; leftJoin because
-  // campaignId is nullable and those leads must still be returned (they sort
-  // last — NULL sorts after non-null values in ASC).
-  const pendingLeads = (
+/**
+ * The unresolved leads this account looks up next, in the same order
+ * `selectInvitationCandidates` sends them: campaign priority first (a lead
+ * with no campaign last), then campaign age, then lead age, all oldest first.
+ * The two must match, or an Urgent campaign's unresolved leads would wait
+ * behind a Low campaign's lookups and never reach the invitation queue first.
+ *
+ * leftJoin because campaignId is nullable and those leads must still be
+ * returned. Runs in the caller's organization scope (the eligibility filter
+ * is org-scoped).
+ */
+export async function selectResolveCandidates(accountId: string, limit: number, options: ResolveCandidateOptions = {}) {
+  const baseWhere = await pendingLeadsResolvableByAccount(accountId);
+  return (
     await db
       .select({ lead: leadsTable, person: people, company: companies })
       .from(leadsTable)
@@ -45,9 +44,24 @@ export const resolveProfiles = async (
         options.activeCampaignsOnly ? eq(campaigns.status, "ACTIVE") : undefined,
         options.leadId ? eq(leadsTable.id, options.leadId) : undefined,
       ))
-      .orderBy(asc(campaigns.createdAt), asc(leadsTable.createdAt))
-      .limit(sessionSize)
+      .orderBy(campaignPriorityRankSql(campaigns.priority), asc(campaigns.createdAt), asc(leadsTable.createdAt))
+      .limit(limit)
   ).map((r) => ({ ...r.lead, person: r.person, company: r.company }));
+}
+
+export const resolveProfiles = async (
+  account: LinkedInAccount,
+  options: ResolveCandidateOptions = {},
+): Promise<void> => {
+  if (!(await isPlatformConnected("unipile"))) {
+    console.log("[resolveProfiles] Unipile is not connected — skipping");
+    return;
+  }
+
+  const sessionSize = pickInRange((await channelRules("linkedin")).profileLookupsPerRun);
+  console.log(`[resolveProfiles] Resolving up to ${sessionSize} profiles via @${account.username}`);
+
+  const pendingLeads = await selectResolveCandidates(account.id, sessionSize, options);
 
   if (pendingLeads.length === 0) {
     console.log(`[resolveProfiles] No unresolved leads eligible for @${account.username}`);

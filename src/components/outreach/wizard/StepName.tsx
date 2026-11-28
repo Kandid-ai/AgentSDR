@@ -6,16 +6,22 @@ import { RiArrowRightLine, RiInformationLine, RiMailLine } from "@remixicon/reac
 
 import * as Button from "@/components/alignui/button";
 import * as Input from "@/components/alignui/input";
+import { CampaignPrioritySelect } from "@/components/page/CampaignPriority";
+import type { CampaignPriority } from "@/lib/campaigns/priority";
 
 export default function StepName({
   campaignId,
   name,
   onNameChange,
+  priority,
+  onPriorityChange,
   onContinue,
 }: {
   campaignId: string | null;
   name: string;
   onNameChange: (name: string) => void;
+  priority: CampaignPriority;
+  onPriorityChange: (priority: CampaignPriority) => void;
   onContinue: (campaignId: string) => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
@@ -34,7 +40,7 @@ export default function StepName({
         {
           method: campaignId ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
+          body: JSON.stringify({ name, priority }),
         },
       );
       const data = await res.json();
@@ -77,6 +83,9 @@ export default function StepName({
           A draft is saved when you continue. Going back edits the same draft instead of creating another campaign.
         </div>
         {error && <p className="mt-2 text-paragraph-xs text-error-base">{error}</p>}
+        <div className="mt-5">
+          <CampaignPrioritySelect value={priority} onChange={onPriorityChange} />
+        </div>
       </div>
 
       <div className="mt-8 flex items-center justify-between border-t border-stroke-soft-200 pt-5">

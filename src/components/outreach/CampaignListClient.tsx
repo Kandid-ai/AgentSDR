@@ -19,6 +19,7 @@ import {
 } from "@remixicon/react";
 
 import * as Badge from "@/components/alignui/badge";
+import { CampaignPriorityBadge } from "@/components/page/CampaignPriority";
 import * as Button from "@/components/alignui/button";
 import * as Dropdown from "@/components/alignui/dropdown";
 import * as Input from "@/components/alignui/input";
@@ -313,6 +314,7 @@ export default function CampaignListClient({ campaigns }: { campaigns: Campaign[
                               <Badge.Dot />
                               {STATUS_LABEL[c.status] ?? c.status}
                             </Badge.Root>
+                            <CampaignPriorityBadge priority={c.priority} className="shrink-0" />
                           </div>
                           <p className="mt-0.5 truncate text-paragraph-xs text-text-sub-600">
                             {c.sequence.length} {c.sequence.length === 1 ? "step" : "steps"} · Created <ShortDate value={c.createdAt} />

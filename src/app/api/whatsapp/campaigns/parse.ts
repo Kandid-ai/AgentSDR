@@ -4,6 +4,7 @@ import {
   CrmConfigurationValidationError,
   parseRequiredText,
 } from "@/lib/crm/categories";
+import { DEFAULT_CAMPAIGN_PRIORITY, parseCampaignPriority, type CampaignPriority } from "@/lib/campaigns/priority";
 import {
   WHATSAPP_CAMPAIGN_STATUSES,
   type CreateWhatsappCampaignRequest,
@@ -48,25 +49,34 @@ export function parseSteps(value: unknown): WhatsappCampaignStep[] {
   });
 }
 
+/** Case-insensitive; anything but urgent / high / medium / low is a 400. */
+export function parsePriority(value: unknown): CampaignPriority {
+  const parsed = parseCampaignPriority(value);
+  if (!parsed.ok) throw new CrmConfigurationValidationError(parsed.error);
+  return parsed.priority;
+}
+
 export function parseCreateRequest(value: unknown): CreateWhatsappCampaignRequest {
   assertObject(value);
-  assertExactKeys(value, ["name", "description", "accountIds", "steps"]);
+  assertExactKeys(value, ["name", "description", "accountIds", "steps", "priority"]);
   return {
     name: parseName(value.name),
     description: value.description === undefined ? null : parseDescription(value.description),
     accountIds: value.accountIds === undefined ? [] : parseAccountIds(value.accountIds),
     steps: value.steps === undefined ? [] : parseSteps(value.steps),
+    priority: value.priority === undefined ? DEFAULT_CAMPAIGN_PRIORITY : parsePriority(value.priority),
   };
 }
 
 export function parseUpdateRequest(value: unknown): UpdateWhatsappCampaignRequest {
   assertObject(value);
-  assertExactKeys(value, ["name", "description", "accountIds", "steps", "status"]);
+  assertExactKeys(value, ["name", "description", "accountIds", "steps", "priority", "status"]);
   const request: UpdateWhatsappCampaignRequest = {};
   if (value.name !== undefined) request.name = parseName(value.name);
   if (value.description !== undefined) request.description = parseDescription(value.description);
   if (value.accountIds !== undefined) request.accountIds = parseAccountIds(value.accountIds);
   if (value.steps !== undefined) request.steps = parseSteps(value.steps);
+  if (value.priority !== undefined) request.priority = parsePriority(value.priority);
   if (value.status !== undefined) {
     if (typeof value.status !== "string" || !(WHATSAPP_CAMPAIGN_STATUSES as readonly string[]).includes(value.status)) {
       throw new CrmConfigurationValidationError("status must be one of: active, paused");

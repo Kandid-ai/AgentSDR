@@ -1,3 +1,4 @@
+import type { CampaignPriority } from "@/lib/campaigns/priority";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -184,6 +185,8 @@ export const whatsappCampaigns = pgTable(
     description: text("description"),
     status: text("status").notNull().default("paused").$type<WhatsappCampaignStatus>(),
     steps: jsonb("steps").notNull().default([]).$type<WhatsappCampaignStep[]>(),
+    /** Which campaign a number works first (src/lib/campaigns/priority.ts; scripts/add-campaign-priority.ts). */
+    priority: text("priority").notNull().default("medium").$type<CampaignPriority>(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -191,6 +194,7 @@ export const whatsappCampaigns = pgTable(
   (table) => [
     index("whatsapp_campaigns_organization_idx").on(table.organizationId),
     check("whatsapp_campaigns_status_chk", sql`${table.status} IN ('active', 'paused')`),
+    check("whatsapp_campaigns_priority_chk", sql`${table.priority} IN ('urgent', 'high', 'medium', 'low')`),
   ],
 );
 

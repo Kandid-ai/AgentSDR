@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { requestSameDayQueueRefresh } from "./queueRefresh";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { importRuns, people } from "@/lib/leads/schema";
@@ -343,5 +344,7 @@ export async function importRowsForCampaign(
     });
   });
 
+  // An Urgent/High campaign that is running starts these leads today.
+  if (imported > 0) await requestSameDayQueueRefresh([campaignId]);
   return { total: rows.length, imported, skippedSuppressed, skippedDuplicate, failed };
 }

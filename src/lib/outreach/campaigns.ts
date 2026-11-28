@@ -1,4 +1,5 @@
 import { eq, desc, asc, and, count, max, inArray, or, sql, lte, gte, isNotNull } from "drizzle-orm";
+import { DEFAULT_CAMPAIGN_PRIORITY, type CampaignPriority } from "@/lib/campaigns/priority";
 import { db } from "@/lib/db";
 import { companies, people } from "@/lib/leads/schema";
 import { personVariables, variableValue } from "@/lib/leads/variables";
@@ -122,10 +123,10 @@ export async function getCampaign(id: string) {
   return row ?? null;
 }
 
-export async function createCampaign(input: { name: string }) {
+export async function createCampaign(input: { name: string; priority?: CampaignPriority }) {
   const [row] = await db
     .insert(outreachCampaigns)
-    .values({ organizationId: currentOrganizationId(), name: input.name.trim(), status: "draft", sequence: [] })
+    .values({ organizationId: currentOrganizationId(), name: input.name.trim(), status: "draft", sequence: [], priority: input.priority ?? DEFAULT_CAMPAIGN_PRIORITY })
     .returning();
   return row;
 }
@@ -162,6 +163,13 @@ export async function updateCampaignMailboxes(id: string, mailboxIds: string[] |
     .set({ mailboxIds, updatedAt: new Date() })
     .where(and(inOrg(outreachCampaigns), eq(outreachCampaigns.id, id)));
   return true;
+}
+
+export async function updateCampaignPriority(id: string, priority: CampaignPriority) {
+  await db
+    .update(outreachCampaigns)
+    .set({ priority, updatedAt: new Date() })
+    .where(and(inOrg(outreachCampaigns), eq(outreachCampaigns.id, id)));
 }
 
 export async function setCampaignStatus(id: string, status: CampaignStatus) {

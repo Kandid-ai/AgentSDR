@@ -403,11 +403,20 @@ function parseUuidOrId(value: unknown, label: string, channel: ReferralChannel):
 
 // --- shaping -------------------------------------------------------------------
 
-/** Merge fields every channel's templates can use for a referred lead (people.raw). */
+/**
+ * Merge fields every channel's templates can use for a referred lead
+ * (people.raw): {{referrerName}}, {{referrerFirstName}} (left out when the
+ * referrer asked not to be named, so a template's fallback shows instead:
+ * `{{referrerFirstName|A colleague}}`), {{referrerCompany}} and
+ * {{referrerBrand}}: the brand our outreach to the referrer was about (their
+ * own `emailName`, the brand column this organization's imports carry), else
+ * their company's name.
+ */
 export function referralMergeFields(input: {
   referrerName: string | null;
   referrerFirstName: string | null;
   referrerCompany: string | null;
+  referrerBrand?: string | null;
   referrerPersonId: string;
   anonymous: boolean;
 }): Record<string, string> {
@@ -417,6 +426,8 @@ export function referralMergeFields(input: {
     if (input.referrerFirstName) fields.referrerFirstName = input.referrerFirstName;
   }
   if (input.referrerCompany) fields.referrerCompany = input.referrerCompany;
+  const brand = input.referrerBrand?.trim() || input.referrerCompany;
+  if (brand) fields.referrerBrand = brand;
   return fields;
 }
 

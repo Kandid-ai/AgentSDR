@@ -54,7 +54,9 @@ per connected number assigned to an active campaign, **one send per tick**:
 
 1. Pick the next due lead (`queued`/`in_sequence`, `next_send_at <= now`,
    campaign active and not archived, lead's number is this one or unset and
-   this number is assigned). Follow-ups before first messages; first
+   this number is assigned). Highest campaign priority first
+   (`src/lib/campaigns/priority.ts`); within a priority, follow-ups before
+   first messages; first
    messages are skipped for the rest of the tick once the number hits its
    new-chat limit or is warming up.
 2. Claim it: lock the lead row `FOR UPDATE SKIP LOCKED`, insert the

@@ -1,7 +1,8 @@
 /**
  * WhatsApp message campaigns: the shapes the API, the pages and the sender
- * loop share. Client-safe and import-free. See docs/whatsapp-campaigns/plan.md.
+ * loop share. Client-safe; type imports only. See docs/whatsapp-campaigns/plan.md.
  */
+import type { CampaignPriority } from "@/lib/campaigns/priority";
 
 export const WHATSAPP_CAMPAIGN_STATUSES = ["active", "paused"] as const;
 export type WhatsappCampaignStatus = (typeof WHATSAPP_CAMPAIGN_STATUSES)[number];
@@ -70,6 +71,8 @@ export type WhatsappCampaignSummary = {
   name: string;
   description: string | null;
   status: WhatsappCampaignStatus;
+  /** Which campaign a number works first (src/lib/campaigns/priority.ts). */
+  priority: CampaignPriority;
   stepCount: number;
   senders: WhatsappCampaignSender[];
   stats: WhatsappCampaignStats;
@@ -113,6 +116,8 @@ export type CreateWhatsappCampaignRequest = {
   description?: string | null;
   accountIds?: string[];
   steps?: WhatsappCampaignStep[];
+  /** Default "medium". */
+  priority?: CampaignPriority;
 };
 
 export type UpdateWhatsappCampaignRequest = {
@@ -120,6 +125,8 @@ export type UpdateWhatsappCampaignRequest = {
   description?: string | null;
   accountIds?: string[];
   steps?: WhatsappCampaignStep[];
+  /** Takes effect on the sender's next pick; never re-runs the launch checks. */
+  priority?: CampaignPriority;
   /** "active" launches or resumes: needs a connected number, a lead and a non-empty first step. */
   status?: WhatsappCampaignStatus;
 };

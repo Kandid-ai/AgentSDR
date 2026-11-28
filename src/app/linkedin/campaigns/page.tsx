@@ -19,6 +19,7 @@ export default async function CampaignsPage() {
           description: campaignsTable.description,
           status: campaignsTable.status,
           type: campaignsTable.type,
+          priority: campaignsTable.priority,
           createdAt: campaignsTable.createdAt,
         })
         .from(campaignsTable)
@@ -90,6 +91,7 @@ export default async function CampaignsPage() {
       description: c.description,
       status: c.status,
       type: c.type,
+      priority: c.priority,
       accounts: accountsByCampaign[c.id] ?? [],
       totalLeads: leadCountByCampaign[c.id] ?? 0,
       statusCounts: statusByCampaign[c.id] ?? {},

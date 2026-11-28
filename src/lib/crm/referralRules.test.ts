@@ -182,8 +182,12 @@ describe("request parsing", () => {
 describe("merge fields and suggestions", () => {
   const referrer = { referrerName: "Priya Shah", referrerFirstName: "Priya", referrerCompany: "Brand", referrerPersonId: "p1" };
   test("an anonymous referral never carries the referrer's name", () => {
-    expect(referralMergeFields({ ...referrer, anonymous: false })).toEqual({ referredByPersonId: "p1", referrerName: "Priya Shah", referrerFirstName: "Priya", referrerCompany: "Brand" });
-    expect(referralMergeFields({ ...referrer, anonymous: true })).toEqual({ referredByPersonId: "p1", referrerCompany: "Brand" });
+    expect(referralMergeFields({ ...referrer, anonymous: false })).toEqual({ referredByPersonId: "p1", referrerName: "Priya Shah", referrerFirstName: "Priya", referrerCompany: "Brand", referrerBrand: "Brand" });
+    expect(referralMergeFields({ ...referrer, anonymous: true })).toEqual({ referredByPersonId: "p1", referrerCompany: "Brand", referrerBrand: "Brand" });
+    // The brand our outreach was about wins over the legal company name; blank falls back.
+    expect(referralMergeFields({ ...referrer, referrerCompany: "RB", referrerBrand: "Durex", anonymous: false }).referrerBrand).toBe("Durex");
+    expect(referralMergeFields({ ...referrer, referrerBrand: "  ", anonymous: false }).referrerBrand).toBe("Brand");
+    expect(referralMergeFields({ ...referrer, referrerCompany: null, referrerBrand: null, anonymous: false })).not.toHaveProperty("referrerBrand");
   });
   test("a campaign named for referrals is suggested", () => {
     expect(isSuggestedReferralCampaign("Warm Referrals Q4")).toBe(true);

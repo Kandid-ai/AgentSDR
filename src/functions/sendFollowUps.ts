@@ -15,6 +15,7 @@ import { isPersonDoNotContact } from "@/lib/crm/policies";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
 import { channelRules } from "@/lib/channels/rules.server";
 import { pickInRange } from "@/lib/channels/rules";
+import { campaignPriorityRankSql } from "@/lib/campaigns/priority";
 
 const FOLLOW_UP_1_AFTER_MS = 24 * 60 * 60 * 1000;
 const FOLLOW_UP_2_AFTER_MS = 48 * 60 * 60 * 1000;
@@ -30,7 +31,7 @@ const hasText = (value: string | null | undefined): value is string => !!value?.
  * `fromStatus`, then advances them to `toStatus` — or to COMPLETED when the next stage has
  * no message to send.
  */
-type FollowUpStage = {
+export type FollowUpStage = {
   label: string;
   fromStatus: LeadStatus;
   toStatus: LeadStatus;
@@ -66,7 +67,7 @@ const CUTOFF_COLS = {
   followUp2SentAt: leadsTable.followUp2SentAt,
 } as const;
 
-const FOLLOW_UP_STAGES: FollowUpStage[] = [
+export const FOLLOW_UP_STAGES: FollowUpStage[] = [
   {
     label: "Follow-up 1",
     fromStatus: "ACCEPT_MESSAGE_SENT",
@@ -138,15 +139,20 @@ const completeExhaustedLeads = async (account: LinkedInAccount, stage: FollowUpS
   }
 };
 
-const runFollowUpStage = async (account: LinkedInAccount, stage: FollowUpStage): Promise<void> => {
-  // Retire exhausted leads first so they can never occupy a slot in the batch below.
-  await completeExhaustedLeads(account, stage);
+/**
+ * The leads due `stage` from this account, in order: campaign priority first
+ * (urgent … low), then the longest-waiting (oldest cutoff), so an account
+ * reaches a lower-priority campaign's follow-ups only when every higher one
+ * has none due, and within one priority no lead is starved by newer arrivals.
+ *
+ * Only leads that can actually be sent: message present and a chat to send it
+ * in. Messages are trimmed on write, so a stored empty string means "no
+ * message". `now` is a parameter so tests can fix the cutoff. Runs in the
+ * caller's organization scope.
+ */
+export async function selectFollowUpCandidates(accountId: string, stage: FollowUpStage, limit: number, now: Date = new Date()) {
+  const cutoff = new Date(now.getTime() - stage.afterMs);
 
-  const cutoff = new Date(Date.now() - stage.afterMs);
-
-  // Only select leads that can actually be sent: message present and a chat to send it in.
-  // Messages are trimmed on write, so a stored empty string means "no message".
-  // Oldest first, so a lead can never be starved by newer arrivals.
   const messageCol = MESSAGE_COLS[stage.messageField];
   const campaignMessageCol = CAMPAIGN_MESSAGE_COLS[stage.messageField];
   const messageExpr = sql<string>`coalesce(${campaignMessageCol}, ${messageCol})`;
@@ -157,7 +163,7 @@ const runFollowUpStage = async (account: LinkedInAccount, stage: FollowUpStage):
 
   // `connection: { chatId: { not: null } }` was a relation filter, so this is
   // an innerJoin: only leads that HAVE a connection with a chatId qualify.
-  const leads = (
+  return (
     await db
       .select({
         lead: leadsTable,
@@ -175,7 +181,7 @@ const runFollowUpStage = async (account: LinkedInAccount, stage: FollowUpStage):
       .where(
         and(
           inOrg(leadsTable),
-          eq(leadsTable.linkedinAccountId, account.id),
+          eq(leadsTable.linkedinAccountId, accountId),
           eq(leadsTable.status, stage.fromStatus),
           eq(campaigns.status, "ACTIVE"),
           lte(cutoffCol, cutoff),
@@ -185,9 +191,16 @@ const runFollowUpStage = async (account: LinkedInAccount, stage: FollowUpStage):
           lt(leadsTable.inviteRetryCount, MAX_LEAD_RETRIES)
         )
       )
-      .orderBy(asc(cutoffCol))
-      .limit(await followUpsPerRun())
+      .orderBy(campaignPriorityRankSql(campaigns.priority), asc(cutoffCol))
+      .limit(limit)
   ).map((r) => ({ ...r.lead, messageTemplate: r.messageTemplate, nextMessageTemplate: r.nextMessageTemplate, connection: r.connection, linkedinUrl: r.person.linkedinUrl!, variables: personVariables(r.person, r.company) }));
+}
+
+const runFollowUpStage = async (account: LinkedInAccount, stage: FollowUpStage): Promise<void> => {
+  // Retire exhausted leads first so they can never occupy a slot in the batch below.
+  await completeExhaustedLeads(account, stage);
+
+  const leads = await selectFollowUpCandidates(account.id, stage, await followUpsPerRun());
 
   if (leads.length === 0) return;
 
@@ -297,12 +310,15 @@ export const sendFollowUps = async (account: LinkedInAccount): Promise<void> => 
   }
 };
 
-// Catches leads where new_relation fired without a chatId — they stayed REQUEST_SENT
-// with a Connection record. Retry sending the acceptance message now that Unipile may
-// have synced the chat.
-const sendMissedAcceptances = async (account: LinkedInAccount): Promise<void> => {
+/**
+ * REQUEST_SENT leads of this account that already have a Connection row (the
+ * acceptance arrived without a chat), in order: campaign priority first, then
+ * the oldest acceptance (when the Connection was recorded), then the oldest
+ * lead. Runs in the caller's organization scope.
+ */
+export async function selectMissedAcceptanceCandidates(accountId: string, limit: number) {
   // `connection: { isNot: null }` — an innerJoin expresses exactly that.
-  const leads = (
+  return (
     await db
       .select({
         lead: leadsTable,
@@ -323,13 +339,21 @@ const sendMissedAcceptances = async (account: LinkedInAccount): Promise<void> =>
       .where(
         and(
           inOrg(leadsTable),
-          eq(leadsTable.linkedinAccountId, account.id),
+          eq(leadsTable.linkedinAccountId, accountId),
           eq(leadsTable.status, "REQUEST_SENT"),
           eq(campaigns.status, "ACTIVE")
         )
       )
-      .limit(await followUpsPerRun())
+      .orderBy(campaignPriorityRankSql(campaigns.priority), asc(connections.createdAt), asc(leadsTable.createdAt))
+      .limit(limit)
   ).map((r) => ({ ...r.lead, acceptanceMessage: r.campaignAcceptanceMessage ?? r.lead.acceptanceMessage, connection: r.connection, linkedinUrl: r.person.linkedinUrl!, variables: personVariables(r.person, r.company) }));
+}
+
+// Catches leads where new_relation fired without a chatId — they stayed REQUEST_SENT
+// with a Connection record. Retry sending the acceptance message now that Unipile may
+// have synced the chat.
+const sendMissedAcceptances = async (account: LinkedInAccount): Promise<void> => {
+  const leads = await selectMissedAcceptanceCandidates(account.id, await followUpsPerRun());
 
   console.log(`[missedAcceptances] Found ${leads.length} REQUEST_SENT lead(s) with a connection record`);
   if (leads.length === 0) return;

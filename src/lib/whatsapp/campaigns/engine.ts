@@ -6,6 +6,12 @@ import "server-only";
  * assigned to an active campaign sends at most one message: the next due
  * lead's next step. Spec: docs/whatsapp-campaigns/plan.md ("Sender loop").
  *
+ * Order (pickDueLead): campaign priority first — a number works its
+ * highest-priority campaign and reaches a lower one only when every higher
+ * one it sends for has nothing due (src/lib/campaigns/priority.ts). Within a
+ * priority, follow-ups before first messages, then the longest-due, then the
+ * oldest enrollment. So an Urgent first message goes before a Low follow-up.
+ *
  * Safety: each (lead, step) is claimed by a row in whatsapp_campaign_sends
  * before anything is sent, so a crash can never cause a second send. A claim
  * left in `sending` means delivery is uncertain and the lead is failed for a
@@ -19,6 +25,7 @@ import { unipileOrganizationIds } from "@/lib/linkedin/organizations.server";
 import { isMigrationControlPaused } from "@/lib/migration/controls";
 import { isPlatformConnected } from "@/lib/platform/credentials";
 import { currentOrganizationId, inOrg, runInOrganization } from "@/lib/tenancy/scope";
+import { campaignPriorityRankSql } from "@/lib/campaigns/priority";
 import { WHATSAPP_CAMPAIGN_OPEN_LEAD_STATUSES } from "./contract";
 import {
   classifySendError,
@@ -112,6 +119,12 @@ async function tickOrganization(result: WhatsappCampaignTickResult, now: Date, s
   return true;
 }
 
+/**
+ * The number's next due lead: highest campaign priority, then follow-ups
+ * before first messages, then longest-due, then oldest. With
+ * `includeFirstMessages = false` (new-chat limit or warm-up hit this tick) it
+ * is the highest-priority follow-up.
+ */
 async function pickDueLead(accountId: string, now: Date, includeFirstMessages: boolean): Promise<(LeadRow & { steps: Steps }) | null> {
   const [row] = await db
     .select({ lead: whatsappCampaignLeads, steps: whatsappCampaigns.steps })
@@ -130,6 +143,7 @@ async function pickDueLead(accountId: string, now: Date, includeFirstMessages: b
       )))`,
     ))
     .orderBy(
+      campaignPriorityRankSql(whatsappCampaigns.priority),
       sql`(${whatsappCampaignLeads.currentStep} > 0) desc`,
       asc(whatsappCampaignLeads.nextSendAt),
       asc(whatsappCampaignLeads.createdAt),

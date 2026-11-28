@@ -1,5 +1,6 @@
 import "server-only";
 
+import { requestSameDayQueueRefresh } from "@/lib/outreach/queueRefresh";
 import { and, eq, inArray } from "drizzle-orm";
 import { outreachCampaigns, outreachLeads, suppressionList } from "@/lib/outreach/schema";
 import { campaigns as linkedinCampaigns, leads as linkedinLeads } from "@/lib/linkedin/schema";
@@ -16,6 +17,13 @@ export type AssignmentResult = {
 };
 
 export async function addPeopleToEmailCampaign(campaignId: string, personIds: string[]): Promise<AssignmentResult> {
+  const result = await addPeopleToEmailCampaignInTransaction(campaignId, personIds);
+  // An Urgent/High campaign that is running starts these leads today.
+  if (result.added > 0) await requestSameDayQueueRefresh([campaignId]);
+  return result;
+}
+
+async function addPeopleToEmailCampaignInTransaction(campaignId: string, personIds: string[]): Promise<AssignmentResult> {
   const uniqueIds = [...new Set(personIds.map((id) => id.trim()).filter(Boolean))];
   return withLeadTransaction(async (tx) => {
     const [campaign] = await tx.select({ id: outreachCampaigns.id }).from(outreachCampaigns).where(and(inOrg(outreachCampaigns), eq(outreachCampaigns.id, campaignId))).limit(1);

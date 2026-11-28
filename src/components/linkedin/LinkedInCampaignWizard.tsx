@@ -14,8 +14,10 @@ import CampaignCsvMappingDialog from "@/components/leads/CampaignCsvMappingDialo
 import { LinkedInAccountTag } from "@/components/linkedin/LinkedInAccountTag";
 import { LinkedInSequenceEditor } from "@/components/linkedin/LinkedInSequenceEditor";
 import { Frame, FrameHeader, FramePanel } from "@/components/analytics/kit/Frame";
+import { CampaignPrioritySelect } from "@/components/page/CampaignPriority";
 import { DocsLink } from "@/components/page/DocsLink";
 import { PageHeader } from "@/components/page/PageHeader";
+import { CAMPAIGN_PRIORITY_LABELS, DEFAULT_CAMPAIGN_PRIORITY, type CampaignPriority } from "@/lib/campaigns/priority";
 import { EMPTY_LINKEDIN_SEQUENCE, type LinkedinCampaignSequence } from "@/lib/linkedin/campaignSequence";
 import { cn } from "@/utils/cn";
 
@@ -53,6 +55,7 @@ export function LinkedInCampaignWizard({ accounts }: { accounts: Account[] }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState<"REGULAR" | "PERSONAL">("REGULAR");
+  const [priority, setPriority] = useState<CampaignPriority>(DEFAULT_CAMPAIGN_PRIORITY);
   const [accountIds, setAccountIds] = useState<string[]>([]);
   const [leadCount, setLeadCount] = useState(0);
   const [sequence, setSequence] = useState<LinkedinCampaignSequence>(EMPTY_LINKEDIN_SEQUENCE);
@@ -70,7 +73,7 @@ export function LinkedInCampaignWizard({ accounts }: { accounts: Account[] }) {
       const response = await fetch(campaignId ? `/api/linkedin/campaigns/${campaignId}` : "/api/linkedin/campaigns", {
         method: campaignId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), description: description.trim() || null, type, linkedinAccountIds: accountIds, ...(!campaignId ? { status: "PAUSED" } : {}) }),
+        body: JSON.stringify({ name: name.trim(), description: description.trim() || null, type, priority, linkedinAccountIds: accountIds, ...(!campaignId ? { status: "PAUSED" } : {}) }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.ok === false) throw new Error(data.error ?? "Could not save campaign");
@@ -191,6 +194,7 @@ export function LinkedInCampaignWizard({ accounts }: { accounts: Account[] }) {
                     <span className="mb-1.5 block text-label-sm text-text-strong-950">Description <span className="text-text-soft-400">(optional)</span></span>
                     <Textarea.Root simple rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What is this campaign for?" />
                   </label>
+                  <CampaignPrioritySelect value={priority} onChange={setPriority} disabled={busy} />
                   <fieldset>
                     <legend className="mb-2 block text-label-sm text-text-strong-950">Campaign type</legend>
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -318,7 +322,7 @@ export function LinkedInCampaignWizard({ accounts }: { accounts: Account[] }) {
               <div className="mx-auto max-w-3xl">
                 <StepHeading title="Review and launch" description="Your campaign is paused until you explicitly launch it." />
                 <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                  <SummaryCard label="Campaign" value={name} detail={type === "PERSONAL" ? "Personal" : "Regular"} />
+                  <SummaryCard label="Campaign" value={name} detail={`${type === "PERSONAL" ? "Personal" : "Regular"} · ${CAMPAIGN_PRIORITY_LABELS[priority]} priority`} />
                   <SummaryCard label="Leads" value={leadCount.toLocaleString()} detail="enrolled" />
                   <SummaryCard label="Senders" value={accountIds.length.toLocaleString()} detail="connected accounts" />
                 </div>

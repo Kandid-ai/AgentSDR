@@ -7,6 +7,7 @@ import { withLeadTransaction } from "@/lib/leads/records";
 import { organizationPhoneCountry } from "@/lib/calls/phone.server";
 import { findOrCreateContactPerson, resolveImportRow } from "@/lib/calls/campaigns";
 import { currentOrganizationId, inOrg } from "@/lib/tenancy/scope";
+import { campaignPriorityOf, DEFAULT_CAMPAIGN_PRIORITY } from "@/lib/campaigns/priority";
 import { WhatsappApiError } from "../errors";
 import { chatInOrg, visibleChat } from "../messages";
 import {
@@ -153,6 +154,7 @@ function toSummary(row: CampaignRow, senders: WhatsappCampaignSender[], stats: W
     name: row.name,
     description: row.description,
     status: row.status,
+    priority: campaignPriorityOf(row.priority),
     stepCount: row.steps.length,
     senders,
     stats,
@@ -225,6 +227,7 @@ export async function createWhatsappCampaign(input: CreateWhatsappCampaignReques
         description: input.description ?? null,
         status: "paused",
         steps,
+        priority: input.priority ?? DEFAULT_CAMPAIGN_PRIORITY,
       })
       .returning();
     if (!row) throw new Error("whatsapp_campaigns insert returned no row");
@@ -259,6 +262,7 @@ export async function updateWhatsappCampaign(campaignId: string, input: UpdateWh
     if (input.name !== undefined) set.name = input.name;
     if (input.description !== undefined) set.description = input.description;
     if (steps !== undefined) set.steps = steps;
+    if (input.priority !== undefined) set.priority = input.priority;
     if (input.status !== undefined) set.status = input.status;
     await tx.update(whatsappCampaigns).set(set).where(and(inOrg(whatsappCampaigns), eq(whatsappCampaigns.id, campaignId)));
 
@@ -268,6 +272,7 @@ export async function updateWhatsappCampaign(campaignId: string, input: UpdateWh
     }
 
     const resultingStatus: WhatsappCampaignStatus = input.status ?? existing.status;
+    // Priority is left out on purpose: changing it never makes a running campaign re-pass its launch checks.
     const touched = input.status !== undefined || accountIds !== undefined || steps !== undefined;
     if (resultingStatus === "active" && touched) {
       const finalSteps = steps ?? existing.steps;

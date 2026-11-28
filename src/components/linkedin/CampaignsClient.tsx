@@ -33,8 +33,10 @@ import { LinkedInAccountAvatars } from "@/components/linkedin/LinkedInAccountTag
 import { EditCampaignModal } from "@/components/linkedin/campaigns/EditCampaignModal";
 import { CAMPAIGN_STATUS, campaignFunnel } from "@/components/linkedin/campaigns/metrics";
 import CampaignProgressRing from "@/components/outreach/CampaignProgressRing";
+import { CampaignPriorityBadge } from "@/components/page/CampaignPriority";
 import { EmptyState } from "@/components/page/EmptyState";
 import { PageHeader } from "@/components/page/PageHeader";
+import type { CampaignPriority } from "@/lib/campaigns/priority";
 import { cn } from "@/utils/cn";
 
 type LinkedInAccount = { id: string; username: string; name: string | null; profilePictureUrl: string | null };
@@ -45,6 +47,7 @@ export type CampaignRow = {
   description: string | null;
   status: "ACTIVE" | "PAUSED";
   type: "REGULAR" | "PERSONAL";
+  priority: CampaignPriority;
   accounts: LinkedInAccount[];
   totalLeads: number;
   statusCounts: Record<string, number>;
@@ -342,6 +345,7 @@ export function CampaignsClient({
                                 <Badge.Dot />
                                 {status.label}
                               </Badge.Root>
+                              <CampaignPriorityBadge priority={c.priority} className="shrink-0" />
                               {deleting && <span className="shrink-0 text-paragraph-xs text-error-base">Deleting…</span>}
                             </div>
                             <p className="mt-0.5 max-w-md truncate text-paragraph-xs text-text-sub-600" title={c.description ?? undefined}>

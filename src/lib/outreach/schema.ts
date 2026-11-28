@@ -1,3 +1,4 @@
+import type { CampaignPriority } from "@/lib/campaigns/priority";
 import {
   pgTable,
   uuid,
@@ -7,7 +8,9 @@ import {
   timestamp,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { people } from "@/lib/leads/schema";
 import { organizations } from "@/lib/auth/schema";
 
@@ -120,10 +123,15 @@ export const outreachCampaigns = pgTable("outreach_campaigns", {
   sequence: jsonb("sequence").notNull().default([]).$type<SequenceStep[]>(),
   /** The mailboxes this campaign may send from; null = all connected (scripts/add-campaign-mailboxes.ts). */
   mailboxIds: uuid("mailbox_ids").array(),
+  /** Which campaign a mailbox works first (src/lib/campaigns/priority.ts; scripts/add-campaign-priority.ts). */
+  priority: text("priority").notNull().default("medium").$type<CampaignPriority>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 },
-  (t) => [index("outreach_campaigns_organization_idx").on(t.organizationId)],
+  (t) => [
+    index("outreach_campaigns_organization_idx").on(t.organizationId),
+    check("outreach_campaigns_priority_chk", sql`${t.priority} IN ('urgent', 'high', 'medium', 'low')`),
+  ],
 );
 
 export type OutreachLeadStatus =

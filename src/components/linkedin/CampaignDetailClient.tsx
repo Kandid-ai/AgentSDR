@@ -25,9 +25,11 @@ import { CampaignLeadsTab, type InitialLeadsPage } from "@/components/linkedin/c
 import { CampaignOverview, type ChartDay } from "@/components/linkedin/campaigns/CampaignOverview";
 import { EditCampaignModal } from "@/components/linkedin/campaigns/EditCampaignModal";
 import { CAMPAIGN_STATUS, campaignFunnel } from "@/components/linkedin/campaigns/metrics";
+import { CampaignPriorityBadge } from "@/components/page/CampaignPriority";
 import { PageHeader } from "@/components/page/PageHeader";
 import { PageTabs } from "@/components/page/PageTabs";
 import { StatRow } from "@/components/page/StatRow";
+import type { CampaignPriority } from "@/lib/campaigns/priority";
 import { cn } from "@/utils/cn";
 
 export type { CampaignLead } from "@/components/linkedin/campaigns/CampaignLeadsTab";
@@ -40,6 +42,7 @@ type Campaign = {
   description: string | null;
   status: "ACTIVE" | "PAUSED";
   type: "REGULAR" | "PERSONAL";
+  priority: CampaignPriority;
   invitationMessage: string | null;
   acceptanceMessage: string | null;
   followUp1Message: string | null;
@@ -152,6 +155,7 @@ export function CampaignDetailClient({
             {campaign.type === "PERSONAL" && (
               <Badge.Root size="medium" variant="lighter" color="yellow">Personal</Badge.Root>
             )}
+            <CampaignPriorityBadge priority={campaign.priority} />
           </>
         }
         description={<span>Created <LocalTime value={campaign.createdAt} format={createdLabel} />{` · ${steps} of 5 sequence steps written${campaign.description ? ` · ${campaign.description}` : ""}`}</span>}
