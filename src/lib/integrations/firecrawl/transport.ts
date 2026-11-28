@@ -46,12 +46,27 @@ async function readBody(response: Response): Promise<unknown> {
   }
 }
 
-function failureDetail(status: number, body: Record<string, unknown>): string {
+const TERMS_SETTINGS_URL = "https://www.firecrawl.dev/app/settings?tab=data-sources";
+
+function termsUrl(value: unknown): string {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === "https:" && (url.hostname === "firecrawl.dev" || url.hostname.endsWith(".firecrawl.dev")) ? url.toString() : TERMS_SETTINGS_URL;
+  } catch {
+    return TERMS_SETTINGS_URL;
+  }
+}
+
+export function firecrawlFailureDetail(status: number, body: Record<string, unknown>): string {
+  if (body.code === "THIRD_PARTY_DATA_TERMS_REQUIRED") {
+    return `This Firecrawl Alexandria data provider needs an organization admin to accept its terms first. Accept them at ${termsUrl(asRecord(body.requiresAction).url)} and run the row again.`;
+  }
   if (status === 401) return "The API key was rejected.";
   if (status === 402) return "The account has run out of credits.";
   if (status === 429) return "The account is rate limited.";
   if (status === 408) return "The page took too long to load.";
-  const message = typeof body.error === "string" ? body.error.replace(/\s+/g, " ").trim() : "";
+  const raw = typeof body.error === "string" ? body.error : body.message;
+  const message = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
   if (!message) return `The API returned HTTP ${status}.`;
   if (message.length <= 300) return message.endsWith(".") ? message : `${message}.`;
   const sentence = message.lastIndexOf(". ", 300);
@@ -84,9 +99,10 @@ export async function requestFirecrawl(
     });
     const body = asRecord(await readBody(response));
     if (!response.ok || body.success === false) {
-      const detail = failureDetail(response.status, body);
+      const detail = firecrawlFailureDetail(response.status, body);
       const audit = { provider: "firecrawl", request: { path }, response: { status: response.status, code: body.code ?? null } };
       if (response.status === 429) throw new RetryableRunError(`Firecrawl: ${detail}`, audit);
+      if (body.code === "THIRD_PARTY_DATA_TERMS_REQUIRED") throw new PermanentRunError(`Firecrawl: ${detail}`, audit);
       throw new PermanentRunError(`Firecrawl: ${detail} No automatic retry was made.`, audit);
     }
     if (path === "/v2/team/credit-usage") {
