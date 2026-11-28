@@ -304,7 +304,9 @@ export default function Sidebar({ mobile = false, onClose }: { mobile?: boolean;
   };
 
   // A group holding the current page is always open; otherwise the stored choice, else its default.
-  const isOpen = (g: NavGroup) => g.children.some((c) => c.href === current) || (openGroups[g.id] ?? Boolean(g.defaultOpen));
+  // The arrow always decides once used. Until then a group opens for the page
+  // it holds — except the Funnel's list of views, closed until asked for.
+  const isOpen = (g: NavGroup) => openGroups[g.id] ?? ((!g.dynamic && g.children.some((c) => c.href === current)) || Boolean(g.defaultOpen));
   const toggleGroup = (g: NavGroup) => {
     setOpenGroups((prev) => {
       const next = { ...prev, [g.id]: !isOpen(g) };

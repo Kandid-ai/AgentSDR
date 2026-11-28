@@ -91,8 +91,22 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     entries: [
       link("/analytics", "Analytics", RiBarChartBoxLine),
+    ],
+  },
+  {
+    label: "CRM",
+    entries: [
       link("/crm/actions", "Action required", RiTodoLine, { badge: "actionRequired", match: ["/crm/records"] }),
+      {
+        kind: "group",
+        id: "funnel",
+        label: "Funnel",
+        icon: RiRouteLine,
+        dynamic: "funnelViews",
+        children: [link("/crm/pipeline", "Funnel", RiRouteLine)],
+      },
       link("/leads", "Leads", RiUserSearchLine),
+      link("/crm/sequences", "Sequences", RiTimeLine),
     ],
   },
   {
@@ -133,21 +147,6 @@ export const NAV_SECTIONS: NavSection[] = [
           link("/calling/messages", "Messages", RiChat3Line, { badge: "whatsappUnread" }),
         ],
       },
-    ],
-  },
-  {
-    label: "CRM",
-    entries: [
-      {
-        kind: "group",
-        id: "funnel",
-        label: "Funnel",
-        icon: RiRouteLine,
-        dynamic: "funnelViews",
-        defaultOpen: true,
-        children: [link("/crm/pipeline", "Funnel", RiRouteLine)],
-      },
-      link("/crm/sequences", "Sequences", RiTimeLine),
     ],
   },
   {
